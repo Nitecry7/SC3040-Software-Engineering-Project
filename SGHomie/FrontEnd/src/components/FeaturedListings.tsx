@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { MapPin, Building2 } from 'lucide-react';
+import { MapPin } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Property } from '../types/supabase';
 

@@ -1,9 +1,9 @@
 // Import React and its hooks for managing state and side effects.
 import React, { useEffect, useState } from 'react';
 // Import routing hooks to extract parameters from URL and create links.
-import { useParams, Link } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 // Import various icons from lucide-react for UI elements.
-import { MapPin, Phone, Calendar, Home, Maximize, Bath, DollarSign, Heart, ChevronLeft, ChevronRight, Store, Train, Trees as Tree, Mail } from 'lucide-react';
+import { MapPin, Phone, Calendar, Home, Maximize, Bath, Heart, ChevronLeft, ChevronRight, Store, Train, Trees as Tree, Mail } from 'lucide-react';
 // Import Leaflet components for displaying maps.
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 // Import the Icon constructor from Leaflet to create custom markers.

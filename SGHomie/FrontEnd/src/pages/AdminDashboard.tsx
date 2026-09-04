@@ -6,7 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 // Import Supabase client to perform database operations.
 import { supabase } from '../lib/supabase';
 // Import various icons from lucide-react for UI elements such as buttons and status indicators.
-import { Users, Home, Mail, Send, Trash2, Edit, Plus, Store, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Users, Home, Mail, Send, Trash2, Store, CheckCircle, XCircle, Clock } from 'lucide-react';
 // Import toast for displaying notifications to the user.
 import toast from 'react-hot-toast';
 

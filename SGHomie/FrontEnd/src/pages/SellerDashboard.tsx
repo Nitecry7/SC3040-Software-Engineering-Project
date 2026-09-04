@@ -7,7 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 // Import the Supabase client for interacting with your database.
 import { supabase } from '../lib/supabase';
 // Import various icons from lucide-react for visual elements.
-import { Plus, Home, Clock, CheckCircle, XCircle, Edit, Trash2, Image as ImageIcon, X } from 'lucide-react';
+import { Plus, Clock, CheckCircle, XCircle, Edit, Trash2, X } from 'lucide-react';
 // Import toast for displaying notifications.
 import toast from 'react-hot-toast';
 
@@ -227,7 +227,7 @@ const SellerDashboard = () => {
       // Reset newImageUrl and previewImage states.
       setNewImageUrl('');
       setPreviewImage(null);
-    } catch (e) {
+    } catch {
       // Show an error notification if the URL is invalid.
       toast.error('Please enter a valid URL');
     }

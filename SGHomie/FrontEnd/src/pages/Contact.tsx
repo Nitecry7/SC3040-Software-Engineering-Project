@@ -1,5 +1,5 @@
 // Import necessary React hooks and libraries.
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 // Import icons for visual cues from lucide-react.
 import { Mail, Phone, MapPin, Send } from 'lucide-react';
 // Import toast to display success notifications.

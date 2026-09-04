@@ -7,7 +7,6 @@ import { useAuth } from '../contexts/AuthContext';
 // Import Supabase client to interact with your backend database.
 import { supabase } from '../lib/supabase';
 // Import icons from lucide-react for visual elements (UserCircle, CheckCircle, etc.).
-import { UserCircle, CheckCircle } from 'lucide-react';
 // Import toast to display popup notifications.
 import toast from 'react-hot-toast';
 

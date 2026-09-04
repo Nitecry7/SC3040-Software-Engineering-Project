@@ -1,7 +1,7 @@
 // Import React, hooks and necessary libraries.
 import React, { useState, useEffect } from 'react';
 // Import icons from lucide-react for visual elements.
-import { Mail, Phone, MapPin, Send, Building, Clock, CheckCircle, XCircle } from 'lucide-react';
+import { Mail, Phone, MapPin, Send, Clock, CheckCircle } from 'lucide-react';
 // Import Supabase client to interact with the backend database.
 import { supabase } from '../lib/supabase';
 // Import custom Auth context to get the currently authenticated user.

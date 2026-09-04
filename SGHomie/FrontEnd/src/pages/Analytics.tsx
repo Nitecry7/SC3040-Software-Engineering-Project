@@ -7,7 +7,6 @@ import { TrendingUp, DollarSign, Home, Map, X } from 'lucide-react';
 // Import Recharts components for rendering charts.
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, BarChart, Bar, ResponsiveContainer } from 'recharts';
 // Import axios in case you decide to fetch data from an API endpoint.
-import axios from 'axios';
 
 // Define the structure for price data records.
 interface PriceData {
@@ -15,6 +14,13 @@ interface PriceData {
   month: number;
   town: string;
   flat_type: string;
+  price: number;
+}
+
+interface TrendPoint {
+  key: string;
+  year: number;
+  month: number;
   price: number;
 }
 
@@ -28,9 +34,6 @@ const Analytics = () => {
   const [selectedTowns, setSelectedTowns] = useState<string[]>(['ANG MO KIO', 'TAMPINES', 'WOODLANDS', 'PUNGGOL', 'JURONG EAST']);
   // State to control the visibility of the town selection dropdown.
   const [showTownDropdown, setShowTownDropdown] = useState(false);
-  // State to track if data is currently being loaded.
-  const [loading, setLoading] = useState(true);
-
   // Define an array of selectable years (including 'ALL' to reset filter).
   const years = ['ALL', '2017', '2018', '2019', '2020', '2021', '2022', '2023', '2024'];
   
@@ -101,7 +104,6 @@ const Analytics = () => {
   // In a real application, you could uncomment and use the axios request to fetch real data.
   useEffect(() => {
     const fetchData = async () => {
-      setLoading(true);
       try {
         // Example API fetch (commented out for demonstration using static data)
         // const response = await axios.get('https://data.gov.sg/api/action/datastore_search', {
@@ -113,8 +115,6 @@ const Analytics = () => {
         setPriceData(staticData);
       } catch (error) {
         console.error('Error fetching data:', error);
-      } finally {
-        setLoading(false);
       }
     };
 
@@ -154,7 +154,7 @@ const Analytics = () => {
   // then grouped by a key that combines year and month, with average prices calculated.
   const yearlyTrendData = priceData
     .filter(data => selectedYear === 'ALL' || data.year.toString() === selectedYear)
-    .reduce((acc: any[], curr) => {
+    .reduce((acc: TrendPoint[], curr) => {
       // Create a key based on year and month.
       const key = `${curr.year}-${curr.month}`;
       // Find existing data for the same key.

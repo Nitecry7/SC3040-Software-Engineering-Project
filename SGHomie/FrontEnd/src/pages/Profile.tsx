@@ -59,7 +59,7 @@ const Profile = () => {
     const fetchProfile = async () => {
       try {
         // Query the "user_profiles" table for the current user's profile.
-        let { data, error } = await supabase
+        const { data: fetchedProfile, error } = await supabase
           .from('user_profiles')
           .select(`
             id,
@@ -76,6 +76,7 @@ const Profile = () => {
         if (error) throw error;
 
         // If no profile data exists, create a new profile with default values.
+        let data = fetchedProfile;
         if (!data) {
           const newProfile = {
             id: user.id,

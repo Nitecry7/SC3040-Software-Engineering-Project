@@ -1,11 +1,10 @@
 // Import React and its hooks for state management and side effects.
 import React, { useState, useEffect } from 'react';
 // Import icons from lucide-react for visual representation.
-import { Search, TrendingUp, Building2, ArrowRight, MapPin, DollarSign, CheckCircle, Users, Clock, Shield, ChevronRight, PlayCircle } from 'lucide-react';
+import { Search, TrendingUp, Building2, ArrowRight, MapPin, DollarSign } from 'lucide-react';
 // Import useNavigate hook from react-router-dom for navigation actions.
 import { useNavigate } from 'react-router-dom';
 // Import the Supabase client (if needed for data fetching within this component or its children).
-import { supabase } from '../lib/supabase';
 // Import child components for featured listings and notifications.
 import FeaturedListings from '../components/FeaturedListings';
 import NotificationPanel from '../components/NotificationPanel';
@@ -19,9 +18,6 @@ const Home = () => {
   const [searchQuery, setSearchQuery] = useState('');
   // State to track if the page has been scrolled past a threshold (used for UI effects).
   const [scrolled, setScrolled] = useState(false);
-  // State for the active tab, currently set to 'buy'; may be used for future extensions.
-  const [activeTab, setActiveTab] = useState('buy');
-
   // useEffect to update the 'scrolled' state based on window scroll position.
   useEffect(() => {
     // Handler function to update 'scrolled' when window is scrolled past 50 pixels.

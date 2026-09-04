@@ -1,4 +1,4 @@
-import { createClient } from 'npm:@supabase/supabase-js@2.39.7';
+import { createClient } from 'npm:@supabase/supabase-js@2.114.0';
 import { SMTPClient } from "npm:emailjs@4.0.3";
 
 const corsHeaders = {

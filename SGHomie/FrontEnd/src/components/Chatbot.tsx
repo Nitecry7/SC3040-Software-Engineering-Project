@@ -92,7 +92,7 @@ const Chatbot: React.FC = () => {
   // It sets the prompt text into the input field and triggers submission.
   const handlePromptClick = (prompt: string) => {
     setMessage(prompt);
-    handleSubmit(new Event('submit') as any);
+    handleSubmit(new Event('submit') as React.FormEvent<HTMLFormElement>);
   };
 
   // Function to toggle the chat window's open/minimized state.
