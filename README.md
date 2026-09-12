@@ -62,15 +62,16 @@ Visit [SG Homie Live Site](https://sg-homie.netlify.app) 🌐
 ### Local Setup
 
 #### Prerequisites
-- Node.js (v14+) 📦
-- npm (latest stable) 🔧
+- Node.js (v14+)
+- npm (latest stable)
+- Supabase Project (with Edge Functions)
 
 #### Installation Steps
 
 1. **Clone & Navigate**
    ```bash
-   git clone [repository-url]
-   cd frontend
+   git clone https://github.com/Nitecry7/SC3040-Software-Engineering-Project
+   cd sghome/FrontEnd
    ```
 
 2. **Install Dependencies**
@@ -79,10 +80,18 @@ Visit [SG Homie Live Site](https://sg-homie.netlify.app) 🌐
    ```
 
 3. **Configure Environment**
-   Create `.env` file:
-   ```env
-   VITE_SUPABASE_URL=your-supabase-url
-   VITE_SUPABASE_ANON_KEY=your-anon-key
+   Create `.env` file in `SGHomie/FrontEnd`:
+   ```bash
+   cp .env.example .env
+   ```
+   Update environment variables accordingly.
+
+   🔐 Keep `OPENROUTER_API_KEY` in Supabase Edge Function Secrets for deployed functions.
+
+   For local chatbot testing, serve the function with the same environment file (including the API key) in a separate terminal:
+   ```bash
+   cd SGHomie/BackEnd
+   supabase functions serve chatbot --no-verify-jwt --env-file ../FrontEnd/.env
    ```
 
 4. **Launch Development Server**

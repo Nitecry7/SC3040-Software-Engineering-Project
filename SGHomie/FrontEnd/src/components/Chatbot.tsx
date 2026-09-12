@@ -5,7 +5,7 @@ import { MessageCircle, X, Send, ChevronDown, ChevronUp } from 'lucide-react';
 // Import ReactMarkdown to render Markdown content in the chat messages.
 import ReactMarkdown from 'react-markdown';
 // Import the Supabase client for making API requests.
-import { supabase } from '../lib/supabase';
+import { chatbotSupabase } from '../lib/supabase';
 
 // Define a TypeScript interface for a chat message.
 // Each message has a 'role' (either 'user' or 'assistant')
@@ -13,6 +13,14 @@ import { supabase } from '../lib/supabase';
 interface Message {
   role: 'user' | 'assistant';
   content: string;
+}
+
+interface ChatCompletionChunk {
+  choices?: Array<{
+    delta?: {
+      content?: string | null;
+    };
+  }>;
 }
 
 // Define an array of suggested prompt objects to help guide the user's conversation.
@@ -50,49 +58,117 @@ const Chatbot: React.FC = () => {
     }
   }, [messages]);
 
-  // Event handler for form submission (i.e., when the user sends a message).
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); // Prevent the default form submission behavior.
-    if (!message.trim()) return; // Ignore empty messages.
+  const updateLastAssistantMessage = (content: string) => {
+    setMessages(prev => {
+      const next = [...prev];
+      const lastMessage = next[next.length - 1];
 
-    // Store the trimmed user message.
-    const userMessage = message.trim();
+      if (!lastMessage || lastMessage.role !== 'assistant') {
+        next.push({ role: 'assistant', content });
+      } else {
+        next[next.length - 1] = { ...lastMessage, content };
+      }
+
+      return next;
+    });
+  };
+
+  const streamAssistantResponse = async (response: Response) => {
+    if (!response.body) {
+      throw new Error('The chatbot returned an empty response stream');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let assistantContent = '';
+    let streamComplete = false;
+
+    const processEvent = (event: string) => {
+      const data = event
+        .split(/\r?\n/)
+        .filter(line => line.startsWith('data:'))
+        .map(line => line.slice(5).trimStart())
+        .join('\n')
+        .trim();
+
+      if (!data || data === '[DONE]') return;
+
+      const chunk = JSON.parse(data) as ChatCompletionChunk;
+      const content = chunk.choices?.[0]?.delta?.content;
+
+      if (typeof content === 'string' && content !== '') {
+        assistantContent += content;
+        updateLastAssistantMessage(assistantContent);
+      }
+    };
+
+    while (!streamComplete) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+
+      const events = buffer.split(/\r?\n\r?\n/);
+      buffer = events.pop() ?? '';
+      events.forEach(processEvent);
+
+      streamComplete = done;
+    }
+
+    if (buffer.trim()) processEvent(buffer);
+
+    if (!assistantContent) {
+      throw new Error('The chatbot returned no text');
+    }
+  };
+
+  const sendMessage = async (value: string) => {
+    const userMessage = value.trim();
+    if (!userMessage || isLoading) return;
+
     // Clear the input field.
     setMessage('');
+
+    const requestMessages = [...messages, { role: 'user' as const, content: userMessage }];
     // Add the user's message to the messages state.
-    setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
+    setMessages([...requestMessages, { role: 'assistant', content: '' }]);
     // Set the loading state to true while waiting for the assistant response.
     setIsLoading(true);
 
     try {
-      // Invoke the 'chatbot' function hosted via Supabase with the user's message.
-      const { data, error } = await supabase.functions.invoke('chatbot', {
-        body: { message: userMessage }
+      // Ask the Supabase Edge Function for an OpenAI-style streamed response.
+      const { data, error } = await chatbotSupabase.functions.invoke<Response>('chatbot', {
+        body: {
+          messages: requestMessages,
+          stream: true,
+        },
       });
 
       // If an error occurs during the request, throw the error.
       if (error) throw error;
+      if (!(data instanceof Response)) {
+        throw new Error('The chatbot returned an invalid response');
+      }
 
-      // Add the assistant's response to the messages state.
-      setMessages(prev => [...prev, { role: 'assistant', content: data.response }]);
+      await streamAssistantResponse(data);
     } catch (error) {
       // Log the error and add a fallback error message for the user.
       console.error('Error getting response:', error);
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: "I'm sorry, I'm having trouble responding right now. Please try again later."
-      }]);
+      updateLastAssistantMessage("I'm sorry, I'm having trouble responding right now. Please try again later.");
     } finally {
       // Turn off the loading indicator when the request is complete.
       setIsLoading(false);
     }
   };
 
+  // Event handler for form submission (i.e., when the user sends a message).
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    void sendMessage(message);
+  };
+
   // Handler for when a suggested prompt is clicked.
-  // It sets the prompt text into the input field and triggers submission.
   const handlePromptClick = (prompt: string) => {
-    setMessage(prompt);
-    handleSubmit(new Event('submit') as React.FormEvent<HTMLFormElement>);
+    void sendMessage(prompt);
   };
 
   // Function to toggle the chat window's open/minimized state.
@@ -183,6 +259,7 @@ const Chatbot: React.FC = () => {
                         <button
                           key={index}
                           onClick={() => handlePromptClick(prompt.text)}
+                          disabled={isLoading}
                           className="text-left p-2 text-sm bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
                         >
                           <div className="font-medium text-blue-600">{prompt.category}</div>
