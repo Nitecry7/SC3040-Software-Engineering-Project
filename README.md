@@ -88,14 +88,6 @@ Visit [SG Homie Live Site](https://sg-homie.netlify.app) 🌐
 
    🔐 Keep `OPENROUTER_API_KEY` in Supabase Edge Function Secrets for deployed functions.
 
-   For development, deploy the chatbot function to your Supabase project and test against the hosted function:
-   ```bash
-   cd SGHomie/BackEnd
-   supabase login
-   supabase link --project-ref <project-ref>
-   supabase functions deploy chatbot --use-api
-   ```
-
 4. **Launch Development Server**
    ```bash
    npm run dev

@@ -1,20 +1,16 @@
 /*
-  # Fix enquiries display and policies
+  # Update enquiries table policies
 
   1. Changes
-    - Create a view for enquiries with user emails
-    - Update RLS policies to use proper email comparison
-    - Ensure proper case handling for status
+    - Add policy for users to view their own enquiries
+    - Update existing policies to use uppercase status values
+    - Ensure proper access control for enquiries
 
   2. Security
-    - Maintain RLS on enquiries table
-    - Add proper access control
+    - Enable RLS on enquiries table
+    - Add policies for authenticated users
+    - Add policies for admin users
 */
-
--- Create a view to help with email lookups
-CREATE OR REPLACE VIEW public.user_emails AS
-SELECT id, email
-FROM auth.users;
 
 -- First, ensure RLS is enabled
 ALTER TABLE enquiries ENABLE ROW LEVEL SECURITY;
@@ -24,7 +20,7 @@ DROP POLICY IF EXISTS "Anyone can create enquiries" ON enquiries;
 DROP POLICY IF EXISTS "Users can view their own enquiries" ON enquiries;
 DROP POLICY IF EXISTS "Admins can manage all enquiries" ON enquiries;
 
--- Create new policies with proper email comparison
+-- Create new policies
 CREATE POLICY "Anyone can create enquiries"
 ON enquiries
 FOR INSERT
@@ -35,21 +31,11 @@ CREATE POLICY "Users can view their own enquiries"
 ON enquiries
 FOR SELECT
 TO public
-USING (
-  CASE 
-    WHEN auth.uid() IS NULL THEN false
-    WHEN EXISTS (
-      SELECT 1 FROM user_profiles
-      WHERE id = auth.uid()
-      AND is_admin = true
-    ) THEN true
-    ELSE email = (
-      SELECT email 
-      FROM user_emails 
-      WHERE id = auth.uid()
-    )
-  END
-);
+USING (email = current_user OR EXISTS (
+  SELECT 1 FROM user_profiles
+  WHERE id = auth.uid()
+  AND is_admin = true
+));
 
 CREATE POLICY "Admins can manage all enquiries"
 ON enquiries
