@@ -331,20 +331,17 @@ jobs:
           """
 
               request_body = {
-                  "model": "openrouter/free",
-                  "messages": [
-                      {
-                          "role": "system",
-                          "content": system_prompt
-                      },
-                      {
-                          "role": "user",
-                          "content": ai_input
-                      }
-                  ],
-                  "temperature": 0.2,
-                  "max_tokens": 800
-              }
+                "models": [
+                    "google/gemma-4-31b-it:free",
+                    "google/gemma-4-26b-a4b-it:free"
+                ],
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": ai_input}
+                ],
+                "temperature": 0.2,
+                "max_tokens": 800
+            }
 
               request = urllib.request.Request(
                   "https://openrouter.ai/api/v1/chat/completions",
@@ -375,6 +372,19 @@ jobs:
                       "OpenRouter response model:",
                       result.get("model", "unknown")
                   )
+
+                  response_model = result.get("model", "").lower()
+
+                  blocked_model_terms = (
+                      "safety",
+                      "moderation",
+                      "classifier"
+                  )
+                                  
+                  if any(term in response_model for term in blocked_model_terms):
+                      raise RuntimeError(
+                          f"OpenRouter routed to unsuitable model: {response_model}"
+                      )
 
                   choices = result.get(
                       "choices",
