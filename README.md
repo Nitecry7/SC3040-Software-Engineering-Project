@@ -71,7 +71,7 @@ Visit [SG Homie Live Site](https://sg-homie.netlify.app) 🌐
 1. **Clone & Navigate**
    ```bash
    git clone https://github.com/Nitecry7/SC3040-Software-Engineering-Project
-   cd sghome/FrontEnd
+   cd SGHomie/FrontEnd
    ```
 
 2. **Install Dependencies**

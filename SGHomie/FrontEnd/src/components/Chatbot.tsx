@@ -34,6 +34,8 @@ const SUGGESTED_PROMPTS = [
   { text: "How do I contact support?", category: "Support" },
 ];
 
+const MAX_HISTORY_MESSAGES = 20;
+
 // Main functional component for the Chatbot.
 const Chatbot: React.FC = () => {
   // State to manage whether the chat window is open.
@@ -128,9 +130,14 @@ const Chatbot: React.FC = () => {
     // Clear the input field.
     setMessage('');
 
-    const requestMessages = [...messages, { role: 'user' as const, content: userMessage }];
+    // Keep the current message within the backend's history limit.
+    const nextMessages = [...messages, { role: 'user' as const, content: userMessage }];
+    const requestMessages = [
+      ...messages.slice(-(MAX_HISTORY_MESSAGES - 1)),
+      { role: 'user' as const, content: userMessage },
+    ];
     // Add the user's message to the messages state.
-    setMessages([...requestMessages, { role: 'assistant', content: '' }]);
+    setMessages([...nextMessages, { role: 'assistant', content: '' }]);
     // Set the loading state to true while waiting for the assistant response.
     setIsLoading(true);
 

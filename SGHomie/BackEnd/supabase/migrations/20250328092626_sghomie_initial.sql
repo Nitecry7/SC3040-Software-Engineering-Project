@@ -1,70 +1,57 @@
 /*
-  SG Homie application schema
+  SG Homie initial schema.
 
-  The first two migrations create `properties` and `user_profiles`. This
-  migration contains the remaining application schema and policies.
-
-  Supabase Auth owns the `auth` schema. Do not create, alter, or seed
-  `auth.users` from application migrations. Create an admin account in the
-  Supabase Dashboard, then mark its public profile as an admin separately.
+  This migration is intended for a fresh Supabase project. The historical
+  migrations are kept under archived_migrations/ for reference only.
 */
 
--- Required by gen_random_uuid(). Keep extensions in Supabase's extensions schema.
+-- Required by gen_random_uuid(). Create it before any table uses the function.
 CREATE SCHEMA IF NOT EXISTS extensions;
 CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
 
--- Complete the profile columns used by the application.
-ALTER TABLE public.user_profiles
-  ADD COLUMN IF NOT EXISTS name text,
-  ADD COLUMN IF NOT EXISTS family_members integer,
-  ADD COLUMN IF NOT EXISTS phone text,
-  ADD COLUMN IF NOT EXISTS is_admin boolean DEFAULT false,
-  ADD COLUMN IF NOT EXISTS is_seller boolean DEFAULT false;
+CREATE TABLE public.user_profiles (
+  id uuid PRIMARY KEY REFERENCES auth.users(id),
+  income_range text,
+  preferred_locations text[],
+  preferred_property_type text,
+  max_budget numeric,
+  name text,
+  family_members integer,
+  phone text,
+  is_admin boolean NOT NULL DEFAULT false,
+  is_seller boolean NOT NULL DEFAULT false,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 
-UPDATE public.user_profiles
-SET is_admin = false
-WHERE is_admin IS NULL;
+CREATE TABLE public.properties (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  price numeric NOT NULL,
+  location text NOT NULL,
+  type text NOT NULL,
+  image_url text NOT NULL,
+  bedrooms integer NOT NULL,
+  bathrooms integer NOT NULL,
+  area_sqft numeric NOT NULL,
+  description text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  -- Retained for compatibility with the historical schema.
+  user_id uuid REFERENCES auth.users(id),
+  detailed_location text,
+  town text,
+  seller_name text,
+  seller_phone text,
+  built_year integer,
+  photos text[],
+  latitude numeric,
+  longitude numeric,
+  status text NOT NULL DEFAULT 'pending',
+  seller_id uuid REFERENCES auth.users(id),
+  rejection_reason text,
+  CONSTRAINT properties_status_check CHECK (status IN ('pending', 'approved', 'rejected'))
+);
 
-UPDATE public.user_profiles
-SET is_seller = false
-WHERE is_seller IS NULL;
-
-ALTER TABLE public.user_profiles
-  ALTER COLUMN is_admin SET DEFAULT false,
-  ALTER COLUMN is_admin SET NOT NULL,
-  ALTER COLUMN is_seller SET DEFAULT false,
-  ALTER COLUMN is_seller SET NOT NULL;
-
--- Complete the property columns used by search, seller, and admin screens.
-ALTER TABLE public.properties
-  ADD COLUMN IF NOT EXISTS detailed_location text,
-  ADD COLUMN IF NOT EXISTS town text,
-  ADD COLUMN IF NOT EXISTS seller_name text,
-  ADD COLUMN IF NOT EXISTS seller_phone text,
-  ADD COLUMN IF NOT EXISTS built_year integer,
-  ADD COLUMN IF NOT EXISTS photos text[],
-  ADD COLUMN IF NOT EXISTS latitude numeric,
-  ADD COLUMN IF NOT EXISTS longitude numeric,
-  ADD COLUMN IF NOT EXISTS status text DEFAULT 'pending',
-  ADD COLUMN IF NOT EXISTS seller_id uuid REFERENCES auth.users(id),
-  ADD COLUMN IF NOT EXISTS rejection_reason text;
-
-UPDATE public.properties
-SET status = 'pending'
-WHERE status IS NULL;
-
-ALTER TABLE public.properties
-  ALTER COLUMN status SET DEFAULT 'pending',
-  ALTER COLUMN status SET NOT NULL;
-
-ALTER TABLE public.properties
-  DROP CONSTRAINT IF EXISTS properties_status_check;
-
-ALTER TABLE public.properties
-  ADD CONSTRAINT properties_status_check
-  CHECK (status IN ('pending', 'approved', 'rejected'));
-
--- Enquiries are submitted by visitors and read/managed by their owner or an admin.
 CREATE TABLE public.enquiries (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   name text NOT NULL,
@@ -78,7 +65,6 @@ CREATE TABLE public.enquiries (
   CONSTRAINT enquiries_status_check CHECK (status IN ('PENDING', 'RESPONDED'))
 );
 
--- Users can save their interest in a property once.
 CREATE TABLE public.property_interests (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   property_id uuid NOT NULL REFERENCES public.properties(id) ON DELETE CASCADE,
@@ -87,7 +73,6 @@ CREATE TABLE public.property_interests (
   CONSTRAINT property_interests_property_user_key UNIQUE (property_id, user_id)
 );
 
--- Nearby amenities displayed on a property details page.
 CREATE TABLE public.property_amenities (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   property_id uuid NOT NULL REFERENCES public.properties(id) ON DELETE CASCADE,
@@ -99,17 +84,10 @@ CREATE TABLE public.property_amenities (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS properties_seller_id_idx
-  ON public.properties (seller_id);
-
-CREATE INDEX IF NOT EXISTS properties_status_idx
-  ON public.properties (status);
-
-CREATE INDEX IF NOT EXISTS property_interests_property_id_idx
-  ON public.property_interests (property_id);
-
-CREATE INDEX IF NOT EXISTS property_amenities_property_id_idx
-  ON public.property_amenities (property_id);
+CREATE INDEX properties_seller_id_idx ON public.properties (seller_id);
+CREATE INDEX properties_status_idx ON public.properties (status);
+CREATE INDEX property_interests_property_id_idx ON public.property_interests (property_id);
+CREATE INDEX property_amenities_property_id_idx ON public.property_amenities (property_id);
 
 -- A small helper keeps admin checks consistent across RLS policies.
 CREATE OR REPLACE FUNCTION public.is_admin()
@@ -130,7 +108,8 @@ $$;
 REVOKE ALL ON FUNCTION public.is_admin() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.is_admin() TO anon, authenticated, service_role;
 
--- Prevent a signed-in user from promoting their own profile to admin.
+-- Prevent authenticated users from setting or changing their own admin flag.
+-- Trusted SQL/service-role operations have auth.uid() = NULL and remain allowed.
 CREATE OR REPLACE FUNCTION public.prevent_admin_escalation()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -139,8 +118,14 @@ SET search_path = public, pg_temp
 AS $$
 BEGIN
   IF auth.uid() IS NOT NULL
-     AND auth.uid() = OLD.id
-     AND NEW.is_admin IS DISTINCT FROM OLD.is_admin THEN
+     AND (
+       (TG_OP = 'INSERT' AND NEW.is_admin IS DISTINCT FROM false)
+       OR (
+         TG_OP = 'UPDATE'
+         AND auth.uid() = OLD.id
+         AND NEW.is_admin IS DISTINCT FROM OLD.is_admin
+       )
+     ) THEN
     RAISE EXCEPTION 'Only a trusted server can change administrator status';
   END IF;
 
@@ -148,13 +133,11 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS prevent_admin_escalation_trigger ON public.user_profiles;
 CREATE TRIGGER prevent_admin_escalation_trigger
-  BEFORE UPDATE OF is_admin ON public.user_profiles
+  BEFORE INSERT OR UPDATE OF is_admin ON public.user_profiles
   FOR EACH ROW
   EXECUTE FUNCTION public.prevent_admin_escalation();
 
--- Keep updated_at values correct for profile and enquiry edits.
 CREATE OR REPLACE FUNCTION public.set_updated_at()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -166,26 +149,45 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS user_profiles_set_updated_at ON public.user_profiles;
 CREATE TRIGGER user_profiles_set_updated_at
   BEFORE UPDATE ON public.user_profiles
   FOR EACH ROW
   EXECUTE FUNCTION public.set_updated_at();
 
-DROP TRIGGER IF EXISTS enquiries_set_updated_at ON public.enquiries;
 CREATE TRIGGER enquiries_set_updated_at
   BEFORE UPDATE ON public.enquiries
   FOR EACH ROW
   EXECUTE FUNCTION public.set_updated_at();
 
--- Replace the two original property policies with the final access model.
-DROP POLICY IF EXISTS "Anyone can view properties" ON public.properties;
-DROP POLICY IF EXISTS "Authenticated users can create properties" ON public.properties;
-DROP POLICY IF EXISTS "Users can update own properties" ON public.properties;
-DROP POLICY IF EXISTS "Users can delete own properties" ON public.properties;
-DROP POLICY IF EXISTS "Admins can manage all properties" ON public.properties;
-DROP POLICY IF EXISTS "Sellers can insert their own properties" ON public.properties;
-DROP POLICY IF EXISTS "Sellers can update their own properties" ON public.properties;
+-- Profile policies. The insert check is defense in depth with the trigger.
+ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can read own profile"
+  ON public.user_profiles
+  FOR SELECT
+  TO authenticated
+  USING (auth.uid() = id);
+
+CREATE POLICY "Users can update own profile"
+  ON public.user_profiles
+  FOR UPDATE
+  TO authenticated
+  USING (auth.uid() = id)
+  WITH CHECK (auth.uid() = id);
+
+CREATE POLICY "Users can insert own profile"
+  ON public.user_profiles
+  FOR INSERT
+  TO authenticated
+  WITH CHECK (auth.uid() = id AND is_admin = false);
+
+-- Replace seller_id with user_id when importing historical property rows.
+UPDATE public.properties
+SET seller_id = user_id
+WHERE seller_id IS NULL AND user_id IS NOT NULL;
+
+-- Property policies.
+ALTER TABLE public.properties ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Public can view approved properties"
   ON public.properties
@@ -199,6 +201,7 @@ CREATE POLICY "Sellers can insert their own properties"
   TO authenticated
   WITH CHECK (
     seller_id = auth.uid()
+    AND status = 'pending'
     AND EXISTS (
       SELECT 1 FROM public.user_profiles
       WHERE id = auth.uid() AND is_seller = true
@@ -218,6 +221,7 @@ CREATE POLICY "Sellers can update their own properties"
   )
   WITH CHECK (
     seller_id = auth.uid()
+    AND status = 'pending'
     AND EXISTS (
       SELECT 1 FROM public.user_profiles
       WHERE id = auth.uid() AND is_seller = true
@@ -299,7 +303,7 @@ CREATE POLICY "Admins can manage all amenities"
   USING (public.is_admin())
   WITH CHECK (public.is_admin());
 
--- Enquiry policies. The JWT email is used directly; auth.users is never exposed.
+-- Enquiry policies.
 ALTER TABLE public.enquiries ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Anyone can create enquiries"
@@ -324,7 +328,6 @@ CREATE POLICY "Admins can manage all enquiries"
   USING (public.is_admin())
   WITH CHECK (public.is_admin());
 
--- The admin Edge Function needs counts, but browser roles do not.
 CREATE OR REPLACE VIEW public.user_property_counts AS
 SELECT seller_id, count(*)::bigint AS property_count
 FROM public.properties
@@ -350,7 +353,6 @@ BEGIN
 END;
 $$;
 
--- Default nearby amenities for new listings.
 CREATE OR REPLACE FUNCTION public.get_location_coordinates(location_name text)
 RETURNS TABLE (lat numeric, lng numeric)
 LANGUAGE sql
@@ -413,7 +415,6 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS set_coordinates_trigger ON public.properties;
 CREATE TRIGGER set_coordinates_trigger
   BEFORE INSERT OR UPDATE OF location ON public.properties
   FOR EACH ROW
@@ -446,7 +447,6 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS add_amenities_trigger ON public.properties;
 CREATE TRIGGER add_amenities_trigger
   AFTER INSERT ON public.properties
   FOR EACH ROW

@@ -1,18 +1,17 @@
 # Supabase setup
 
-The first two migrations are already part of the SG Homie migration history:
+The active migration path contains one complete initial migration:
 
-- `20250328092626_wooden_brook.sql`
-- `20250328093116_silent_wave.sql`
+- `20250328092626_sghomie_initial.sql`
 
-The next migration, `20250328094231_frosty_tree.sql`, completes the application
-schema. It is safe to push to a new hosted Supabase project after linking the
-project from `SGHomie/BackEnd`.
+It creates the full application schema, policies, views, and triggers for a
+fresh Supabase project. The historical migrations are preserved under
+`archived_migrations/` for reference only.
 
 ## Extensions
 
-The migration enables the only database extension currently required by SG
-Homie:
+The initial migration enables the only database extension currently required by
+SG Homie:
 
 ```sql
 create extension if not exists pgcrypto with schema extensions;
@@ -38,21 +37,22 @@ where id = (
 );
 ```
 
-## Push the schema
+## Reset and push the schema
 
 From the backend directory:
 
 ```bash
 supabase login
 supabase link --project-ref YOUR_PROJECT_REF
-supabase migration list
 supabase db push --dry-run
 supabase db push --linked
 ```
 
-Only migrations are pushed to the hosted project. `seed.sql` is used by local
-`supabase db reset` to load nine approved demo properties; it is not applied by
-`supabase db push`, so demo data cannot enter production accidentally.
+`seed.sql` is used by local `supabase db reset` to load nine approved demo
+properties; it is not applied by `supabase db push`, so demo data cannot enter
+production accidentally. For a hosted project that contains an old schema,
+reset it through the Supabase Dashboard before pushing this fresh initial
+migration. `supabase db reset` only resets the local database.
 
 For local database testing, run:
 
