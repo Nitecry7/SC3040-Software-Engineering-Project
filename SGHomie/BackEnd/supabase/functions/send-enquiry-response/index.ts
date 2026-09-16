@@ -40,7 +40,7 @@ Deno.serve(async (req) => {
     const { error: updateError } = await supabaseClient
       .from('enquiries')
       .update({
-        status: 'responded',
+        status: 'RESPONDED',
         admin_response: response,
         updated_at: new Date().toISOString(),
       })
