@@ -7,6 +7,8 @@ interface AuthContextType {
   user: User | null;
   signOut: () => Promise<void>;
   needsProfileSetup: boolean;
+  isAdmin: boolean;
+  isSeller: boolean;
   loading: boolean;
 }
 
@@ -14,6 +16,8 @@ const AuthContext = createContext<AuthContextType>({
   user: null,
   signOut: async () => {},
   needsProfileSetup: false,
+  isAdmin: false,
+  isSeller: false,
   loading: true,
 });
 
@@ -22,6 +26,8 @@ export const useAuth = () => useContext(AuthContext);
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [needsProfileSetup, setNeedsProfileSetup] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isSeller, setIsSeller] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -32,6 +38,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       if (currentUser) {
         checkProfile(currentUser.id);
+      } else {
+        setIsAdmin(false);
+        setIsSeller(false);
       }
       setLoading(false);
     });
@@ -45,6 +54,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         checkProfile(currentUser.id);
       } else {
         setNeedsProfileSetup(false);
+        setIsAdmin(false);
+        setIsSeller(false);
       }
     });
 
@@ -57,11 +68,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const { data, error } = await supabase
         .from('user_profiles')
-        .select('name, income_range, preferred_property_type, preferred_locations, family_members')
+        .select('name, income_range, preferred_property_type, preferred_locations, family_members, is_admin, is_seller')
         .eq('id', userId)
         .single();
 
       if (error) throw error;
+
+      const admin = data?.is_admin === true;
+      const seller = data?.is_seller === true;
+      setIsAdmin(admin);
+      setIsSeller(seller);
+
+      // Administrators do not need to complete the normal buyer profile and
+      // should go directly to admin functionality.
+      if (admin) {
+        setNeedsProfileSetup(false);
+        return;
+      }
 
       const needsSetup = !data || !data.name || !data.income_range || 
                         !data.preferred_property_type || !data.preferred_locations || 
@@ -70,6 +93,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setNeedsProfileSetup(needsSetup);
     } catch (error) {
       console.error('Error checking profile:', error);
+      setIsAdmin(false);
+      setIsSeller(false);
       setNeedsProfileSetup(true);
     }
   };
@@ -80,6 +105,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.clear();
       setUser(null);
       setNeedsProfileSetup(false);
+      setIsAdmin(false);
+      setIsSeller(false);
     } catch (error) {
       console.error('Error signing out:', error);
       throw error;
@@ -87,7 +114,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{ user, signOut, needsProfileSetup, loading }}>
+    <AuthContext.Provider value={{ user, signOut, needsProfileSetup, isAdmin, isSeller, loading }}>
       {children}
       {user && needsProfileSetup && (
         <InitialProfileSetup

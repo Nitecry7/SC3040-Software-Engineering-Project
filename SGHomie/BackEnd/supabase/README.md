@@ -62,3 +62,53 @@ supabase db reset
 ```
 
 Do not run `supabase db reset` against the linked hosted project.
+
+## HDB postal-code lookup
+
+The `lookup-hdb-location` Edge Function uses OneMap for postal-code geocoding
+and the official HDB Property Information dataset for residential-block
+validation. Configure the OneMap credentials as Edge Function secrets before
+deploying the function:
+
+```bash
+supabase secrets set ONEMAP_EMAIL=your-registered-email@example.com ONEMAP_PASSWORD='your-onemap-password'
+supabase functions deploy lookup-hdb-location
+```
+
+The OneMap credentials are server-side only and must not be added to the
+frontend `.env` file.
+
+## Property image storage and cleanup
+
+Property images use the public `property-images` bucket and are organised as:
+
+```text
+<seller-id>/<property-id>/<random-file-name>.<extension>
+```
+
+The seller dashboard uploads JPG, PNG and WebP files up to 10 MiB. The storage
+policies restrict uploads and deletion to the owning seller or an administrator;
+the bucket is public so approved listing pages can render image URLs.
+
+Deploy the cleanup function after the migration:
+
+```bash
+supabase functions deploy cleanup-unlinked-property-images
+```
+
+Create the 30-minute schedule in Supabase Dashboard → Integrations → Cron:
+
+1. Create a job with schedule `*/30 * * * *`.
+2. Configure it to make a `POST` request to
+   `/functions/v1/cleanup-unlinked-property-images`.
+3. Add the header `apikey: YOUR_SUPABASE_SECRET_KEY`.
+4. Use `{}` as the JSON request body.
+
+The cleanup function accepts only a Supabase secret API key in the `apikey`
+header and uses its server-side Supabase key to delete objects. The schedule
+and credential therefore stay in the Supabase Dashboard rather than in SQL or
+the repository.
+
+The scheduled function reads the image URLs linked from `properties.image_url`
+and `properties.photos`, then removes only unlinked objects from the bucket.
+External legacy image URLs are ignored and are not deleted.
