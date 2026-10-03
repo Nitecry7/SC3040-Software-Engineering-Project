@@ -348,7 +348,7 @@ jobs:
                       }
                   ],
                   "temperature": 0.2,
-                  "max_tokens": 800
+                  "max_tokens": 1600
               }
 
               request = urllib.request.Request(
@@ -418,12 +418,17 @@ jobs:
                           "content"
                       )
 
-                      if isinstance(content, str):
+                      reasoning = message_data.get(
+                          "reasoning"
+                      )
+
+                      if isinstance(content, str) and content.strip():
                           ai_summary = content.strip()
 
                           bad_prefixes = (
                               "here's a thinking process",
                               "here is a thinking process",
+                              "thinking process:",
                               "analysis:",
                               "reasoning:",
                               "step 1",
@@ -441,9 +446,21 @@ jobs:
 
                               ai_summary = ""
 
+                      elif reasoning:
+                          print(
+                              "OpenRouter returned reasoning but no final content. "
+                              "Finish reason:",
+                              choices[0].get(
+                                  "finish_reason",
+                                  "unknown"
+                              )
+                          )
+
+                          ai_summary = ""
+
                       else:
                           print(
-                              "OpenRouter returned no text content:",
+                              "OpenRouter returned no usable text content:",
                               json.dumps(
                                   choices[0],
                                   ensure_ascii=False
@@ -543,8 +560,6 @@ jobs:
               if is_merge_commit
               else "No"
           )
-
-         
 
           message = f"""🏠 SG Homie Repository Update
 
