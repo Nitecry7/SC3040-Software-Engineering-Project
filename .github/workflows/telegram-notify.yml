@@ -21,6 +21,7 @@ jobs:
           GITHUB_ACTOR_ENV: ${{ github.actor }}
           GITHUB_SHA_ENV: ${{ github.sha }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
         run: |
           python <<'PY'
           import json
@@ -57,7 +58,7 @@ jobs:
                   before = after
 
           # ---------------------------------------------------------
-          # 2. Determine the actual resulting Git changes
+          # 2. Determine actual resulting Git changes
           # ---------------------------------------------------------
 
           def run_git(args):
@@ -153,7 +154,7 @@ jobs:
                   )
 
           # ---------------------------------------------------------
-          # 3. Analyse commits separately from resulting file changes
+          # 3. Analyse commits separately
           # ---------------------------------------------------------
 
           commit_lines = []
@@ -183,7 +184,7 @@ jobs:
               )
 
           # ---------------------------------------------------------
-          # 4. Detect whether the final pushed commit is a merge
+          # 4. Detect merge commit
           # ---------------------------------------------------------
 
           parent_output = run_git([
@@ -211,7 +212,7 @@ jobs:
               merge_description = head_subject
 
           # ---------------------------------------------------------
-          # 5. Prepare deterministic Git facts for the AI
+          # 5. Prepare Git facts for AI
           # ---------------------------------------------------------
 
           file_fact_lines = []
@@ -270,6 +271,10 @@ jobs:
           # ---------------------------------------------------------
 
           ai_summary = ""
+
+          requested_models = "openrouter/free"
+
+          resolved_model = "Unavailable"
 
           api_key = os.environ.get(
               "OPENROUTER_API_KEY",
@@ -331,17 +336,20 @@ jobs:
           """
 
               request_body = {
-                "models": [
-                    "google/gemma-4-31b-it:free",
-                    "google/gemma-4-26b-a4b-it:free"
-                ],
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": ai_input}
-                ],
-                "temperature": 0.2,
-                "max_tokens": 800
-            }
+                  "models": requested_model,
+                  "messages": [
+                      {
+                          "role": "system",
+                          "content": system_prompt
+                      },
+                      {
+                          "role": "user",
+                          "content": ai_input
+                      }
+                  ],
+                  "temperature": 0.2,
+                  "max_tokens": 800
+              }
 
               request = urllib.request.Request(
                   "https://openrouter.ai/api/v1/chat/completions",
@@ -368,22 +376,31 @@ jobs:
                           response.read().decode("utf-8")
                       )
 
-                  print(
-                      "OpenRouter response model:",
-                      result.get("model", "unknown")
+                  resolved_model = (
+                      result.get("model")
+                      or "Unknown"
                   )
 
-                  response_model = result.get("model", "").lower()
+                  print(
+                      "OpenRouter selected model:",
+                      resolved_model
+                  )
+
+                  response_model = resolved_model.lower()
 
                   blocked_model_terms = (
                       "safety",
                       "moderation",
                       "classifier"
                   )
-                                  
-                  if any(term in response_model for term in blocked_model_terms):
+
+                  if any(
+                      term in response_model
+                      for term in blocked_model_terms
+                  ):
                       raise RuntimeError(
-                          f"OpenRouter routed to unsuitable model: {response_model}"
+                          "OpenRouter routed to unsuitable model: "
+                          + response_model
                       )
 
                   choices = result.get(
@@ -421,6 +438,7 @@ jobs:
                                   "OpenRouter returned reasoning "
                                   "instead of final summary."
                               )
+
                               ai_summary = ""
 
                       else:
@@ -448,7 +466,7 @@ jobs:
               )
 
           # ---------------------------------------------------------
-          # 7. Keep AI summary within a safe Telegram size
+          # 7. Keep AI summary within Telegram size
           # ---------------------------------------------------------
 
           if len(ai_summary) > 1800:
@@ -526,6 +544,11 @@ jobs:
               else "No"
           )
 
+          candidate_models_text = "\n".join(
+              f"• {model}"
+              for model in requested_models
+          )
+
           message = f"""🏠 SG Homie Repository Update
 
           📦 Repository
@@ -542,6 +565,10 @@ jobs:
 
           ✨ AI Change Summary
           {ai_summary}
+
+          🧠 Powered By
+          Router: {requested_model}
+          Selected: {resolved_model}
 
           📊 Actual Net Changes
           {len(changed_files)} file(s) changed
@@ -564,7 +591,6 @@ jobs:
           ).strip()
 
           # Telegram sendMessage limit is approximately 4096 characters.
-          # Keep some room for the comparison link.
 
           if len(message) > 4000:
               message = (
@@ -588,6 +614,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TELEGRAM_TOPIC_ID: ${{ secrets.TELEGRAM_TOPIC_ID }}
+
         run: |
           python <<'PY'
           import json
