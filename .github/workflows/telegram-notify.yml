@@ -272,7 +272,7 @@ jobs:
 
           ai_summary = ""
 
-          requested_models = "openrouter/free"
+          requested_model = "openrouter/free"
 
           resolved_model = "Unavailable"
 
@@ -336,7 +336,7 @@ jobs:
           """
 
               request_body = {
-                  "models": requested_model,
+                  "model": requested_model,
                   "messages": [
                       {
                           "role": "system",
@@ -544,10 +544,7 @@ jobs:
               else "No"
           )
 
-          candidate_models_text = "\n".join(
-              f"• {model}"
-              for model in requested_models
-          )
+         
 
           message = f"""🏠 SG Homie Repository Update
 
