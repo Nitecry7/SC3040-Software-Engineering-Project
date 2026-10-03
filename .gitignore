@@ -4,3 +4,7 @@ dist/
 .env
 .env.*
 !.env.example
+# Local AI coding and design tooling
+.agents/
+.codex/
+.impeccable/
