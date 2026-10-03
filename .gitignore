@@ -8,3 +8,6 @@ dist/
 .agents/
 .codex/
 .impeccable/
+
+# Raw ML datasets
+MLPricePredictorV2/data/raw/*.csv
