@@ -59,6 +59,10 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function normalisePostalCode(value: unknown): string {
+  if (typeof value === 'number' && Number.isInteger(value)) {
+    return String(value);
+  }
+
   return typeof value === 'string' ? value.replace(/\s+/g, '') : '';
 }
 
@@ -161,6 +165,10 @@ async function getOneMapToken(forceRefresh = false): Promise<string> {
   const password = Deno.env.get('ONEMAP_PASSWORD');
 
   if (!email || !password) {
+    console.error('OneMap lookup credentials are missing', {
+      hasEmail: Boolean(email),
+      hasPassword: Boolean(password),
+    });
     throw new HttpError('OneMap credentials are not configured', 503);
   }
 
@@ -176,11 +184,19 @@ async function getOneMapToken(forceRefresh = false): Promise<string> {
   });
 
   if (!response.ok) {
+    const responseBody = await response.text();
+    console.error('OneMap token request failed', {
+      status: response.status,
+      responseBody: responseBody.slice(0, 1000),
+    });
     throw new HttpError('Unable to authenticate with OneMap', 503);
   }
 
   const payload = await response.json();
   if (typeof payload.access_token !== 'string') {
+    console.error('OneMap token response did not contain an access token', {
+      responseKeys: payload && typeof payload === 'object' ? Object.keys(payload) : [],
+    });
     throw new HttpError('OneMap returned an invalid access token', 503);
   }
 
@@ -209,10 +225,25 @@ async function searchOneMap(postalCode: string, token: string): Promise<OneMapRe
     throw new HttpError('OneMap token expired', 401);
   }
   if (!response.ok) {
+    const responseBody = await response.text();
+    console.error('OneMap address search request failed', {
+      status: response.status,
+      responseBody: responseBody.slice(0, 1000),
+    });
     throw new HttpError('OneMap address search failed', 503);
   }
 
   const payload = await response.json();
+  if (typeof payload?.error === 'string') {
+    console.error('OneMap address search returned an API error', {
+      error: payload.error,
+      postalCode,
+    });
+    if (/\b(?:invalid|expired|missing|not found)\b.{0,40}\btoken\b|\btoken\b.{0,40}\b(?:invalid|expired|missing|not found)\b/i.test(payload.error)) {
+      throw new HttpError('OneMap rejected the search token', 401);
+    }
+    throw new HttpError('OneMap address search failed', 503);
+  }
   return Array.isArray(payload.results) ? payload.results : [];
 }
 
@@ -226,10 +257,23 @@ async function findHdbRecord(blockNumber: string, streetName: string): Promise<H
 
     const response = await fetch(`${DATASTORE_SEARCH_URL}?${params.toString()}`);
     if (!response.ok) {
+      const responseBody = await response.text();
+      console.error('HDB dataset query failed', {
+        status: response.status,
+        filters,
+        responseBody: responseBody.slice(0, 1000),
+      });
       throw new HttpError('HDB dataset lookup failed', 503);
     }
 
     const payload = await response.json();
+    if (payload?.success === false) {
+      console.error('HDB dataset returned an unsuccessful result', {
+        filters,
+        error: payload.error,
+      });
+      throw new HttpError('HDB dataset lookup failed', 503);
+    }
     return Array.isArray(payload?.result?.records) ? payload.result.records as HdbRecord[] : [];
   };
 
@@ -241,6 +285,11 @@ async function findHdbRecord(blockNumber: string, streetName: string): Promise<H
   const exactRecords = await query({ blk_no: blockNumber, street: streetName });
   const exactMatches = exactRecords.filter(matchesStreet);
   if (exactMatches.length > 0) {
+    console.log('HDB block matched by exact block and street', {
+      blockNumber,
+      streetName,
+      matchCount: exactMatches.length,
+    });
     return exactMatches.find(record => String(record.residential ?? '').trim().toUpperCase() === 'Y')
       ?? exactMatches[0];
   }
@@ -249,12 +298,73 @@ async function findHdbRecord(blockNumber: string, streetName: string): Promise<H
   // block candidates and apply the same normalisation locally before rejecting.
   const blockRecords = await query({ blk_no: blockNumber });
   const blockMatches = blockRecords.filter(matchesStreet);
+  console.log('HDB block matched after street-name normalization', {
+    blockNumber,
+    streetName,
+    candidateCount: blockRecords.length,
+    matchCount: blockMatches.length,
+  });
   return blockMatches.find(record => String(record.residential ?? '').trim().toUpperCase() === 'Y')
     ?? blockMatches[0]
     ?? null;
 }
 
-async function lookupHdbLocation(postalCode: string) {
+async function issueVerificationToken(
+  sellerId: string,
+  address: {
+    postalCode: string;
+    blockNumber: string;
+    streetName: string;
+    town: string;
+    builtYear: number | null;
+    latitude: number;
+    longitude: number;
+  },
+): Promise<string> {
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+  if (!supabaseUrl || !serviceRoleKey) {
+    throw new HttpError('Supabase server credentials are not configured', 503);
+  }
+
+  const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
+  await serviceClient
+    .from('hdb_location_verifications')
+    .delete()
+    .eq('seller_id', sellerId)
+    .lt('expires_at', new Date().toISOString());
+
+  const { data, error } = await serviceClient
+    .from('hdb_location_verifications')
+    .insert({
+      seller_id: sellerId,
+      postal_code: address.postalCode,
+      block_number: address.blockNumber,
+      street_name: address.streetName,
+      town: address.town,
+      built_year: address.builtYear,
+      latitude: address.latitude,
+      longitude: address.longitude,
+    })
+    .select('token')
+    .single();
+
+  if (error || !data?.token) {
+    console.error('Failed to issue HDB verification token', {
+      sellerId,
+      error,
+    });
+    throw new HttpError('Unable to save HDB verification', 503);
+  }
+
+  return data.token;
+}
+
+async function lookupHdbLocation(postalCode: string, sellerId: string) {
   let token = await getOneMapToken();
   let oneMapResults: OneMapResult[];
 
@@ -263,14 +373,31 @@ async function lookupHdbLocation(postalCode: string) {
   } catch (error) {
     if (error instanceof HttpError && error.status === 401) {
       token = await getOneMapToken(true);
-      oneMapResults = await searchOneMap(postalCode, token);
+      try {
+        oneMapResults = await searchOneMap(postalCode, token);
+      } catch (refreshError) {
+        if (refreshError instanceof HttpError && refreshError.status === 401) {
+          console.error('OneMap rejected a refreshed search token', { postalCode });
+          throw new HttpError('OneMap rejected a refreshed search token', 503);
+        }
+        throw refreshError;
+      }
     } else {
       throw error;
     }
   }
 
-  const result = oneMapResults.find(item => normalisePostalCode(item.POSTAL) === postalCode)
-    ?? oneMapResults[0];
+  const hasExactPostalMatch = oneMapResults.some(item => normalisePostalCode(item.POSTAL) === postalCode);
+  console.log('OneMap postal search completed', {
+    postalCode,
+    resultCount: oneMapResults.length,
+    hasExactPostalMatch,
+  });
+
+  // Only accept an address whose returned postal code exactly matches the
+  // requested value. Falling back to the first fuzzy search result could
+  // verify a different block when OneMap has no exact match.
+  const result = oneMapResults.find(item => normalisePostalCode(item.POSTAL) === postalCode);
 
   if (!result?.BLK_NO || !result.ROAD_NAME) {
     return { valid: false, code: 'ADDRESS_NOT_FOUND', message: 'No address was found for this postal code.' };
@@ -293,6 +420,17 @@ async function lookupHdbLocation(postalCode: string) {
 
   const blockNumber = result.BLK_NO.trim();
   const streetName = result.ROAD_NAME.trim();
+  const town = mapTownCode(hdbRecord.bldg_contract_town);
+  const builtYear = parseOptionalYear(hdbRecord.year_completed);
+  const verificationToken = await issueVerificationToken(sellerId, {
+    postalCode,
+    blockNumber,
+    streetName,
+    town,
+    builtYear,
+    latitude,
+    longitude,
+  });
 
   return {
     valid: true,
@@ -301,10 +439,11 @@ async function lookupHdbLocation(postalCode: string) {
       blockNumber,
       streetName,
       displayAddress: result.ADDRESS?.trim() || `Blk ${blockNumber} ${streetName} Singapore ${postalCode}`,
-      town: mapTownCode(hdbRecord.bldg_contract_town),
-      builtYear: parseOptionalYear(hdbRecord.year_completed),
+      town,
+      builtYear,
       latitude,
       longitude,
+      verificationToken,
     },
   };
 }
@@ -314,8 +453,14 @@ Deno.serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
+  const requestId = req.headers.get('x-request-id') || crypto.randomUUID();
+
   if (req.method !== 'POST') {
-    return jsonResponse({ error: 'Method not allowed' }, 405);
+    console.warn('HDB lookup received an unsupported method', {
+      requestId,
+      method: req.method,
+    });
+    return jsonResponse({ error: 'Method not allowed', requestId }, 405);
   }
 
   try {
@@ -324,7 +469,13 @@ Deno.serve(async (req) => {
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
 
     if (!authorization || !supabaseUrl || !supabaseAnonKey) {
-      return jsonResponse({ error: 'Authentication is required' }, 401);
+      console.error('HDB lookup is missing required request configuration', {
+        requestId,
+        hasAuthorization: Boolean(authorization),
+        hasSupabaseUrl: Boolean(supabaseUrl),
+        hasSupabaseAnonKey: Boolean(supabaseAnonKey),
+      });
+      return jsonResponse({ error: 'Authentication is required', requestId }, 401);
     }
 
     const supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
@@ -334,7 +485,11 @@ Deno.serve(async (req) => {
 
     const { data: authData, error: authError } = await supabaseClient.auth.getUser();
     if (authError || !authData.user) {
-      return jsonResponse({ error: 'Authentication is required' }, 401);
+      console.error('HDB lookup rejected an invalid user token', {
+        requestId,
+        error: authError,
+      });
+      return jsonResponse({ error: 'Authentication is required', requestId }, 401);
     }
 
     const { data: profile, error: profileError } = await supabaseClient
@@ -344,12 +499,23 @@ Deno.serve(async (req) => {
       .single();
 
     if (profileError || !profile?.is_seller) {
-      return jsonResponse({ error: 'Seller access is required' }, 403);
+      console.error('HDB lookup rejected a non-seller profile', {
+        requestId,
+        userId: authData.user.id,
+        error: profileError,
+        isSeller: profile?.is_seller ?? false,
+      });
+      return jsonResponse({ error: 'Seller access is required', requestId }, 403);
     }
 
     const body = await req.json();
-    const postalCode = normalisePostalCode(body?.postalCode);
+    const postalCode = normalisePostalCode(body?.postalCode ?? body?.postal_code);
     if (!/^\d{6}$/.test(postalCode)) {
+      console.warn('HDB lookup received an invalid postal code payload', {
+        requestId,
+        payloadKeys: body && typeof body === 'object' ? Object.keys(body) : [],
+        valueType: typeof (body?.postalCode ?? body?.postal_code),
+      });
       return jsonResponse({
         valid: false,
         code: 'INVALID_POSTAL_CODE',
@@ -357,13 +523,19 @@ Deno.serve(async (req) => {
       }, 400);
     }
 
-    return jsonResponse(await lookupHdbLocation(postalCode));
+    console.log('HDB postal lookup started', {
+      requestId,
+      userId: authData.user.id,
+      postalCode,
+    });
+    return jsonResponse(await lookupHdbLocation(postalCode, authData.user.id));
   } catch (error) {
-    console.error('HDB location lookup failed:', error);
+    console.error('HDB location lookup failed', { requestId, error });
     const status = error instanceof HttpError ? error.status : 500;
     return jsonResponse({
       error: status >= 500 ? 'Address lookup is temporarily unavailable.' : 'Address lookup failed.',
       details: error instanceof Error ? error.message : 'Unknown error',
+      requestId,
     }, status);
   }
 });

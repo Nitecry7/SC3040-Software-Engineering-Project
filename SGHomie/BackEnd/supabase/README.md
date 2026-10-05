@@ -1,12 +1,17 @@
 # Supabase setup
 
-The active migration path contains one complete initial migration:
+The active migration path starts with one complete initial migration and then
+applies incremental migrations for the current application features:
 
 - `20250328092626_sghomie_initial.sql`
+- HDB postal-code validation, property image storage, chatbot drafts, and
+  admin-role constraints
+- `20260917120000_hdb_verification_tokens.sql` for server-enforced HDB writes
+- `20260917130000_remove_chatbot_rate_limits.sql` removes the chatbot counter
 
-It creates the full application schema, policies, views, and triggers for a
-fresh Supabase project. The historical migrations are preserved under
-`archived_migrations/` for reference only.
+The initial migration creates the full application schema, policies, views, and
+triggers for a fresh Supabase project. Later migrations must be applied in
+timestamp order with the initial schema.
 
 ## Extensions
 
@@ -77,6 +82,22 @@ supabase functions deploy lookup-hdb-location
 
 The OneMap credentials are server-side only and must not be added to the
 frontend `.env` file.
+
+The lookup function also issues a short-lived, seller-bound verification token.
+The `properties` trigger uses that token's verified address and coordinates
+on seller writes, so the frontend cannot mark an address as verified or submit
+fabricated map coordinates. Apply the migrations before deploying the lookup
+and chatbot functions:
+
+```bash
+supabase db push --linked
+supabase functions deploy lookup-hdb-location
+supabase functions deploy chatbot
+```
+
+The chatbot has no application-level request rate limit. Its default model can
+be overridden with the `OPENROUTER_MODEL` Edge Function secret; the default is
+`openai/gpt-oss-20b:free`.
 
 ## Property image storage and cleanup
 

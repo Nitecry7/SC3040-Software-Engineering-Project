@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { MessageCircle, X, Send, ChevronDown, ChevronUp } from 'lucide-react';
 // Import ReactMarkdown to render Markdown content in the chat messages.
 import ReactMarkdown from 'react-markdown';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 // Import the Supabase client for making API requests.
 import { chatbotSupabase, supabase } from '../lib/supabase';
 
@@ -163,8 +164,24 @@ const Chatbot: React.FC = () => {
         window.dispatchEvent(new CustomEvent('seller-dashboard-refresh'));
       }
     } catch (error) {
-      // Log the error and add a fallback error message for the user.
-      console.error('Error getting response:', error);
+      // Surface the Edge Function status and response body in the browser
+      // console during local development to help diagnose backend failures.
+      if (import.meta.env.DEV && error instanceof FunctionsHttpError) {
+        const responseBody = await error.context.clone().text();
+        let parsedBody: unknown = responseBody;
+        try {
+          parsedBody = JSON.parse(responseBody);
+        } catch {
+          // Keep the raw response text when the function did not return JSON.
+        }
+        console.error('Chatbot Edge Function failed:', {
+          status: error.context.status,
+          statusText: error.context.statusText,
+          body: parsedBody,
+        });
+      } else {
+        console.error('Error getting response:', error);
+      }
       updateLastAssistantMessage("I'm sorry, I'm having trouble responding right now. Please try again later.");
     } finally {
       // Turn off the loading indicator when the request is complete.

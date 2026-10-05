@@ -50,6 +50,7 @@ interface HdbLocationAddress {
   builtYear: number | null;
   latitude: number;
   longitude: number;
+  verificationToken: string;
 }
 
 interface HdbLocationLookupResponse {
@@ -155,6 +156,7 @@ const SellerDashboard = () => {
     longitude: '',
     hdb_verified: false,
     location_verified_at: '',
+    hdb_verification_token: '',
   });
   
   // Image files are uploaded to Supabase Storage when the property is saved.
@@ -170,16 +172,20 @@ const SellerDashboard = () => {
   const [countrySearch, setCountrySearch] = useState('');
 
   const parseStoredPhone = (phone: string) => {
-    const compactPhone = phone.replace(/\s+/g, '');
-    if (compactPhone.startsWith('+65')) {
+    const compactPhone = phone.replace(/[\s().-]/g, '');
+    const knownCountry = [...PHONE_COUNTRIES]
+      .sort((left, right) => right.dialCode.length - left.dialCode.length)
+      .find(country => compactPhone.startsWith(country.dialCode));
+
+    if (knownCountry) {
       return {
-        countryName: 'Singapore',
-        countryCode: '+65',
-        number: compactPhone.slice(3),
+        countryName: knownCountry.name,
+        countryCode: knownCountry.dialCode,
+        number: compactPhone.slice(knownCountry.dialCode.length),
       };
     }
 
-    const match = phone.trim().match(/^(\+\d{1,3})\s*(.*)$/);
+    const match = phone.trim().match(/^(\+\d{1,3})[\s().-]*(.*)$/);
     const countryCode = match?.[1] || '+65';
     return {
       countryName: PHONE_COUNTRIES.find(country => country.dialCode === countryCode)?.name || 'Singapore',
@@ -289,6 +295,7 @@ const SellerDashboard = () => {
       unit_number_touched: false,
       hdb_verified: property.hdb_verified,
       location_verified_at: property.location_verified_at || '',
+      hdb_verification_token: '',
     });
     setMainImageFile(null);
     setMainImagePreview(property.image_url || null);
@@ -332,6 +339,7 @@ const SellerDashboard = () => {
       unit_number_touched: false,
       hdb_verified: false,
       location_verified_at: '',
+      hdb_verification_token: '',
     });
     setMainImageFile(null);
     setMainImagePreview(null);
@@ -550,6 +558,7 @@ const SellerDashboard = () => {
       unit_number_touched: false,
       hdb_verified: false,
       location_verified_at: '',
+      hdb_verification_token: '',
     }));
   };
 
@@ -603,11 +612,12 @@ const SellerDashboard = () => {
         longitude: address.longitude.toString(),
         hdb_verified: true,
         location_verified_at: new Date().toISOString(),
+        hdb_verification_token: address.verificationToken,
       }));
       toast.success('HDB address verified and map updated');
     } catch (lookupError) {
       console.error('Error looking up HDB address:', lookupError);
-      toast.error(lookupError instanceof Error ? lookupError.message : 'Failed to look up address');
+      toast.error('Unable to verify this postal code right now. Please try again.');
     } finally {
       setLookupLoading(false);
     }
@@ -649,6 +659,7 @@ const SellerDashboard = () => {
     }
 
     let uploadedPaths: string[] = [];
+    let propertyReferencesUploadedImages = false;
 
     try {
       const propertyId = isEditing && selectedProperty
@@ -682,6 +693,7 @@ const SellerDashboard = () => {
         latitude: parseFloat(formData.latitude),
         longitude: parseFloat(formData.longitude),
         seller_id: user.id,
+        hdb_verification_token: formData.hdb_verification_token || null,
         status: 'pending' // New properties are submitted with a default status of 'pending'.
       };
 
@@ -694,6 +706,7 @@ const SellerDashboard = () => {
           .eq('id', selectedProperty.id);
 
         if (error) throw error;
+        propertyReferencesUploadedImages = true;
 
         const { error: privateDetailsError } = await supabase
           .from('property_private_details')
@@ -718,6 +731,7 @@ const SellerDashboard = () => {
           .single();
 
         if (error) throw error;
+        propertyReferencesUploadedImages = true;
 
         const { error: privateDetailsError } = await supabase
           .from('property_private_details')
@@ -727,7 +741,15 @@ const SellerDashboard = () => {
           });
 
         if (privateDetailsError) {
-          await supabase.from('properties').delete().eq('id', data.id);
+          const { error: rollbackError } = await supabase
+            .from('properties')
+            .delete()
+            .eq('id', data.id);
+          if (!rollbackError) {
+            propertyReferencesUploadedImages = false;
+          } else {
+            console.error('Unable to roll back property after private-details failure:', rollbackError);
+          }
           throw privateDetailsError;
         }
 
@@ -744,7 +766,10 @@ const SellerDashboard = () => {
       // Close the modal after submission.
       setShowModal(false);
     } catch (error) {
-      if (uploadedPaths.length > 0) {
+      // Keep uploads that are already referenced by a committed property row.
+      // Removing them here would leave that row pointing at broken URLs when
+      // the separate private-details request fails.
+      if (uploadedPaths.length > 0 && !propertyReferencesUploadedImages) {
         await supabase.storage.from(PROPERTY_IMAGE_BUCKET).remove(uploadedPaths);
       }
       console.error('Error saving property:', error);
