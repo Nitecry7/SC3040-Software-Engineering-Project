@@ -51,6 +51,7 @@ interface HdbLocationAddress {
   latitude: number;
   longitude: number;
   verificationToken: string;
+  verificationExpiresAt: string;
 }
 
 interface HdbLocationLookupResponse {
@@ -157,6 +158,7 @@ const SellerDashboard = () => {
     hdb_verified: false,
     location_verified_at: '',
     hdb_verification_token: '',
+    hdb_verification_expires_at: '',
   });
   
   // Image files are uploaded to Supabase Storage when the property is saved.
@@ -296,6 +298,7 @@ const SellerDashboard = () => {
       hdb_verified: property.hdb_verified,
       location_verified_at: property.location_verified_at || '',
       hdb_verification_token: '',
+      hdb_verification_expires_at: '',
     });
     setMainImageFile(null);
     setMainImagePreview(property.image_url || null);
@@ -340,6 +343,7 @@ const SellerDashboard = () => {
       hdb_verified: false,
       location_verified_at: '',
       hdb_verification_token: '',
+      hdb_verification_expires_at: '',
     });
     setMainImageFile(null);
     setMainImagePreview(null);
@@ -559,7 +563,41 @@ const SellerDashboard = () => {
       hdb_verified: false,
       location_verified_at: '',
       hdb_verification_token: '',
+      hdb_verification_expires_at: '',
     }));
+  };
+
+  const lookupHdbAddress = async (postalCode: string): Promise<HdbLocationAddress> => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData.session) {
+      throw new Error('Please sign in again before looking up an address');
+    }
+
+    functionsSupabase.functions.setAuth(sessionData.session.access_token);
+    const { data, error: lookupError } = await functionsSupabase.functions.invoke<HdbLocationLookupResponse>(
+      'lookup-hdb-location',
+      { body: { postalCode } }
+    );
+
+    if (lookupError) {
+      const response = (lookupError as { context?: Response }).context;
+      let message = lookupError.message;
+      if (response) {
+        try {
+          const responseBody = await response.clone().json() as { message?: string; error?: string };
+          message = responseBody.message || responseBody.error || message;
+        } catch {
+          // Keep the function client's message if the response is not JSON.
+        }
+      }
+      throw new Error(message);
+    }
+
+    if (!data?.valid || !data.address) {
+      throw new Error(data?.message || 'This postal code does not match a residential HDB block');
+    }
+
+    return data.address;
   };
 
   const handleHdbLookup = async () => {
@@ -570,36 +608,7 @@ const SellerDashboard = () => {
 
     setLookupLoading(true);
     try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      if (!sessionData.session) {
-        throw new Error('Please sign in again before looking up an address');
-      }
-
-      functionsSupabase.functions.setAuth(sessionData.session.access_token);
-      const { data, error: lookupError } = await functionsSupabase.functions.invoke<HdbLocationLookupResponse>(
-        'lookup-hdb-location',
-        { body: { postalCode: formData.postal_code } }
-      );
-
-      if (lookupError) {
-        const response = (lookupError as { context?: Response }).context;
-        if (response) {
-          try {
-            const responseBody = await response.clone().json() as { message?: string; error?: string };
-            throw new Error(responseBody.message || responseBody.error || lookupError.message);
-          } catch (responseError) {
-            if (responseError instanceof Error && responseError.message !== lookupError.message) {
-              throw responseError;
-            }
-          }
-        }
-        throw lookupError;
-      }
-      if (!data?.valid || !data.address) {
-        throw new Error(data?.message || 'This postal code does not match a residential HDB block');
-      }
-
-      const { address } = data;
+      const address = await lookupHdbAddress(formData.postal_code);
       setFormData(prev => ({
         ...prev,
         postal_code: address.postalCode,
@@ -613,6 +622,7 @@ const SellerDashboard = () => {
         hdb_verified: true,
         location_verified_at: new Date().toISOString(),
         hdb_verification_token: address.verificationToken,
+        hdb_verification_expires_at: address.verificationExpiresAt,
       }));
       toast.success('HDB address verified and map updated');
     } catch (lookupError) {
@@ -668,6 +678,23 @@ const SellerDashboard = () => {
       const uploadedImages = await uploadPropertyImages(propertyId, user.id);
       uploadedPaths = uploadedImages.uploadedPaths;
 
+      let hdbVerificationToken = formData.hdb_verification_token || null;
+      const verificationExpiresAt = Date.parse(formData.hdb_verification_expires_at);
+      if (
+        hdbVerificationToken
+        && (!Number.isFinite(verificationExpiresAt) || verificationExpiresAt <= Date.now() + 60_000)
+      ) {
+        // Refresh near-expiry tokens after uploads so the database write has a
+        // full verification window even when preparing the listing took a while.
+        const address = await lookupHdbAddress(formData.postal_code);
+        hdbVerificationToken = address.verificationToken;
+        setFormData(prev => ({
+          ...prev,
+          hdb_verification_token: address.verificationToken,
+          hdb_verification_expires_at: address.verificationExpiresAt,
+        }));
+      }
+
       // Construct an object with property data from formData, converting string fields to numbers where needed.
       const propertyData = {
         title: formData.title,
@@ -693,7 +720,7 @@ const SellerDashboard = () => {
         latitude: parseFloat(formData.latitude),
         longitude: parseFloat(formData.longitude),
         seller_id: user.id,
-        hdb_verification_token: formData.hdb_verification_token || null,
+        hdb_verification_token: hdbVerificationToken,
         status: 'pending' // New properties are submitted with a default status of 'pending'.
       };
 

@@ -320,7 +320,7 @@ async function issueVerificationToken(
     latitude: number;
     longitude: number;
   },
-): Promise<string> {
+): Promise<{ token: string; expiresAt: string }> {
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
@@ -350,10 +350,10 @@ async function issueVerificationToken(
       latitude: address.latitude,
       longitude: address.longitude,
     })
-    .select('token')
+    .select('token, expires_at')
     .single();
 
-  if (error || !data?.token) {
+  if (error || !data?.token || !data.expires_at) {
     console.error('Failed to issue HDB verification token', {
       sellerId,
       error,
@@ -361,7 +361,7 @@ async function issueVerificationToken(
     throw new HttpError('Unable to save HDB verification', 503);
   }
 
-  return data.token;
+  return { token: data.token, expiresAt: data.expires_at };
 }
 
 async function lookupHdbLocation(postalCode: string, sellerId: string) {
@@ -422,7 +422,7 @@ async function lookupHdbLocation(postalCode: string, sellerId: string) {
   const streetName = result.ROAD_NAME.trim();
   const town = mapTownCode(hdbRecord.bldg_contract_town);
   const builtYear = parseOptionalYear(hdbRecord.year_completed);
-  const verificationToken = await issueVerificationToken(sellerId, {
+  const verification = await issueVerificationToken(sellerId, {
     postalCode,
     blockNumber,
     streetName,
@@ -443,7 +443,8 @@ async function lookupHdbLocation(postalCode: string, sellerId: string) {
       builtYear,
       latitude,
       longitude,
-      verificationToken,
+      verificationToken: verification.token,
+      verificationExpiresAt: verification.expiresAt,
     },
   };
 }
