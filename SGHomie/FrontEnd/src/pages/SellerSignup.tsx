@@ -24,7 +24,7 @@ const LOCATIONS = [
 // SellerSignup component for registering as a seller.
 const SellerSignup = () => {
   // Destructure the current user and signOut method from the Auth context.
-  const { user } = useAuth();
+  const { user, isAdmin } = useAuth();
   // Get navigate function from react-router-dom.
   const navigate = useNavigate();
 
@@ -48,18 +48,28 @@ const SellerSignup = () => {
       return;
     }
 
+    if (isAdmin) {
+      navigate('/admin', { replace: true });
+      return;
+    }
+
     // Async function to fetch profile data.
     const fetchProfile = async () => {
       try {
         // Query the "user_profiles" table for the current user's profile.
         const { data, error } = await supabase
           .from('user_profiles')
-          .select('name, is_seller, phone, preferred_locations')
+          .select('name, is_admin, is_seller, phone, preferred_locations')
           .eq('id', user.id)
           .single();
 
         // If an error occurs, throw the error.
         if (error) throw error;
+
+        if (data?.is_admin) {
+          navigate('/admin', { replace: true });
+          return;
+        }
 
         // If the user is already a seller (is_seller flag is true), navigate to the seller dashboard.
         if (data?.is_seller) {
@@ -85,11 +95,16 @@ const SellerSignup = () => {
 
     // Invoke the function to fetch profile details.
     fetchProfile();
-  }, [user, navigate]);
+  }, [user, isAdmin, navigate]);
 
   // Handler for form submission when the seller registers.
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); // Prevent the default behavior of the form.
+    if (isAdmin) {
+      toast.error('Admin accounts cannot register as sellers');
+      navigate('/admin', { replace: true });
+      return;
+    }
     // Check if the user has agreed to the terms and conditions.
     if (!profile.agreed) {
       toast.error('Please agree to the terms and conditions');

@@ -1,42 +1,21 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Menu, X, Home, UserCircle, Store } from 'lucide-react';
+import { Menu, X, Home, UserCircle, Store, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabase';
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
-  const { user } = useAuth();
+  const { user, isAdmin, isSeller } = useAuth();
   const location = useLocation();
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [isSeller, setIsSeller] = useState(false);
-
-  React.useEffect(() => {
-    const checkUserStatus = async () => {
-      if (!user) return;
-
-      try {
-        const { data } = await supabase
-          .from('user_profiles')
-          .select('is_admin, is_seller')
-          .eq('id', user.id)
-          .single();
-
-        setIsAdmin(data?.is_admin || false);
-        setIsSeller(data?.is_seller || false);
-      } catch (error) {
-        console.error('Error checking user status:', error);
-      }
-    };
-
-    checkUserStatus();
-  }, [user]);
 
   const navigation = user ? [
     { name: 'Start Exploring', href: '/search' },
     { name: 'Explore', href: '/analytics' },
     { name: 'Enquiry', href: '/enquiry' },
-    { name: isSeller ? 'Seller Dashboard' : 'Become a Seller', href: isSeller ? '/seller' : '/seller/signup' },
+    {
+      name: isAdmin ? 'Admin Dashboard' : (isSeller ? 'Seller Dashboard' : 'Become a Seller'),
+      href: isAdmin ? '/admin' : (isSeller ? '/seller' : '/seller/signup'),
+    },
   ] : [
     { name: 'Get Started', href: '/search' },
     { name: 'Explore', href: '/analytics' },
@@ -71,20 +50,13 @@ const Navbar = () => {
                 } transition-all duration-300 hover:scale-105 px-4 py-2 rounded-full hover:bg-blue-50 flex items-center space-x-2`}
               >
                 {item.name === 'Seller Dashboard' && <Store className="h-5 w-5" />}
+                {item.name === 'Admin Dashboard' && <ShieldCheck className="h-5 w-5" />}
                 <span>{item.name}</span>
               </Link>
             ))}
             
             {user ? (
               <div className="relative ml-3 flex items-center space-x-4">
-                {isAdmin && (
-                  <Link
-                    to="/admin"
-                    className="text-gray-700 hover:text-blue-600 transition-colors duration-200"
-                  >
-                    Admin
-                  </Link>
-                )}
                 <Link 
                   to="/profile" 
                   className="flex items-center group relative"
@@ -138,15 +110,6 @@ const Navbar = () => {
                 {item.name}
               </Link>
             ))}
-            {isAdmin && (
-              <Link
-                to="/admin"
-                className="block px-4 py-2 text-gray-700 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all duration-300"
-                onClick={() => setIsOpen(false)}
-              >
-                Admin
-              </Link>
-            )}
             {!user && (
               <button
                 onClick={() => {

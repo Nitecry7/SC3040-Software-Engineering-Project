@@ -4,8 +4,9 @@ import React, { useState, useRef, useEffect } from 'react';
 import { MessageCircle, X, Send, ChevronDown, ChevronUp } from 'lucide-react';
 // Import ReactMarkdown to render Markdown content in the chat messages.
 import ReactMarkdown from 'react-markdown';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 // Import the Supabase client for making API requests.
-import { chatbotSupabase } from '../lib/supabase';
+import { chatbotSupabase, supabase } from '../lib/supabase';
 
 // Define a TypeScript interface for a chat message.
 // Each message has a 'role' (either 'user' or 'assistant')
@@ -23,15 +24,10 @@ interface ChatCompletionChunk {
   }>;
 }
 
-// Define an array of suggested prompt objects to help guide the user's conversation.
-// Each object includes a text prompt and a corresponding category.
+// Keep the initial chatbot menu focused on the two supported journeys.
 const SUGGESTED_PROMPTS = [
-  { text: "How do I buy a property?", category: "Buying" },
-  { text: "How can I sell my property?", category: "Selling" },
-  { text: "What payment methods are accepted?", category: "Payments" },
-  { text: "How do I arrange a viewing?", category: "Viewing" },
-  { text: "What property types are available?", category: "Properties" },
-  { text: "How do I contact support?", category: "Support" },
+  { label: "Buy", message: "I want to buy a property" },
+  { label: "Sell", message: "I want to sell my unit" },
 ];
 
 const MAX_HISTORY_MESSAGES = 20;
@@ -75,7 +71,7 @@ const Chatbot: React.FC = () => {
     });
   };
 
-  const streamAssistantResponse = async (response: Response) => {
+  const streamAssistantResponse = async (response: Response): Promise<string> => {
     if (!response.body) {
       throw new Error('The chatbot returned an empty response stream');
     }
@@ -121,6 +117,8 @@ const Chatbot: React.FC = () => {
     if (!assistantContent) {
       throw new Error('The chatbot returned no text');
     }
+
+    return assistantContent;
   };
 
   const sendMessage = async (value: string) => {
@@ -142,6 +140,11 @@ const Chatbot: React.FC = () => {
     setIsLoading(true);
 
     try {
+      // The chatbot Edge Function uses the same session to enforce the
+      // login/seller gates and to create a draft owned by the current seller.
+      const { data: sessionData } = await supabase.auth.getSession();
+      chatbotSupabase.functions.setAuth(sessionData.session?.access_token ?? '');
+
       // Ask the Supabase Edge Function for an OpenAI-style streamed response.
       const { data, error } = await chatbotSupabase.functions.invoke<Response>('chatbot', {
         body: {
@@ -156,10 +159,29 @@ const Chatbot: React.FC = () => {
         throw new Error('The chatbot returned an invalid response');
       }
 
-      await streamAssistantResponse(data);
+      const assistantResponse = await streamAssistantResponse(data);
+      if (/created a draft listing|already have a draft listing/i.test(assistantResponse)) {
+        window.dispatchEvent(new CustomEvent('seller-dashboard-refresh'));
+      }
     } catch (error) {
-      // Log the error and add a fallback error message for the user.
-      console.error('Error getting response:', error);
+      // Surface the Edge Function status and response body in the browser
+      // console during local development to help diagnose backend failures.
+      if (import.meta.env.DEV && error instanceof FunctionsHttpError) {
+        const responseBody = await error.context.clone().text();
+        let parsedBody: unknown = responseBody;
+        try {
+          parsedBody = JSON.parse(responseBody);
+        } catch {
+          // Keep the raw response text when the function did not return JSON.
+        }
+        console.error('Chatbot Edge Function failed:', {
+          status: error.context.status,
+          statusText: error.context.statusText,
+          body: parsedBody,
+        });
+      } else {
+        console.error('Error getting response:', error);
+      }
       updateLastAssistantMessage("I'm sorry, I'm having trouble responding right now. Please try again later.");
     } finally {
       // Turn off the loading indicator when the request is complete.
@@ -258,24 +280,23 @@ const Chatbot: React.FC = () => {
                 {messages.length === 0 && (
                   <div className="space-y-4">
                     <div className="text-center text-gray-500">
-                      👋 Hi! I'm your SG Homie Assistant. I can help you with:
+                      👋 Hi! I'm your SG Homie Assistant. What would you like to do?
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       {/* Map over suggested prompts and display them as clickable buttons */}
                       {SUGGESTED_PROMPTS.map((prompt, index) => (
                         <button
                           key={index}
-                          onClick={() => handlePromptClick(prompt.text)}
+                          onClick={() => handlePromptClick(prompt.message)}
                           disabled={isLoading}
-                          className="text-left p-2 text-sm bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
+                          className="p-3 text-sm font-medium bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
                         >
-                          <div className="font-medium text-blue-600">{prompt.category}</div>
-                          <div className="text-gray-600 truncate">{prompt.text}</div>
+                          {prompt.label}
                         </button>
                       ))}
                     </div>
                     <div className="text-center text-sm text-gray-500">
-                      Click on any topic above or type your question below!
+                      Choose Buy or Sell, or type your question below.
                     </div>
                   </div>
                 )}
