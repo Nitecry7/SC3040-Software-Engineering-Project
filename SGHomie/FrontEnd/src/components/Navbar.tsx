@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Menu, X, Home, UserCircle, Store, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -9,16 +9,16 @@ const Navbar = () => {
   const location = useLocation();
 
   const navigation = user ? [
-    { name: 'Start Exploring', href: '/search' },
-    { name: 'Explore', href: '/analytics' },
+    { name: 'Explore', href: '/search' },
+    { name: 'Trends', href: '/analytics' },
     { name: 'Enquiry', href: '/enquiry' },
     {
       name: isAdmin ? 'Admin Dashboard' : (isSeller ? 'Seller Dashboard' : 'Become a Seller'),
       href: isAdmin ? '/admin' : (isSeller ? '/seller' : '/seller/signup'),
     },
   ] : [
-    { name: 'Get Started', href: '/search' },
-    { name: 'Explore', href: '/analytics' },
+    { name: 'Explore', href: '/search' },
+    { name: 'Trends', href: '/analytics' },
     { name: 'Enquiry', href: '/enquiry' },
   ];
 

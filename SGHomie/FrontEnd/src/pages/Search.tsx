@@ -1,327 +1,260 @@
-// Import React hooks for managing state and side effects.
-import React, { useState, useEffect } from 'react';
-// Import icons from lucide-react for use in the UI.
-import { Search as SearchIcon, Home, DollarSign } from 'lucide-react';
-// Import Supabase client to fetch data from your database.
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { Bath, BedDouble, MapPin, Ruler, Search as SearchIcon } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-// Import useNavigate for programmatic navigation between routes.
-import { useNavigate } from 'react-router-dom';
-// Import custom Auth context to access current user data.
 import { useAuth } from '../contexts/AuthContext';
-// Import the Property type definition.
+import MarketplaceMap from '../components/MarketplaceMap';
 import type { Property } from '../types/supabase';
 
-// Define a constant array for location filters. "ALL" is used to reset the filter.
 const LOCATIONS = [
-  'ALL',
-  'ANG MO KIO', 'BEDOK', 'BISHAN', 'BUKIT BATOK', 'BUKIT MERAH',
+  'ALL', 'ANG MO KIO', 'BEDOK', 'BISHAN', 'BUKIT BATOK', 'BUKIT MERAH',
   'BUKIT PANJANG', 'BUKIT TIMAH', 'CENTRAL AREA', 'CHOA CHU KANG',
   'CLEMENTI', 'GEYLANG', 'HOUGANG', 'JURONG EAST', 'JURONG WEST',
   'KALLANG/WHAMPOA', 'MARINE PARADE', 'PASIR RIS', 'PUNGGOL',
   'QUEENSTOWN', 'SEMBAWANG', 'SENGKANG', 'SERANGOON', 'TAMPINES',
-  'TOA PAYOH', 'WOODLANDS', 'YISHUN'
+  'TOA PAYOH', 'WOODLANDS', 'YISHUN',
 ].sort();
 
-// Define a constant array for room type filters, including an "ALL" option.
 const ROOM_TYPES = ['ALL', '2 ROOM', '3 ROOM', '4 ROOM', 'EXECUTIVE'];
 
-// Main Search component.
-const Search = () => {
-  // Get the navigate function for routing.
-  const navigate = useNavigate();
-  // Destructure the current user from the authentication context.
-  const { user } = useAuth();
+type SearchFilters = {
+  location: string;
+  roomType: string;
+  minPrice: string;
+  maxPrice: string;
+};
 
-  // State to hold the list of properties fetched from the database.
+const DEFAULT_FILTERS: SearchFilters = {
+  location: 'ALL',
+  roomType: 'ALL',
+  minPrice: '',
+  maxPrice: '',
+};
+
+const fetchProperties = async (filters: SearchFilters): Promise<Property[]> => {
+  let query = supabase
+    .from('properties')
+    .select('*')
+    .eq('type', 'HDB')
+    .eq('status', 'approved');
+
+  if (filters.location !== 'ALL') query = query.eq('location', filters.location);
+  if (filters.roomType !== 'ALL') query = query.eq('bedrooms', parseInt(filters.roomType.split(' ')[0], 10));
+  if (filters.minPrice) query = query.gte('price', Number(filters.minPrice));
+  if (filters.maxPrice) query = query.lte('price', Number(filters.maxPrice));
+
+  const { data, error } = await query.order('created_at', { ascending: false });
+  if (error) throw error;
+  return data || [];
+};
+
+const formatPrice = (price: number) => `S$${price.toLocaleString('en-SG')}`;
+
+const Search = () => {
+  const { user } = useAuth();
   const [properties, setProperties] = useState<Property[]>([]);
-  // State to track if a search operation is in progress.
-  const [loading, setLoading] = useState(false);
-  // State to determine whether to use profile-based recommendations for filters.
-  const [useProfileRecommendations, setUseProfileRecommendations] = useState(true);
-  // State to hold the logged-in user's profile data (preferences).
+  const [loading, setLoading] = useState(true);
+  const [searchError, setSearchError] = useState('');
+  const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
+  const [useProfileRecommendations, setUseProfileRecommendations] = useState(false);
   const [userProfile, setUserProfile] = useState<{
     preferred_locations: string[];
     preferred_property_type: string;
   } | null>(null);
-  // State to hold the current search filters.
-  const [filters, setFilters] = useState({
-    location: 'ALL',
-    roomType: 'ALL',
-    minPrice: '',
-    maxPrice: '',
-  });
+  const [filters, setFilters] = useState<SearchFilters>(DEFAULT_FILTERS);
 
-  // useEffect to fetch the user's profile once the component is mounted and when the user changes.
-  useEffect(() => {
-    const fetchUserProfile = async () => {
-      if (!user) return; // If no user is logged in, do nothing.
+  const selectedProperty = useMemo(
+    () => properties.find((property) => property.id === selectedPropertyId) || null,
+    [properties, selectedPropertyId],
+  );
 
-      try {
-        // Query Supabase for the user's profile preferences.
-        const { data, error } = await supabase
-          .from('user_profiles')
-          .select('preferred_locations, preferred_property_type')
-          .eq('id', user.id)
-          .single();
-
-        // Throw error if the query fails.
-        if (error) throw error;
-
-        // Save the fetched profile data.
-        setUserProfile(data);
-        // If profile recommendations are enabled, update filters with the user's preferences.
-        if (data && useProfileRecommendations) {
-          setFilters(prev => ({
-            ...prev,
-            location: data.preferred_locations?.[0] || 'ALL',
-            roomType: data.preferred_property_type || 'ALL'
-          }));
-        }
-      } catch (error) {
-        console.error('Error fetching user profile:', error);
-      }
-    };
-
-    // Execute the function to fetch user profile information.
-    fetchUserProfile();
-  }, [user]);
-
-  // Function to handle search form submission.
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault(); // Prevent the default form submission behavior.
-    setLoading(true);   // Set loading state to true during the fetch.
-
+  const runSearch = useCallback(async (nextFilters: SearchFilters) => {
+    setLoading(true);
+    setSearchError('');
     try {
-      // Construct a query from Supabase filtering for approved HDB properties.
-      let query = supabase
-        .from('properties')
-        .select('*')
-        .eq('type', 'HDB')
-        .eq('status', 'approved'); // Retrieve only approved properties.
-
-      // If a specific location is selected (not "ALL"), add a location filter.
-      if (filters.location !== 'ALL') {
-        query = query.eq('location', filters.location);
-      }
-      // If a specific room type is selected (not "ALL"), filter by the number of bedrooms.
-      if (filters.roomType !== 'ALL') {
-        // Assumes room type string is formatted like "4 ROOM" and extracts the first number.
-        query = query.eq('bedrooms', parseInt(filters.roomType.split(' ')[0]));
-      }
-      // Apply minimum price filter if provided.
-      if (filters.minPrice) {
-        query = query.gte('price', parseFloat(filters.minPrice));
-      }
-      // Apply maximum price filter if provided.
-      if (filters.maxPrice) {
-        query = query.lte('price', parseFloat(filters.maxPrice));
-      }
-
-      // Execute the query.
-      const { data, error } = await query;
-      if (error) throw error; // Handle any errors from the query.
-      // Update the properties state with the fetched data.
-      setProperties(data || []);
+      const results = await fetchProperties(nextFilters);
+      setProperties(results);
+      setSelectedPropertyId(null);
     } catch (error) {
       console.error('Error searching properties:', error);
+      setSearchError('We could not load homes right now. Please try again.');
+      setProperties([]);
     } finally {
-      setLoading(false);  // Stop the loading spinner regardless of the result.
+      setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    void runSearch(DEFAULT_FILTERS);
+  }, [runSearch]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchUserProfile = async () => {
+      if (!user) {
+        setUserProfile(null);
+        setUseProfileRecommendations(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('preferred_locations, preferred_property_type')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (cancelled) return;
+      if (error) {
+        console.error('Error fetching user profile:', error);
+        return;
+      }
+      setUserProfile(data);
+    };
+
+    void fetchUserProfile();
+    return () => { cancelled = true; };
+  }, [user]);
+
+  const handleSearch = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void runSearch(filters);
   };
 
-  // Function to handle changes in filter inputs.
-  // Prevents updating location and roomType filters if profile recommendations are in use.
-  const handleFilterChange = (field: string, value: string) => {
-    if (useProfileRecommendations && (field === 'location' || field === 'roomType')) {
-      return; // Do not allow manual changes when recommendations are enabled.
-    }
-    setFilters(prev => ({ ...prev, [field]: value }));
-  };
-
-  // Function to toggle the use of profile recommendations.
-  const toggleProfileRecommendations = () => {
-    setUseProfileRecommendations(!useProfileRecommendations);
-    if (!useProfileRecommendations && userProfile) {
-      // When enabling recommendations, apply the user's profile preferences.
-      setFilters(prev => ({
-        ...prev,
+  const handleProfileRecommendations = (enabled: boolean) => {
+    setUseProfileRecommendations(enabled);
+    if (enabled && userProfile) {
+      const recommendedFilters = {
+        ...filters,
         location: userProfile.preferred_locations?.[0] || 'ALL',
-        roomType: userProfile.preferred_property_type || 'ALL'
-      }));
+        roomType: userProfile.preferred_property_type || 'ALL',
+      };
+      setFilters(recommendedFilters);
+      void runSearch(recommendedFilters);
     }
+  };
+
+  const updateFilter = (field: keyof SearchFilters, value: string) => {
+    setFilters((current) => ({ ...current, [field]: value }));
   };
 
   return (
-    <div className="pt-20 min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Page Header */}
-        <div className="text-center mb-12">
-          <h1 className="text-4xl font-bold text-gray-900">Find Your Dream HDB</h1>
-          <p className="mt-4 text-lg text-gray-600">
-            Search through our curated list of HDB properties across Singapore
-          </p>
-        </div>
+    <div className="min-h-screen bg-slate-50 pt-24 pb-12">
+      <div className="mx-auto max-w-[1500px] px-4 sm:px-6 lg:px-8">
+        <header className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+          <div>
+            <p className="mb-2 text-sm font-semibold uppercase tracking-[0.16em] text-blue-700">SG Homie · Explore</p>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">Find a home on the map</h1>
+            <p className="mt-2 max-w-2xl text-slate-600">Browse HDB listings across Singapore, compare prices, and open a home to see the details.</p>
+          </div>
+          <div className="hidden items-center gap-2 rounded-full bg-white px-4 py-2 text-sm text-slate-600 shadow-sm sm:flex">
+            <MapPin className="h-4 w-4 text-blue-600" /> Singapore listings
+          </div>
+        </header>
 
-        {/* Search Filters Form */}
-        <form onSubmit={handleSearch} className="bg-white rounded-2xl shadow-xl p-8 mb-12">
-          {/* Display a checkbox for profile recommendation usage (only if user is logged in). */}
+        <form onSubmit={handleSearch} className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
           {user && (
-            <div className="mb-6">
-              <label className="flex items-center space-x-2 cursor-pointer">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <p className="font-medium text-slate-900">Personalise your search</p>
+                <p className="text-sm text-slate-500">Use the locations and room type from your profile.</p>
+              </div>
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
                 <input
                   type="checkbox"
                   checked={useProfileRecommendations}
-                  onChange={toggleProfileRecommendations}
-                  className="form-checkbox h-5 w-5 text-blue-600 rounded focus:ring-blue-500"
+                  onChange={(event) => handleProfileRecommendations(event.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
                 />
-                <span className="text-gray-700">Use recommendations from profile</span>
+                Use my preferences
               </label>
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-            {/* Location Filter Dropdown */}
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">
-                Location
-              </label>
-              <div className="relative">
-                <select
-                  value={filters.location}
-                  onChange={(e) => handleFilterChange('location', e.target.value)}
-                  className={`block w-full pl-3 pr-10 py-3 text-base border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                    useProfileRecommendations ? 'bg-gray-100 cursor-not-allowed' : ''
-                  }`}
-                  disabled={useProfileRecommendations}
-                >
-                  {LOCATIONS.map((location) => (
-                    <option key={location} value={location}>
-                      {location}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Room Type Filter Dropdown */}
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">
-                Room Type
-              </label>
-              <div className="relative">
-                <select
-                  value={filters.roomType}
-                  onChange={(e) => handleFilterChange('roomType', e.target.value)}
-                  className={`block w-full pl-3 pr-10 py-3 text-base border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 ${
-                    useProfileRecommendations ? 'bg-gray-100 cursor-not-allowed' : ''
-                  }`}
-                  disabled={useProfileRecommendations}
-                >
-                  {ROOM_TYPES.map((type) => (
-                    <option key={type} value={type}>
-                      {type}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            {/* Minimum Price Input */}
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">
-                Minimum Price
-              </label>
-              <div className="relative">
-                <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-                <input
-                  type="number"
-                  placeholder="Min Price"
-                  value={filters.minPrice}
-                  onChange={(e) => handleFilterChange('minPrice', e.target.value)}
-                  className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-            </div>
-
-            {/* Maximum Price Input */}
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-gray-700">
-                Maximum Price
-              </label>
-              <div className="relative">
-                <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-                <input
-                  type="number"
-                  placeholder="Max Price"
-                  value={filters.maxPrice}
-                  onChange={(e) => handleFilterChange('maxPrice', e.target.value)}
-                  className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Search Button */}
-          <div className="mt-8 flex justify-center">
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex items-center justify-center px-8 py-3 border border-transparent text-base font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 md:py-4 md:text-lg md:px-10 transition-all duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              <SearchIcon className="h-5 w-5 mr-2" />
-              {loading ? 'Searching...' : 'Search Properties'}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[1.2fr_1fr_1fr_1fr_auto]">
+            <label className="text-sm font-medium text-slate-700">
+              Town
+              <select value={filters.location} onChange={(event) => updateFilter('location', event.target.value)} disabled={useProfileRecommendations} className="mt-1.5 block w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm disabled:bg-slate-100">
+                {LOCATIONS.map((location) => <option key={location} value={location}>{location === 'ALL' ? 'All towns' : location}</option>)}
+              </select>
+            </label>
+            <label className="text-sm font-medium text-slate-700">
+              Flat size
+              <select value={filters.roomType} onChange={(event) => updateFilter('roomType', event.target.value)} disabled={useProfileRecommendations} className="mt-1.5 block w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm disabled:bg-slate-100">
+                {ROOM_TYPES.map((type) => <option key={type} value={type}>{type === 'ALL' ? 'Any size' : type}</option>)}
+              </select>
+            </label>
+            <label className="text-sm font-medium text-slate-700">
+              Minimum price
+              <input type="number" min="0" placeholder="No minimum" value={filters.minPrice} onChange={(event) => updateFilter('minPrice', event.target.value)} className="mt-1.5 block w-full rounded-xl border border-slate-200 px-3 py-3 text-sm" />
+            </label>
+            <label className="text-sm font-medium text-slate-700">
+              Maximum price
+              <input type="number" min="0" placeholder="No maximum" value={filters.maxPrice} onChange={(event) => updateFilter('maxPrice', event.target.value)} className="mt-1.5 block w-full rounded-xl border border-slate-200 px-3 py-3 text-sm" />
+            </label>
+            <button type="submit" disabled={loading} className="mt-auto inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 py-3 font-semibold text-white hover:bg-blue-800 disabled:cursor-wait disabled:opacity-70">
+              <SearchIcon className="h-4 w-4" /> {loading ? 'Searching' : 'Search homes'}
             </button>
           </div>
         </form>
 
-        {/* Results Section: Display the list of properties from the search */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {properties.map((property) => (
-            <div
-              key={property.id}
-              className="bg-white rounded-xl shadow-lg overflow-hidden transform transition-all duration-300 hover:scale-105 cursor-pointer"
-              onClick={() => navigate(`/property/${property.id}`)}
-            >
-              <img
-                src={property.image_url}
-                alt={property.title}
-                className="w-full h-48 object-cover"
-              />
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <span className="px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
-                    {property.bedrooms} Room HDB
-                  </span>
-                  <span className="text-lg font-bold text-gray-900">
-                    S${property.price.toLocaleString()}
-                  </span>
-                </div>
-                <h3 className="text-xl font-semibold text-gray-900 mb-2">{property.title}</h3>
-                <div className="flex items-center text-gray-600 mb-4">
-                  <Home className="h-5 w-5 mr-2" />
-                  <span>{property.location}</span>
-                </div>
-                <div className="flex items-center justify-between text-sm text-gray-500">
-                  <span>{property.bathrooms} Bathrooms</span>
-                  <span>{property.area_sqft.toLocaleString()} sqft</span>
-                </div>
+        <div className="grid items-start gap-5 lg:grid-cols-[minmax(340px,0.85fr)_minmax(0,1.35fr)]">
+          <section className="order-2 lg:order-1" aria-label="Property listings">
+            <div className="mb-3 flex items-end justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-slate-950">Available homes</h2>
+                <p className="mt-0.5 text-sm text-slate-500">{loading ? 'Updating listings…' : `${properties.length} ${properties.length === 1 ? 'home' : 'homes'} found`}</p>
               </div>
             </div>
-          ))}
-        </div>
 
-        {/* No Results Message: Displayed if no properties are found and not loading */}
-        {properties.length === 0 && !loading && (
-          <div className="text-center py-12">
-            <div className="text-gray-500 text-lg">
-              No properties found. Try adjusting your search filters.
+            {searchError && (
+              <div role="alert" className="mb-3 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">{searchError}</div>
+            )}
+
+            {!loading && !searchError && properties.length === 0 && (
+              <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center">
+                <MapPin className="mx-auto h-8 w-8 text-slate-400" />
+                <p className="mt-3 font-semibold text-slate-800">No homes match these filters</p>
+                <p className="mt-1 text-sm text-slate-500">Try a different town or widen your price range.</p>
+              </div>
+            )}
+
+            <div className="space-y-3 lg:max-h-[min(68vh,760px)] lg:overflow-y-auto lg:pr-2">
+              {properties.map((property) => (
+                <article key={property.id} className={`overflow-hidden rounded-2xl border bg-white shadow-sm ${selectedPropertyId === property.id ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-200'}`}>
+                  <button type="button" onClick={() => setSelectedPropertyId(property.id)} aria-pressed={selectedPropertyId === property.id} className="flex w-full gap-4 p-3 text-left hover:bg-slate-50 sm:p-4">
+                    <img src={property.image_url || 'https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=640&q=80'} alt="" className="h-28 w-32 shrink-0 rounded-xl object-cover sm:h-32 sm:w-40" />
+                    <div className="min-w-0 flex-1 py-1">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <p className="line-clamp-2 font-semibold leading-snug text-slate-900">{property.title}</p>
+                        <span className="shrink-0 font-bold text-blue-800">{formatPrice(property.price)}</span>
+                      </div>
+                      <p className="mt-2 flex items-center gap-1.5 text-sm text-slate-600"><MapPin className="h-4 w-4 shrink-0 text-slate-400" />{property.location}</p>
+                      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
+                        <span className="inline-flex items-center gap-1"><BedDouble className="h-3.5 w-3.5" />{property.bedrooms} rooms</span>
+                        <span className="inline-flex items-center gap-1"><Bath className="h-3.5 w-3.5" />{property.bathrooms} baths</span>
+                        <span className="inline-flex items-center gap-1"><Ruler className="h-3.5 w-3.5" />{property.area_sqft.toLocaleString()} sqft</span>
+                      </div>
+                    </div>
+                  </button>
+                  <div className="flex justify-end border-t border-slate-100 px-4 py-2">
+                    <Link to={`/property/${property.id}`} className="text-sm font-semibold text-blue-700 hover:text-blue-900">View home details →</Link>
+                  </div>
+                </article>
+              ))}
             </div>
+          </section>
+
+          <div className="order-1 lg:order-2 lg:sticky lg:top-24">
+            <MarketplaceMap
+              properties={properties}
+              selectedProperty={selectedProperty}
+              onSelectProperty={(property) => setSelectedPropertyId(property?.id ?? null)}
+            />
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
 };
 
-// Export the Search component as the default export.
 export default Search;
