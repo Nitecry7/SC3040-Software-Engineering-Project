@@ -2,6 +2,8 @@
 
 The chatbot Buy flow, listing-search tool contract, verification and deployment
 steps are documented in [Chatbot buy flow](../../docs/buy-flow.md).
+The seller intake, provisional pricing, partial drafts and saved-draft card are
+documented in [Chatbot sell flow](../../docs/sell-flow.md).
 
 The active migration path starts with one complete initial migration and then
 applies incremental migrations for the current application features:

@@ -5,8 +5,10 @@ import { MessageCircle, X, Send, Maximize2, Minimize2, GripVertical, MoveDiagona
 import { FunctionsHttpError } from '@supabase/supabase-js';
 // Import the Supabase client for making API requests.
 import { chatbotSupabase, supabase } from '../lib/supabase';
-import { BUY_MESSAGE, chatFailureText, consumeChatStream, type ListingSearchResult } from '../lib/chat';
+import { BUY_MESSAGE, chatFailureText, consumeChatStream, type ListingSearchResult, type SellerContext, type SellerDraftCard } from '../lib/chat';
 import ListingRecommendations from './ListingRecommendations';
+import SellerDraft from './SellerDraft';
+import { useAuth } from '../contexts/AuthContext';
 import ChatMarkdown from './ChatMarkdown';
 import useChatWindow from '../hooks/useChatWindow';
 import { LAUNCHER_SIZE, WINDOW_MARGIN } from '../lib/chatWindow';
@@ -19,18 +21,20 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   recommendations?: ListingSearchResult;
+  draft?: SellerDraftCard;
 }
 
 // Keep the initial chatbot menu focused on the two supported journeys.
 const SUGGESTED_PROMPTS = [
-  { label: "Buy", message: BUY_MESSAGE },
-  { label: "Sell", message: "I want to sell my unit" },
+  { label: "Buy", message: BUY_MESSAGE, intent: 'buy' as const },
+  { label: "Sell", message: "I want to sell my unit", intent: 'sell' as const },
 ];
 
 const MAX_HISTORY_MESSAGES = 20;
 
 // Main functional component for the Chatbot.
 const Chatbot: React.FC = () => {
+  const { user } = useAuth();
   // State to manage whether the chat window is open.
   const [isOpen, setIsOpen] = useState(false);
   const [isClosing, setIsClosing] = useState(false);
@@ -48,6 +52,16 @@ const Chatbot: React.FC = () => {
   const followStreamRef = useRef(true);
   const requestInFlightRef = useRef(false);
   const searchContextRef = useRef<ListingSearchResult['filters']>();
+  const sellerContextRef = useRef<SellerContext>();
+  const currentUserIdRef = useRef(user?.id);
+
+  useEffect(() => {
+    // Never carry another account's listing intake or private details forward.
+    currentUserIdRef.current = user?.id;
+    sellerContextRef.current = undefined;
+    searchContextRef.current = undefined;
+    setMessages([]);
+  }, [user?.id]);
 
   useEffect(() => {
     const container = messagesRef.current;
@@ -88,12 +102,17 @@ const Chatbot: React.FC = () => {
     });
   };
 
-  const sendMessage = async (value: string, intent?: 'buy') => {
+  const sendMessage = async (value: string, intent?: 'buy' | 'sell') => {
     const userMessage = value.trim();
     if (!userMessage || requestInFlightRef.current) return;
     requestInFlightRef.current = true;
+    const requestUserId = user?.id;
+    const isCurrentAccount = () => currentUserIdRef.current === requestUserId;
     followStreamRef.current = true;
-    if (intent === 'buy') searchContextRef.current = undefined;
+    if (intent) {
+      searchContextRef.current = undefined;
+      sellerContextRef.current = undefined;
+    }
 
     // Clear the input field.
     setMessage('');
@@ -112,10 +131,12 @@ const Chatbot: React.FC = () => {
     setIsLoading(true);
 
     let hasRecommendations = false;
+    let hasSavedDraft = false;
     try {
       // The chatbot Edge Function uses the same session to enforce the
       // login/seller gates and to create a draft owned by the current seller.
       const { data: sessionData } = await supabase.auth.getSession();
+      if (!isCurrentAccount()) return;
       chatbotSupabase.functions.setAuth(sessionData.session?.access_token ?? '');
 
       // Ask the Supabase Edge Function for an OpenAI-style streamed response.
@@ -125,6 +146,7 @@ const Chatbot: React.FC = () => {
           stream: true,
           ...(intent ? { intent } : {}),
           ...(searchContextRef.current ? { search_context: searchContextRef.current } : {}),
+          ...(sellerContextRef.current ? { seller_context: sellerContextRef.current } : {}),
         },
       });
 
@@ -134,7 +156,10 @@ const Chatbot: React.FC = () => {
         throw new Error('The chatbot returned an invalid response');
       }
 
-      const assistantResponse = await consumeChatStream(data, updateLastAssistantMessage, (recommendations) => {
+      await consumeChatStream(data, content => {
+        if (isCurrentAccount()) updateLastAssistantMessage(content);
+      }, (recommendations) => {
+        if (!isCurrentAccount()) return;
         hasRecommendations = recommendations.listings.length > 0;
         searchContextRef.current = recommendations.filters;
         setMessages(prev => {
@@ -143,11 +168,23 @@ const Chatbot: React.FC = () => {
           if (last?.role === 'assistant') next[next.length - 1] = { ...last, recommendations };
           return next;
         });
+      }, (event) => {
+        if (!isCurrentAccount()) return;
+        sellerContextRef.current = event.context ?? undefined;
+        searchContextRef.current = undefined;
+        if (event.draft) {
+          hasSavedDraft = true;
+          setMessages(prev => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last?.role === 'assistant') next[next.length - 1] = { ...last, draft: event.draft };
+            return next;
+          });
+          window.dispatchEvent(new CustomEvent('seller-dashboard-refresh'));
+        }
       });
-      if (/created a draft listing|already have a draft listing/i.test(assistantResponse)) {
-        window.dispatchEvent(new CustomEvent('seller-dashboard-refresh'));
-      }
     } catch (error) {
+      if (!isCurrentAccount()) return;
       let failureText = chatFailureText();
       // Surface the Edge Function status and response body in the browser
       // console during local development to help diagnose backend failures.
@@ -169,7 +206,9 @@ const Chatbot: React.FC = () => {
       } else {
         console.error('Error getting response:', error);
       }
-      updateLastAssistantMessage(hasRecommendations
+      updateLastAssistantMessage(hasSavedDraft
+        ? 'Your draft is saved. Click the draft card below to continue, or open the [Seller Dashboard](/seller).'
+        : hasRecommendations
         ? "I couldn't finish the explanation. You can open the matching listings below or try again."
         : failureText);
     } finally {
@@ -187,7 +226,7 @@ const Chatbot: React.FC = () => {
 
   // Handler for when a suggested prompt is clicked.
   const handlePromptClick = (prompt: string) => {
-    void sendMessage(prompt, prompt === BUY_MESSAGE ? 'buy' : undefined);
+    void sendMessage(prompt, SUGGESTED_PROMPTS.find(item => item.message === prompt)?.intent);
   };
 
   const minimise = () => {
@@ -272,9 +311,10 @@ const Chatbot: React.FC = () => {
               )}
               {messages.map((msg, index) => (
                 <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`${msg.recommendations ? 'w-full' : 'max-w-[92%]'} min-w-0 rounded-2xl px-3 py-2.5 text-sm ${msg.role === 'user' ? 'chat-user-message bg-blue-600 text-white' : 'bg-gray-50 text-gray-800'}`}>
+                  <div className={`${msg.recommendations || msg.draft ? 'w-full' : 'max-w-[92%]'} min-w-0 rounded-2xl px-3 py-2.5 text-sm ${msg.role === 'user' ? 'chat-user-message bg-blue-600 text-white' : 'bg-gray-50 text-gray-800'}`}>
                     {msg.content && <ChatMarkdown content={msg.content} onListingOpen={handleListingOpen} />}
                     {msg.recommendations && <ListingRecommendations result={msg.recommendations} compact={chatWindow.mode === 'compact'} onListingOpen={handleListingOpen} />}
+                    {msg.draft && <SellerDraft draft={msg.draft} onListingOpen={handleListingOpen} />}
                     {!msg.content && !msg.recommendations && isLoading && index === messages.length - 1 && <span className="text-gray-500">Thinking…</span>}
                   </div>
                 </div>

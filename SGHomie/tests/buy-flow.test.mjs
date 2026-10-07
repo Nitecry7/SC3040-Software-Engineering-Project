@@ -685,27 +685,21 @@ test('existing sell flow retains anonymous, non-seller and admin gates without m
   }
 });
 
-test('existing seller address verification and draft creation keep their SSE refresh response', async t => {
-  const writes = [];
-  t.mock.method(globalThis, 'fetch', async (input, init) => {
+test('seller postal verification requests the full intake before writing a draft', async t => {
+  t.mock.method(globalThis, 'fetch', async input => {
     const url = String(input);
     const auth = mockAuth(url); if (auth) return auth;
-    assert.ok(!url.includes('openrouter.ai'), 'deterministic sell flow must not call model');
     if (url.includes('lookup-hdb-location')) return Response.json({ valid: true, address: { postalCode: '560123', blockNumber: '123', streetName: 'TEST AVENUE', displayAddress: '123 TEST AVENUE', town: 'ANG MO KIO', builtYear: 2000, latitude: 1.3, longitude: 103.8, verificationToken: 'fixture-token' } });
-    if (init.method === 'POST') {
-      const body = JSON.parse(init.body); writes.push({ url, body });
-      if (url.includes('/properties')) return Response.json({ id: 'draft-id' }, { status: 201 });
-      return new Response(null, { status: 201 });
-    }
-    return Response.json([]);
+    assert.fail('postal verification must not write a draft or call a model');
   });
-  const response = await handleRequest(request({ messages: [{ role: 'user', content: 'I want to sell my unit' }, { role: 'assistant', content: 'What is the 6-digit postal code?' }, { role: 'user', content: '560123' }, { role: 'assistant', content: 'What is the unit number?' }, { role: 'user', content: '#08-123' }], stream: true }, true));
+  const response = await handleRequest(request({ messages: [{ role: 'user', content: 'I want to sell my unit' }, { role: 'assistant', content: 'What is the 6-digit postal code?' }, { role: 'user', content: '560123' }], stream: true }, true));
   assert.equal(response.status, 200);
-  const text = await consumeChatStream(response, () => {}, () => assert.fail('sell emitted buying cards'));
-  assert.match(text, /created a draft listing/);
-  assert.match(text, /Seller Dashboard/);
-  assert.equal(writes.length, 2);
-  assert.equal(writes[0].body.status, 'draft');
-  assert.equal(writes[0].body.unit_number, undefined);
-  assert.equal(writes[1].body.unit_number, '#08-123');
+  let event;
+  const text = await consumeChatStream(response, () => {}, () => assert.fail('sell emitted buying cards'), value => { event = value; });
+  assert.match(text, /Bedrooms/);
+  assert.match(text, /bathrooms/);
+  assert.match(text, /don't know/);
+  assert.equal(event.context.stage, 'details');
+  assert.equal(event.context.postal_code, '560123');
+  assert.equal(event.draft, undefined);
 });

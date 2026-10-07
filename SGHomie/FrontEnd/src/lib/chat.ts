@@ -1,5 +1,7 @@
 import type { ListingSearchResult } from '../../../BackEnd/supabase/functions/_shared/listings.ts';
 import { visibleAssistantText } from '../../../BackEnd/supabase/functions/_shared/chatOutput.ts';
+import { parseSellerContext, type SellerFlowEvent } from '../../../BackEnd/supabase/functions/_shared/sellerFlow.ts';
+export type { SellerContext, SellerDraftCard, SellerFlowEvent } from '../../../BackEnd/supabase/functions/_shared/sellerFlow.ts';
 export type { ListingSearchResult } from '../../../BackEnd/supabase/functions/_shared/listings.ts';
 
 export const BUY_MESSAGE = 'I want to buy a house';
@@ -15,6 +17,7 @@ export async function consumeChatStream(
   response: Response,
   onText: (content: string) => void,
   onRecommendations: (result: ListingSearchResult) => void,
+  onSellerFlow?: (event: SellerFlowEvent) => void,
 ): Promise<string> {
   if (!response.body) throw new Error('The chatbot returned an empty response stream');
   const reader = response.body.getReader();
@@ -31,6 +34,17 @@ export async function consumeChatStream(
     const payload = JSON.parse(data);
     if (kind === 'error' || payload.error) throw new Error('The chatbot response was interrupted');
     if (kind === 'recommendations') { onRecommendations(payload as ListingSearchResult); return; }
+    if (kind === 'seller_flow') {
+      const context = payload.context === null ? null : parseSellerContext(payload.context);
+      const draft = payload.draft;
+      if (draft && (typeof draft.id !== 'string' || draft.id !== context?.draft_id
+        || typeof draft.title !== 'string' || typeof draft.location !== 'string'
+        || (draft.price !== null && (typeof draft.price !== 'number' || !Number.isFinite(draft.price) || draft.price <= 0))
+        || !Array.isArray(draft.missing_fields) || !draft.missing_fields.every((field: unknown) => typeof field === 'string')
+        || context?.stage !== 'complete')) throw new Error('Invalid saved draft response');
+      onSellerFlow?.({ context, ...(draft ? { draft } : {}) });
+      return;
+    }
     const delta = payload.choices?.[0]?.delta?.content;
     if (typeof delta === 'string' && delta) { content += delta; onText(visibleAssistantText(content)); }
   };
