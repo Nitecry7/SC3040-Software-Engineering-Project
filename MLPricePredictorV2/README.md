@@ -1,9 +1,10 @@
 # SG Homie HDB resale price modelling (V2)
 
-V2 is the clean research pipeline for future HDB resale price evaluation. It
-supports raw data profiling, deterministic row-wise feature preparation,
-chronological partitions, and historical transaction-price baselines. It does
-not train a learned model or serve valuations.
+V2 is the clean research pipeline for HDB resale price evaluation. It supports
+raw data profiling, deterministic row-wise feature preparation, chronological
+partitions, historical transaction-price baselines, and initial leakage-safe
+Linear and Ridge regression experiments. It does not serve valuations or
+provide a production model.
 
 ## Dataset
 
@@ -34,7 +35,8 @@ Base features are constructed row by row from transaction month/year, town,
 flat type, block, street, flat model, floor area, lease commencement year,
 parsed storey bounds/midpoint, and parsed remaining lease months. The target is
 `resale_price`, kept separately from `X`. No price-derived features, target
-aggregates, rolling price statistics, or category encodings are created.
+aggregates, rolling price statistics, or target-based category encodings are
+created. The learned model pipeline uses a fixed subset described below.
 
 Default partitions are train (2017-01 to 2024-12), validation
 (2025-01 to 2025-12), test (2026-01 to 2026-09), and current partial/future
@@ -109,20 +111,71 @@ are printed by `scripts/evaluate_baselines.py`. Performance varies across groups
 small groups such as multi-generation flats have few observations and noisy
 error estimates.
 
+## Initial learned linear models
+
+`scripts/evaluate_linear_models.py` compares ordinary Linear Regression with
+Ridge Regression at alphas 0.1, 1, 10, and 100. Both use the same sparse
+one-hot categorical encoding and numeric scaling inside a scikit-learn
+pipeline. Unknown categories are ignored at transform time. Encoders and
+scalers are fitted only on training data for validation; the selected pipeline
+is then refitted on train plus validation before test evaluation. No model
+artifact or processed dataset is written.
+
+The model feature schema is `transaction_year`, `transaction_month`,
+`floor_area_sqm`, `storey_mid`, `remaining_lease_months`, `town`, `flat_type`,
+`block`, `street_name`, and `flat_model`. `storey_low` and `storey_high` are
+omitted because their midpoint is an exact linear combination. The observed
+correlation between `lease_commence_date` and `remaining_lease_months` is 0.982,
+so lease commencement is omitted in favor of remaining lease. Block and street
+are retained as sparse categories despite their high cardinality. The selector
+uses validation MAE, treats candidates within 1% of the minimum as tied, then
+uses RMSE, median absolute error, and model simplicity. Test results do not
+select the model or alpha.
+
+On the current local dataset (241,920 rows), the selected validation model was
+Linear Regression. Its validation MAE was $50,772.32, RMSE $70,114.17, MAPE
+7.44%, R2 0.8820, and median absolute error $38,617.41. The best Ridge result
+was alpha 0.1, with validation MAE $50,793.75. Linear Regression was selected
+within the 1% MAE band because it had lower RMSE. The selected comparable
+baseline validation MAE was $39,354.92; Linear Regression underperformed it on
+MAE.
+
+After refitting Linear Regression on 2017-01 through 2025-12, its 2026-01 to
+2026-09 test results were MAE $49,861.68, RMSE $69,194.33, MAPE 8.08%, R2
+0.8975, and median absolute error $37,212.77. The comparable baseline test
+reference was MAE $40,932.90, RMSE $70,470.57, MAPE 5.90%, R2 0.8937, and
+median absolute error $25,000. The learned model underperformed on MAE, MAPE,
+and median absolute error while having lower RMSE and higher R2. This is an
+initial research result, not a production valuation. Test town and flat-type
+MAE with support counts and coefficient diagnostics are printed by the script.
+
+The selected pipeline has 3,375 encoded features. Train plus validation design
+data has shape 222,067 by 3,375, with approximately 26.13 MiB of CSR storage.
+The largest coefficients are descriptive contrasts against dropped one-hot
+reference categories; they are not causal explanations. Correlated property
+attributes and high-cardinality locations make individual coefficients
+unstable and should be interpreted cautiously.
+
+The test comparison is not a perfectly matched update protocol: the historical
+comparable baseline advances month by month and may use completed earlier test
+months, while the learned model is frozen after 2025-12 as required by this
+evaluation. Neither test result was used for model selection. Current partial
+period rows from 2026-10 onward remain excluded.
+
 The legacy `MLPricePredictor/` experiments contain target leakage, including
 features derived from the transaction price being predicted. Their model
 metrics and generated outputs therefore must not be trusted as evidence of
-future performance or used as production evidence. No learned V2 model has been
-trained or evaluated yet.
+future performance or used as production evidence. The V2 linear models are
+also research candidates only and do not establish production readiness.
 
 ## Intended future purpose
 
 The eventual purpose is to evaluate an HDB resale price estimate using only
 information available at prediction time, with chronological validation,
-appropriate baseline comparisons, and documented provenance. The historical
-baseline and reusable walk-forward evaluation stages are implemented. Learned-
-model training, model persistence, and a narrow FastAPI inference interface
-remain future work. No learned model is trained by the current project stage.
+appropriate baseline comparisons, and documented provenance. Historical
+baselines and initial linear model evaluation are implemented. Stronger
+feature design and model families, model persistence, and a narrow FastAPI
+inference interface remain future work.
 
 ## Setup and commands
 
@@ -133,10 +186,12 @@ python -m pip install -r requirements.txt
 python scripts/profile_data.py
 python scripts/prepare_data.py
 python scripts/evaluate_baselines.py
+python scripts/evaluate_linear_models.py
 python -m pytest
 ```
 
 The profiler, preparation script, and baseline evaluation script load the raw
 CSV without modifying it. Preparation reports partition shapes/date ranges and
 quality screening without writing processed artifacts. Evaluation prints
-metrics and diagnostics without persisting a large artifact.
+metrics and diagnostics without persisting a large artifact. Learned models
+are fitted in memory by the evaluation script and are not saved.
