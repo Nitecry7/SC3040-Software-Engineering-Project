@@ -57,6 +57,19 @@
 - Draft ownership/RLS and verified-address writes remain enforced. Chat does not
   have an approval tool. A failed write must not emit a saved-draft card.
 
+## Architecture
+
+The React chatbot sends the seller flow to the Supabase `chatbot` Edge Function.
+The function applies the configured OpenRouter or OpenAI provider, validates
+structured extraction output, calls the HDB location lookup for address
+verification, and persists drafts through server-side database operations.
+Provider and OneMap credentials remain in Edge Function secrets. Address
+verification uses OneMap geocoding plus official HDB property information; it
+does not verify asking prices or make a valuation authoritative. The repository
+does not establish which provider, secrets, function version, or deployment is
+active in a hosted environment. See the [Supabase setup guide](../BackEnd/supabase/README.md)
+for local setup and environment-specific verification steps.
+
 ## Validation
 
 From the repository root:
@@ -75,38 +88,3 @@ npm run build
 ```
 
 Tests use isolated fixtures, not fabricated records written to the hosted database.
-
-## Files changed
-
-- `BackEnd/supabase/functions/chatbot/index.ts`: stage routing, verified draft
-  persistence, authentication and structured seller events.
-- `BackEnd/supabase/functions/chatbot/sell.ts`: collective intake prompt, detail
-  extraction, title generation, provisional pricing and missing-field checklist.
-- `BackEnd/supabase/functions/_shared/sellerFlow.ts`: validated public protocol.
-- `FrontEnd/src/lib/chat.ts` and `FrontEnd/src/components/Chatbot.tsx`: consume
-  seller events, retain intake context and refresh from confirmed saves.
-- `FrontEnd/src/components/SellerDraft.tsx`: saved-draft continuation card.
-- `FrontEnd/src/pages/SellerDashboard.tsx`: direct draft editing and blank unknown
-  fields, including "Price not set" in the list.
-- `tests/sell-flow.test.mjs` and `tests/buy-flow.test.mjs`: seller workflow tests
-  and revised postal-step contract; existing buyer/provider checks are retained.
-- This document and `BackEnd/supabase/README.md`: implementation and validation.
-
-Verification completed: 64 workflow/provider tests passed, lint passed with two
-existing fast-refresh warnings, and the production build passed with its existing
-large-chunk warning. `npx tsc --noEmit` passed; the stricter app-project check
-reported seven pre-existing unused React imports in unrelated files. Backend
-strict checking also passed using the installed Supabase SDK and a temporary Deno
-globals declaration (`tsc -p /private/tmp/sghomie-backend-tsconfig.json`).
-
-Live checks verified postal lookup, the combined intake prompt, the unknown-detail
-pricing fallback, refresh persistence of an existing draft and its direct edit
-link. Actual draft inserts and failure/rollback checks used isolated service
-fixtures. Profile-contact reuse, missing-contact questions, natural confirmations
-such as "oh sure", refusals and alternative prices are also covered by fixtures.
-The contact/confirmation refinement changes `chatbot/index.ts`, `chatbot/sell.ts`,
-`tests/sell-flow.test.mjs` and this document; no frontend or schema changes were
-needed for that refinement.
-
-The chatbot Edge Function was deployed as active version 26; frontend
-changes remain in the local branch for the normal frontend deployment process.

@@ -13,10 +13,35 @@ applies incremental migrations for the current application features:
   admin-role constraints
 - `20260917120000_hdb_verification_tokens.sql` for server-enforced HDB writes
 - `20260917130000_remove_chatbot_rate_limits.sql` removes the chatbot counter
+- `20261008120000_deterministic_demo_property_amenities.sql` adds provenance and deterministic demo nearby amenities
 
 The initial migration creates the full application schema, policies, views, and
 triggers for a fresh Supabase project. Later migrations must be applied in
 timestamp order with the initial schema.
+
+## Deterministic demo amenities
+
+The latest migration adds a `source` column to `public.property_amenities`,
+defaulting existing and unspecified rows to `legacy`. Generated rows use
+`source = 'demo'` and one deterministic record per property for each category:
+Transport, School, Shopping, Healthcare, Food, Park, and Community. Distance and
+bearing are derived deterministically from the property/category, and the stored
+distance is calculated from the generated coordinates.
+
+The migration replaces only its exact recognized legacy placeholder rows. It
+preserves unrelated amenity records, and its demo-only partial unique index does
+not constrain multiple real amenities of the same category. Existing properties
+are backfilled only when they have zero amenity rows and finite coordinates
+within the broad Singapore bounds (latitude 1.0–1.6, longitude 103.4–104.4).
+New properties use a temporary insert trigger to create demo rows when their
+coordinates pass the same checks; generation reads but does not change the
+property's stored coordinates. This trigger and these records are for the
+current demo pipeline, not a live amenity service.
+
+Real amenity ingestion is not implemented. When an authoritative source is
+ready, remove the temporary demo trigger and replace `source = 'demo'` rows using
+the chosen real-source provenance. The migration file documents the full
+generation logic; this README describes its behavior only.
 
 ## Extensions
 
@@ -54,15 +79,25 @@ From the backend directory:
 ```bash
 supabase login
 supabase link --project-ref YOUR_PROJECT_REF
-supabase db push --dry-run
+supabase migration list
+supabase db push --dry-run --linked
 supabase db push --linked
 ```
 
 `seed.sql` is used by local `supabase db reset` to load nine approved demo
 properties; it is not applied by `supabase db push`, so demo data cannot enter
-production accidentally. For a hosted project that contains an old schema,
-reset it through the Supabase Dashboard before pushing this fresh initial
-migration. `supabase db reset` only resets the local database.
+production accidentally. For a new hosted project, link the intended project,
+review pending migrations, and preview before applying them. For an existing
+hosted project, compare local and remote migration history and reconcile any
+drift before pushing; do not reset or recreate a hosted database to work around
+history differences. A repository checkout does not prove which migrations are
+applied remotely.
+
+`supabase migration list` compares local and linked migration history. The
+`--dry-run` command previews pending changes; apply only after confirming the
+project reference and migration plan. `supabase db reset` is for the local
+development database. Never use `supabase db reset --linked` against a hosted
+project; it is destructive. See the [Supabase CLI workflow guide](https://supabase.com/docs/guides/local-development/cli-workflows).
 
 For local database testing, run:
 
@@ -72,6 +107,12 @@ supabase db reset
 ```
 
 Do not run `supabase db reset` against the linked hosted project.
+
+To verify environment-specific deployment state, inspect migration history with
+`supabase migration list` and check the relevant Edge Function in the linked
+project's Supabase Dashboard or by invoking its intended health/workflow path.
+Deploying source with `supabase functions deploy <function-name>` is a separate
+step from applying migrations. Do not infer either state from the repository.
 
 ## HDB postal-code lookup
 
