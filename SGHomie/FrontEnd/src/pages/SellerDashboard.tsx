@@ -1,7 +1,7 @@
 // Import React and necessary hooks for state management and side effects.
 import React, { useCallback, useEffect, useState } from 'react';
 // useNavigate is used for programmatic navigation between routes.
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 // useAuth provides user authentication context (current user info).
 import { useAuth } from '../contexts/AuthContext';
 // Import the Supabase client for interacting with your database.
@@ -116,6 +116,7 @@ const SellerDashboard = () => {
   const { user, isAdmin } = useAuth();
   // useNavigate hook for redirection/navigation.
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   
   // Local state for storing the list of properties belonging to the seller.
   const [properties, setProperties] = useState<Property[]>([]);
@@ -173,7 +174,7 @@ const SellerDashboard = () => {
   const [countryPickerOpen, setCountryPickerOpen] = useState(false);
   const [countrySearch, setCountrySearch] = useState('');
 
-  const parseStoredPhone = (phone: string) => {
+  const parseStoredPhone = useCallback((phone: string) => {
     const compactPhone = phone.replace(/[\s().-]/g, '');
     const knownCountry = [...PHONE_COUNTRIES]
       .sort((left, right) => right.dialCode.length - left.dialCode.length)
@@ -194,7 +195,7 @@ const SellerDashboard = () => {
       countryCode,
       number: match?.[2] || '',
     };
-  };
+  }, []);
 
   const refreshDashboard = useCallback(async () => {
     if (!user) return;
@@ -266,18 +267,18 @@ const SellerDashboard = () => {
 
   // Handler for editing a property.
   // Pre-fills the formData with the selected property's details.
-  const handleEditClick = (property: Property) => {
+  const handleEditClick = useCallback((property: Property) => {
     // Set the selected property state.
     setSelectedProperty(property);
     // Update formData state with property details, converting numbers to strings for form inputs.
     setFormData({
       title: property.title,
-      price: property.price.toString(),
+      price: property.price > 0 ? property.price.toString() : '',
       location: property.location,
       type: property.type,
-      bedrooms: property.bedrooms.toString(),
-      bathrooms: property.bathrooms.toString(),
-      area_sqft: property.area_sqft.toString(),
+      bedrooms: property.bedrooms > 0 ? property.bedrooms.toString() : '',
+      bathrooms: property.bathrooms > 0 ? property.bathrooms.toString() : '',
+      area_sqft: property.area_sqft > 0 ? property.area_sqft.toString() : '',
       description: property.description || '',
       image_url: property.image_url,
       photos: property.photos || [],
@@ -307,7 +308,19 @@ const SellerDashboard = () => {
     // Enable editing mode and display the modal.
     setIsEditing(true);
     setShowModal(true);
-  };
+  }, [parseStoredPhone]);
+
+  useEffect(() => {
+    const draftId = searchParams.get('draft');
+    if (!draftId || loading || isRefreshing || error) return;
+    // Only open records already loaded by the current seller's RLS-protected query.
+    const draft = properties.find(property => property.id === draftId && property.status === 'draft');
+    if (draft) handleEditClick(draft);
+    else toast.error('This draft could not be found in your Seller Dashboard');
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('draft');
+    setSearchParams(nextParams, { replace: true });
+  }, [searchParams, setSearchParams, properties, loading, isRefreshing, error, handleEditClick]);
 
   // Handler for adding a new property.
   // Resets formData to empty values and opens the modal.
@@ -942,7 +955,7 @@ const SellerDashboard = () => {
                           </div>
                           {/* Property Summary: number of bedrooms, bathrooms, and floor area */}
                           <div className="text-sm text-gray-500">
-                            {property.bedrooms} bed • {property.bathrooms} bath • {property.area_sqft} sqft
+                            {property.bedrooms > 0 ? property.bedrooms : '—'} bed • {property.bathrooms > 0 ? property.bathrooms : '—'} bath • {property.area_sqft > 0 ? property.area_sqft : '—'} sqft
                           </div>
                         </div>
                       </div>
@@ -953,7 +966,7 @@ const SellerDashboard = () => {
                     </td>
                     {/* Property Price */}
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      S${property.price.toLocaleString()}
+                      {property.price > 0 ? `S$${property.price.toLocaleString('en-SG')}` : 'Price not set'}
                     </td>
                     {/* Property Status Badge */}
                     <td className="px-6 py-4 whitespace-nowrap">

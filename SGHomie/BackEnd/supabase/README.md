@@ -1,5 +1,10 @@
 # Supabase setup
 
+The chatbot Buy flow, listing-search tool contract, verification and deployment
+steps are documented in [Chatbot buy flow](../../docs/buy-flow.md).
+The seller intake, provisional pricing, partial drafts and saved-draft card are
+documented in [Chatbot sell flow](../../docs/sell-flow.md).
+
 The active migration path starts with one complete initial migration and then
 applies incremental migrations for the current application features:
 
@@ -95,9 +100,69 @@ supabase functions deploy lookup-hdb-location
 supabase functions deploy chatbot
 ```
 
-The chatbot has no application-level request rate limit. Its default model can
-be overridden with the `OPENROUTER_MODEL` Edge Function secret; the default is
-`openai/gpt-oss-20b:free`.
+## Chatbot provider selection
+
+The chatbot supports exactly two providers, selected by the server-side
+`CHAT_PROVIDER` setting. When omitted, it uses OpenRouter as before. The switch
+does not change system prompts, history, listing tools, search rules or seller
+logic, and does not automatically fall back to another provider.
+
+| Setting | OpenRouter | OpenAI |
+| --- | --- | --- |
+| `CHAT_PROVIDER` | `openrouter` (default) | `openai` |
+| API key | `OPENROUTER_API_KEY` | `OPENAI_API_KEY` |
+| Model override | `OPENROUTER_MODEL` | `OPENAI_MODEL` |
+| Default model | `openrouter/free` | `gpt-6-luna` |
+
+For local testing, copy `BackEnd/.env.example` to `BackEnd/.env`, fill in the
+selected provider's key, and run from `BackEnd/`:
+
+```bash
+supabase functions serve chatbot --env-file .env
+```
+
+The hosted chatbot reads **Supabase Edge Function secrets**, not local or
+frontend `.env` files. Add `OPENAI_API_KEY` securely in Dashboard → Edge Functions
+→ Secrets, then select OpenAI with:
+
+```bash
+supabase secrets set CHAT_PROVIDER=openai OPENAI_MODEL=gpt-6-luna
+```
+
+To switch back, keep the existing OpenRouter key and set:
+
+```bash
+supabase secrets set CHAT_PROVIDER=openrouter OPENROUTER_MODEL=openrouter/free
+```
+
+Deploy `chatbot` after source changes; changing provider/model secrets does not
+require another source edit. Only the selected provider's key is required.
+Keys must stay server-side and out of Git and frontend environment variables.
+
+The OpenAI adapter uses the existing Chat Completions contract and HTTP
+transport. It removes OpenRouter's `provider` routing field, converts
+`max_tokens` to `max_completion_tokens`, and uses `reasoning_effort: none` for
+GPT-6 Luna/Sol to support function calls. Choose a Chat Completions model that
+supports function calling. GPT-6 Astra and GPT-6.1 Sol require Responses API for
+tools and are deliberately rejected by this adapter; use Luna/Sol instead.
+The official compatibility rules are documented in the
+[GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model).
+
+The chatbot has no application-level request rate limit. Each provider still
+enforces its own account limits, quotas, and model availability. Automated
+adapter tests mock the provider; they do not verify access to a paid account.
+
+Adapter verification (from the repository root):
+
+```bash
+node --experimental-strip-types --import ./SGHomie/tests/register-deno-imports.mjs --test SGHomie/tests/chat-provider.test.mjs SGHomie/tests/buy-flow.test.mjs
+```
+
+Strict backend module check (from `SGHomie/FrontEnd/`):
+
+```bash
+./node_modules/.bin/tsc --noEmit --strict --allowImportingTsExtensions --module esnext --moduleResolution bundler --target es2022 --lib es2022,dom ../BackEnd/supabase/functions/_shared/openai.ts ../BackEnd/supabase/functions/_shared/chatProvider.ts ../BackEnd/supabase/functions/chatbot/buy.ts ../BackEnd/supabase/functions/chatbot/buyerRequirements.ts
+```
 
 ## Property image storage and cleanup
 

@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "test:buy": "node --experimental-strip-types --import ../tests/register-deno-imports.mjs --test ../tests/buy-flow.test.mjs",
+    "test:chat": "node --experimental-strip-types --test ../tests/chat-window.test.mjs",
+    "test:analytics": "node --experimental-strip-types --test ../tests/listing-analytics.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -23,7 +26,8 @@
     "react-leaflet": "^4.2.1",
     "react-markdown": "^9.0.1",
     "react-router-dom": "^7.18.3",
-    "recharts": "^2.15.1"
+    "recharts": "^2.15.1",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^8.56.0",

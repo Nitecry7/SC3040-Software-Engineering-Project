@@ -1,12 +1,13 @@
 // Import React and hooks for state management and side effects.
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 // Import Tremor UI components for card layouts and text display.
 import { Card, Title, Text } from '@tremor/react';
 // Import icons from lucide-react to be used in the UI.
 import { TrendingUp, DollarSign, Home, Map, X } from 'lucide-react';
 // Import Recharts components for rendering charts.
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, BarChart, Bar, ResponsiveContainer } from 'recharts';
-// Import axios in case you decide to fetch data from an API endpoint.
+import { supabase } from '../lib/supabase';
+import { summarizeListings, type AnalyticsListing } from '../lib/listingAnalytics';
 
 // Define the structure for price data records.
 interface PriceData {
@@ -24,10 +25,23 @@ interface TrendPoint {
   price: number;
 }
 
+// List of towns available for filtering; sorted alphabetically.
+const towns = [
+  'ANG MO KIO', 'BEDOK', 'BISHAN', 'BUKIT BATOK', 'BUKIT MERAH',
+  'BUKIT PANJANG', 'BUKIT TIMAH', 'CENTRAL AREA', 'CHOA CHU KANG',
+  'CLEMENTI', 'GEYLANG', 'HOUGANG', 'JURONG EAST', 'JURONG WEST',
+  'KALLANG/WHAMPOA', 'MARINE PARADE', 'PASIR RIS', 'PUNGGOL',
+  'QUEENSTOWN', 'SEMBAWANG', 'SENGKANG', 'SERANGOON', 'TAMPINES',
+  'TOA PAYOH', 'WOODLANDS', 'YISHUN'
+].sort();
+
 // Main Analytics component to display market analytics and visual data.
 const Analytics = () => {
-  // State to store price data records.
-  const [priceData, setPriceData] = useState<PriceData[]>([]);
+  // Live listing statistics stay separate from the demo historical price series.
+  const [listings, setListings] = useState<AnalyticsListing[]>([]);
+  const [loadingListings, setLoadingListings] = useState(true);
+  const [listingError, setListingError] = useState('');
+  const [refreshVersion, setRefreshVersion] = useState(0);
   // State for filtering data by selected year. 'ALL' means no year filter.
   const [selectedYear, setSelectedYear] = useState<string>('ALL');
   // State for filtering data by selected towns, limited to a maximum selection.
@@ -37,19 +51,9 @@ const Analytics = () => {
   // Define an array of selectable years (including 'ALL' to reset filter).
   const years = ['ALL', '2017', '2018', '2019', '2020', '2021', '2022', '2023', '2024'];
   
-  // List of towns available for filtering; sorted alphabetically.
-  const towns = [
-    'ANG MO KIO', 'BEDOK', 'BISHAN', 'BUKIT BATOK', 'BUKIT MERAH',
-    'BUKIT PANJANG', 'BUKIT TIMAH', 'CENTRAL AREA', 'CHOA CHU KANG',
-    'CLEMENTI', 'GEYLANG', 'HOUGANG', 'JURONG EAST', 'JURONG WEST',
-    'KALLANG/WHAMPOA', 'MARINE PARADE', 'PASIR RIS', 'PUNGGOL',
-    'QUEENSTOWN', 'SEMBAWANG', 'SENGKANG', 'SERANGOON', 'TAMPINES',
-    'TOA PAYOH', 'WOODLANDS', 'YISHUN'
-  ].sort();
-
   // Static data to simulate API response. This is constructed dynamically for different years and towns.
   // Each record represents a 4 ROOM flat's price at a given time.
-  const staticData = [
+  const [priceData] = useState<PriceData[]>(() => [
     // 2017 data for all towns
     ...towns.flatMap(town => [
       { year: 2017, month: 1, town, flat_type: '4 ROOM', price: 350000 + Math.random() * 100000 },
@@ -98,47 +102,70 @@ const Analytics = () => {
       { year: 2024, month: 2, town, flat_type: '4 ROOM', price: 570000 + Math.random() * 100000 },
       { year: 2024, month: 3, town, flat_type: '4 ROOM', price: 580000 + Math.random() * 100000 },
     ]),
-  ];
+  ]);
 
-  // useEffect to simulate data fetching when the component mounts.
-  // In a real application, you could uncomment and use the axios request to fetch real data.
+  // Fetch only public marketplace fields; load all pages rather than truncating statistics.
   useEffect(() => {
-    const fetchData = async () => {
+    const controller = new AbortController();
+    const loadListings = async () => {
+      setLoadingListings(true);
+      setListingError('');
       try {
-        // Example API fetch (commented out for demonstration using static data)
-        // const response = await axios.get('https://data.gov.sg/api/action/datastore_search', {
-        //   params: { resource_id: 'd_8b84c4ee58e3cfc0ece0d773c8ca6abc', limit: 5000 }
-        // });
-        // setPriceData(response.data.result.records);
-        
-        // Set static data for demonstration purposes
-        setPriceData(staticData);
+        const all: AnalyticsListing[] = [];
+        const pageSize = 500;
+        for (let offset = 0; ;) {
+          const { data, error, count } = await supabase.from('properties')
+            .select('id,price,location,town', { count: 'exact' })
+            .eq('type', 'HDB').eq('status', 'approved')
+            .order('id').range(offset, offset + pageSize - 1)
+            .abortSignal(controller.signal);
+          if (error) throw error;
+          if (!data?.length) {
+            if (count !== null && all.length < count) throw new Error('Incomplete listing statistics');
+            break;
+          }
+          all.push(...(data ?? []));
+          offset += data.length;
+          if (count !== null ? offset >= count : data.length < pageSize) break;
+        }
+        if (!controller.signal.aborted) setListings(all);
       } catch (error) {
-        console.error('Error fetching data:', error);
+        if (!controller.signal.aborted) {
+          console.error('Error loading listing statistics:', error);
+          setListingError('We could not load listing statistics. Please try again.');
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoadingListings(false);
       }
     };
+    void loadListings();
+    return () => controller.abort();
+  }, [refreshVersion]);
 
-    fetchData();
-  }, []);
+  const summary = useMemo(() => summarizeListings(listings), [listings]);
+  const unavailable = loadingListings || Boolean(listingError);
+  const popular = summary.popularTowns[0];
+  const money = (price: number) => `S$${price.toLocaleString('en-SG', { maximumFractionDigits: 0 })}`;
+  const liveValue = (value: string) => loadingListings ? 'Loading…' : listingError ? '—' : value;
 
   // Define market statistics to be displayed as summary cards.
   const marketStats = [
     {
       title: 'Average Price',
-      value: 'S$890,000',
-      change: '+4.2%',
+      value: liveValue(summary.averagePrice === null ? '—' : money(summary.averagePrice)),
+      change: 'Average asking price',
       icon: <DollarSign className="h-6 w-6 text-blue-600" />,
     },
     {
       title: 'Properties Listed',
-      value: '1,245',
-      change: '+12.5%',
+      value: liveValue(summary.count.toLocaleString('en-SG')),
+      change: 'Approved HDB listings',
       icon: <Home className="h-6 w-6 text-blue-600" />,
     },
     {
       title: 'Popular Area',
-      value: 'Tampines',
-      change: 'High Demand',
+      value: liveValue(popular?.town ?? '—'),
+      change: unavailable ? 'Most listings by town' : popular ? `${popular.count} ${popular.count === 1 ? 'listing' : 'listings'}${summary.popularTowns.length > 1 ? ' · joint top' : ''}` : 'No approved listings',
       icon: <Map className="h-6 w-6 text-blue-600" />,
     },
     {
@@ -174,15 +201,9 @@ const Analytics = () => {
     }, [])
     .sort((a, b) => a.year === b.year ? a.month - b.month : a.year - b.year);
 
-  // Process price data for a town-by-town comparison.
-  // For each selected town, calculate the average price across all records.
-  const townComparisonData = selectedTowns.map(town => {
-    // Filter data by town.
-    const townData = priceData.filter(data => data.town === town);
-    // Calculate average price.
-    const avgPrice = townData.reduce((sum, curr) => sum + curr.price, 0) / (townData.length || 1);
-    return { town, price: avgPrice };
-  });
+  const townComparisonData = selectedTowns.map(town =>
+    summary.towns.find(item => item.town === town) ?? { town, count: 0, price: null });
+  const missingTowns = townComparisonData.filter(town => town.price === null).map(town => town.town);
 
   // Function to toggle the selection of a town for comparison.
   // Limits the number of selectable towns to 5.
@@ -200,7 +221,13 @@ const Analytics = () => {
     <div className="pt-16 min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Page Title */}
-        <h1 className="text-3xl font-bold text-gray-900 mb-8">Market Trends</h1>
+        <h1 className="text-3xl font-bold text-gray-900 mb-3">Market Trends</h1>
+        <div className="mb-8 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-gray-600">Listing statistics use approved HDB asking prices. Popular area means the town with the most listings.</p>
+          <button type="button" onClick={() => setRefreshVersion(version => version + 1)} disabled={loadingListings}
+            className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50">Refresh listings</button>
+        </div>
+        {listingError && <p role="alert" className="mb-6 rounded-lg bg-red-50 p-4 text-sm text-red-700">{listingError}</p>}
 
         {/* Market Statistics Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -273,7 +300,7 @@ const Analytics = () => {
             <div className="flex justify-between items-center mb-6">
               <div>
                 <Title>Price Comparison by Town</Title>
-                <Text>Average prices across different towns</Text>
+                <Text>Average asking prices of approved HDB listings</Text>
               </div>
               {/* Button to toggle the town selection dropdown */}
               <div className="relative">
@@ -318,52 +345,26 @@ const Analytics = () => {
             </div>
             {/* Responsive container for the BarChart */}
             <div className="h-[400px]">
-              <ResponsiveContainer width="100%" height="100%">
+              {unavailable || !townComparisonData.some(town => town.price !== null) ? (
+                <p role="status" className="flex h-full items-center justify-center text-sm text-gray-500">
+                  {loadingListings ? 'Loading town prices…' : listingError ? 'Town prices are unavailable.' : selectedTowns.length ? 'No approved listings for the selected towns.' : 'Select towns to compare.'}
+                </p>
+              ) : <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={townComparisonData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="town" />
                   <YAxis />
-                  <Tooltip formatter={(value: number) => [`S$${value.toLocaleString()}`, 'Price']} />
+                  <Tooltip formatter={(value: number) => [money(value), 'Average Asking Price']} />
                   <Legend />
-                  <Bar dataKey="price" fill="#3b82f6" name="Average Price" />
+                  <Bar dataKey="price" fill="#3b82f6" name="Average Asking Price" />
                 </BarChart>
-              </ResponsiveContainer>
+              </ResponsiveContainer>}
             </div>
+            {!unavailable && missingTowns.length > 0 && <p className="mt-3 text-xs text-gray-500">No listing price data: {missingTowns.join(', ')}.</p>}
           </Card>
         </div>
 
-        {/* Market Insights Section */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-8">
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-xl font-semibold text-gray-900 mb-4">Market Insights</h3>
-            <ul className="space-y-4">
-              <li className="flex items-start">
-                <div className="flex-shrink-0">
-                  <span className="inline-block h-2 w-2 rounded-full bg-blue-600 mt-2"></span>
-                </div>
-                <p className="ml-3 text-gray-600">
-                  Property prices in Tampines have shown a steady increase of 4.2% over the past quarter
-                </p>
-              </li>
-              <li className="flex items-start">
-                <div className="flex-shrink-0">
-                  <span className="inline-block h-2 w-2 rounded-full bg-blue-600 mt-2"></span>
-                </div>
-                <p className="ml-3 text-gray-600">
-                  HDB resale volumes increased by 12.5% compared to the previous month
-                </p>
-              </li>
-              <li className="flex items-start">
-                <div className="flex-shrink-0">
-                  <span className="inline-block h-2 w-2 rounded-full bg-blue-600 mt-2"></span>
-                </div>
-                <p className="ml-3 text-gray-600">
-                  New launches in the eastern region are seeing strong buyer interest
-                </p>
-              </li>
-            </ul>
-          </div>
-
+        <div className="mt-8">
           <div className="bg-white rounded-lg shadow-md p-6">
             <h3 className="text-xl font-semibold text-gray-900 mb-4">Price Predictions</h3>
             <div className="space-y-4">
