@@ -2,11 +2,13 @@
 
 from dataclasses import dataclass
 from itertools import combinations
+from time import perf_counter
 
 import numpy as np
 import pandas as pd
 
-from src.evaluation.metrics import RegressionMetrics
+from src.evaluation.metrics import RegressionMetrics, calculate_regression_metrics
+from src.models.boosted import ComputeDevice, fit_frozen_catboost, predict_boosted_model
 from src.splitting.chronological import DataPartition
 
 
@@ -34,12 +36,24 @@ class RepeatabilitySummary:
     maximum_pairwise_prediction_difference_sgd: float
 
 
+@dataclass(frozen=True)
+class FrozenCatBoostYearResult:
+    year: int
+    training: DataPartition
+    evaluation: DataPartition
+    predictions: pd.Series
+    metrics: RegressionMetrics | None
+    fit_seconds: float
+    prediction_seconds: float
+
+
 def expanding_year_partitions(
     features: pd.DataFrame,
     target: pd.Series,
     transaction_period: pd.Series,
     year: int,
     evaluation_end_month: int = 12,
+    include_evaluation_target: bool = True,
 ) -> tuple[DataPartition, DataPartition]:
     """Split an expanding history and one calendar-year evaluation window."""
     if not features.index.equals(target.index) or not features.index.equals(transaction_period.index):
@@ -60,21 +74,73 @@ def expanding_year_partitions(
     if not train_mask.any() or not evaluation_mask.any():
         raise ValueError(f"Year {year} requires non-empty historical and evaluation partitions")
 
-    def partition(mask: np.ndarray) -> DataPartition:
+    def partition(mask: np.ndarray, *, include_target: bool = True) -> DataPartition:
         positions = mask.nonzero()[0]
+        partition_features = features.iloc[positions].copy()
+        partition_target = (
+            target.iloc[positions].copy()
+            if include_target
+            else target.iloc[0:0].copy()
+        )
         return DataPartition(
-            features.iloc[positions].copy(),
-            target.iloc[positions].copy(),
+            partition_features,
+            partition_target,
             transaction_period.iloc[positions].copy(),
         )
 
     training = partition(train_mask)
-    evaluation = partition(evaluation_mask)
+    evaluation = partition(evaluation_mask, include_target=include_evaluation_target)
     if training.transaction_period.max() >= evaluation_start:
         raise AssertionError("Training data must end before the evaluation year")
     if not (pd.PeriodIndex(evaluation.transaction_period, freq="M") <= evaluation_end).all():
         raise AssertionError("Evaluation data extends past its configured year window")
     return training, evaluation
+
+
+def evaluate_frozen_catboost_year(
+    features: pd.DataFrame,
+    target: pd.Series,
+    transaction_period: pd.Series,
+    year: int,
+    device: ComputeDevice = "gpu",
+    evaluation_end_month: int = 12,
+    calculate_metrics: bool = True,
+) -> FrozenCatBoostYearResult:
+    """Fit the frozen CatBoost design through the prior December and predict one year.
+
+    Set ``calculate_metrics=False`` when the evaluation labels must remain
+    untouched until downstream intervals or decisions have been frozen.
+    """
+    training, evaluation = expanding_year_partitions(
+        features,
+        target,
+        transaction_period,
+        year,
+        evaluation_end_month=evaluation_end_month,
+        include_evaluation_target=calculate_metrics,
+    )
+    fit_started = perf_counter()
+    model = fit_frozen_catboost(training.features, training.target, device=device)
+    fit_seconds = perf_counter() - fit_started
+    prediction_started = perf_counter()
+    predictions = predict_boosted_model(model, evaluation.features).reindex(
+        evaluation.features.index
+    )
+    prediction_seconds = perf_counter() - prediction_started
+    metrics = (
+        calculate_regression_metrics(evaluation.target, predictions)
+        if calculate_metrics
+        else None
+    )
+    return FrozenCatBoostYearResult(
+        year=year,
+        training=training,
+        evaluation=evaluation,
+        predictions=predictions,
+        metrics=metrics,
+        fit_seconds=fit_seconds,
+        prediction_seconds=prediction_seconds,
+    )
 
 
 def summarize_repeatability(runs: list[RepeatabilityRun]) -> RepeatabilitySummary:

@@ -7,6 +7,7 @@ from src.evaluation.frozen_history import evaluate_frozen_history_comparable
 from src.evaluation.metrics import RegressionMetrics
 from src.evaluation.robustness import (
     RepeatabilityRun,
+    evaluate_frozen_catboost_year,
     expanding_year_partitions,
     summarize_group_mae,
     summarize_monthly_drift,
@@ -114,6 +115,43 @@ def test_expanding_year_partition_can_stop_before_partial_month_but_rejects_it()
     assert evaluation.transaction_period.max() == pd.Period("2026-09", freq="M")
     with pytest.raises(ValueError, match="partial period"):
         expanding_year_partitions(features, target, periods, 2026, evaluation_end_month=10)
+
+
+def test_shared_frozen_year_helper_fits_only_before_evaluation_year(monkeypatch):
+    import src.evaluation.robustness as robustness
+
+    periods = pd.Series(
+        pd.PeriodIndex(["2020-12", "2021-12", "2022-01", "2022-12", "2023-01"], freq="M"),
+        index=[11, 12, 13, 14, 15],
+    )
+    features = pd.DataFrame({"feature": [1, 2, 3, 4, 5]}, index=periods.index)
+    target = pd.Series([100.0, 200.0, 300.0, 400.0, 999999.0], index=periods.index)
+    captured = {}
+
+    def fit_spy(X, y, *, device):
+        captured["training_indices"] = X.index.tolist()
+        captured["training_target"] = y.tolist()
+        captured["device"] = device
+        return object()
+
+    def predict_spy(model, X):
+        captured["evaluation_indices"] = X.index.tolist()
+        return pd.Series([250.0, 350.0], index=X.index)
+
+    monkeypatch.setattr(robustness, "fit_frozen_catboost", fit_spy)
+    monkeypatch.setattr(robustness, "predict_boosted_model", predict_spy)
+    result = evaluate_frozen_catboost_year(
+        features, target, periods, 2022, device="cpu", calculate_metrics=False
+    )
+
+    assert captured["training_indices"] == [11, 12]
+    assert captured["training_target"] == [100.0, 200.0]
+    assert captured["evaluation_indices"] == [13, 14]
+    assert captured["device"] == "cpu"
+    assert result.evaluation.target.empty
+    assert result.metrics is None
+    assert result.predictions.tolist() == [250.0, 350.0]
+    assert result.training.transaction_period.max() == pd.Period("2021-12", freq="M")
 
 
 def test_fixed_catboost_fit_uses_only_supplied_labels_and_frozen_configuration(monkeypatch):

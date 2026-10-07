@@ -18,6 +18,7 @@ from src.evaluation.frozen_history import evaluate_frozen_history_comparable  # 
 from src.evaluation.metrics import RegressionMetrics, calculate_regression_metrics  # noqa: E402
 from src.evaluation.robustness import (  # noqa: E402
     RepeatabilityRun,
+    evaluate_frozen_catboost_year,
     expanding_year_partitions,
     summarize_group_mae,
     summarize_monthly_drift,
@@ -276,13 +277,16 @@ def main() -> None:
     year_windows = (*TEMPORAL_BACKTEST_YEARS, 2026)
     for year in year_windows:
         end_month = 9 if year == 2026 else 12
-        training, evaluation = expanding_year_partitions(
+        annual = evaluate_frozen_catboost_year(
             prepared.features,
             prepared.target,
             periods,
             year,
+            device=device,
             evaluation_end_month=end_month,
         )
+        training = annual.training
+        evaluation = annual.evaluation
         cutoff_month = pd.Period(f"{year - 1}-12", freq="M")
         print(
             f"\nFITTING {year}: train rows={len(training.features):,} through {cutoff_month}; "
@@ -290,15 +294,10 @@ def main() -> None:
             f"{evaluation.transaction_period.max()}"
         )
         gc.collect()
-        fit_started = perf_counter()
-        fitted = fit_frozen_catboost(training.features, training.target, device=device)
-        fit_seconds = perf_counter() - fit_started
-        prediction_started = perf_counter()
-        cat_predictions = predict_boosted_model(fitted, evaluation.features)
-        prediction_seconds = perf_counter() - prediction_started
-        cat_metrics = calculate_regression_metrics(
-            evaluation.target, cat_predictions.reindex(evaluation.target.index)
-        )
+        fit_seconds = annual.fit_seconds
+        prediction_seconds = annual.prediction_seconds
+        cat_predictions = annual.predictions
+        cat_metrics = annual.metrics
         cat_rows = _prediction_frame(evaluation, cat_predictions)
 
         evaluation_rows = all_rows.loc[evaluation.features.index].copy()
@@ -330,7 +329,6 @@ def main() -> None:
             repeat_runs.append(
                 RepeatabilityRun(cat_metrics, fit_seconds, prediction_seconds, cat_predictions)
             )
-        del fitted
         gc.collect()
 
     for repeat_number in (2, 3):

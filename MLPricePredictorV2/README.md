@@ -2,9 +2,10 @@
 
 V2 is the clean research pipeline for HDB resale price evaluation. It supports
 raw data profiling, deterministic row-wise feature preparation, chronological
-partitions, historical transaction-price baselines, and initial leakage-safe
-Linear, Ridge, and nonlinear tree benchmark experiments. It does not serve
-valuations or provide a production model.
+partitions, historical transaction-price baselines, and leakage-safe Linear,
+Ridge, tree, and CatBoost research. It evaluates uncertainty ranges for the
+selected CatBoost point estimator; it does not serve valuations or provide an
+approved production model.
 
 ## Dataset
 
@@ -465,6 +466,77 @@ application integration. Temporal drift, recurrent group error, low-support
 groups, GPU variation, and the retrospective nature of earlier backtests still
 need to inform any uncertainty range and subsequent evaluation.
 
+## CatBoost uncertainty ranges
+
+`scripts/evaluate_uncertainty.py` evaluates symmetric conformal intervals around
+the frozen CatBoost point predictions. It does not tune the point model. For
+each nominal coverage `p`, the radius is the 1-indexed absolute-residual order
+statistic at `ceil((n + 1) * p)`, with an infinite interval if that rank exceeds
+the available calibration count. This is the finite-sample split-conformal
+index; ordinary interpolated percentiles are not used.
+
+Annual CatBoost fits produce genuinely out-of-sample residuals for 2021–2025.
+The 2021 model fits through 2020 and supplies calibration evidence for 2022.
+For each historical interval evaluation year (2022–2025), calibration is frozen
+from earlier residual years only; that evaluation year's labels are used only
+after its intervals are formed. The five compared strategies are all prior
+years, the most recent two years, the most recent year, town-specific
+calibration, and flat-type-specific calibration. Group strategies fall back to
+the global quantile from the same prior-year pool when that group has fewer
+than 30 calibration residuals. Coverage is reported for 80%, 90%, and 95%.
+
+Selection used only 2022–2025 results. The rule first minimizes the worst
+annual undercoverage over all three nominal levels, then pooled absolute
+coverage error, row-weighted interval width, and a fixed simplicity order. The
+selected strategy was town-specific calibration over all prior out-of-sample
+years because it ranked best under that coverage-first ordering. Its historical
+results were:
+
+| Evaluation year | 90% empirical coverage | Mean interval width | Median interval width | Rows |
+|---|---:|---:|---:|---:|
+| 2022 | 89.61% | $162,021.64 | $163,855.59 | 26,720 |
+| 2023 | 95.17% | $161,756.19 | $160,273.97 | 25,754 |
+| 2024 | 89.82% | $152,994.78 | $151,264.97 | 27,832 |
+| 2025 | 92.98% | $155,052.23 | $152,166.31 | 25,085 |
+
+The row-weighted pooled historical results were 84.71% coverage and $124,425.00
+mean width at 80%; 91.83% and $157,914.08 at 90%; and 95.65% and $192,965.43
+at 95%. The predeclared 90% gate passed: pooled coverage was at least 90%, and
+each annual evaluation was at least 85%. Prior-residual calibration counts
+were 29,087 rows for 2022, 55,807 for 2023, 81,561 for 2024, and 109,393 for
+2025. The final 2026 calibration pool includes all five residual years,
+2021–2025, or 134,478 rows.
+
+Only after this selection was frozen, the final model was fit through 2025-12
+and evaluated on 19,641 transactions from 2026-01 through 2026-09. The selected
+method achieved 88.46%
+coverage with $116,730.90 mean / $114,631.23 median width at 80%; 94.24% with
+$152,558.85 / $149,045.60 at 90%; and 97.13% with $189,989.70 / $176,504.59 at
+95%. Each interval is symmetric around the point prediction. The 2026 results
+did not select or adjust the method.
+
+The 2026 90% town coverage ranged from 88.96% (Queenstown, n=616) to 97.40%
+(Woodlands, n=1,459); Bukit Merah (89.06%, n=722) and Marine Parade (89.80%,
+n=98) were also below nominal coverage. Flat-type coverage was 88.92% for
+5 ROOM (n=4,613) and
+84.91% for EXECUTIVE (n=1,272); MULTI-GENERATION was 50% at n=6, which is too
+small for a reliable group conclusion. By actual-price quartile, the highest
+quartile covered 86.07% (n=4,911), compared with 97.94% in the lowest quartile.
+Actual prices were used for that post-prediction diagnostic only, never for
+calibration or selection. Exchangeability and stable future error distributions
+are not guaranteed; town-specific calibration did not remove all flat-type or
+high-price undercoverage. The final GPU run used CatBoost 1.2.10 and an NVIDIA
+GeForce RTX 3080 Ti Laptop GPU; total runtime was 383.09 seconds. The run also
+reported Python 3.11.9, pandas 3.0.6, and NumPy 2.4.6.
+
+The 90% method passes the historical research gate and exceeds 90% pooled
+coverage in this single later test, but the high-price and flat-type results
+show meaningful subgroup undercoverage. Keep the interval as a research
+candidate; it is not yet an approved production valuation range. Validate a
+predeclared subgroup-calibration approach on a later chronological holdout
+before approving a persisted inference contract. Calibration residuals and
+model artifacts are not written to disk.
+
 The legacy `MLPricePredictor/` experiments contain target leakage, including
 features derived from the transaction price being predicted. Their model
 metrics and generated outputs therefore must not be trusted as evidence of
@@ -493,6 +565,7 @@ python scripts/evaluate_linear_models.py
 python scripts/evaluate_tree_models.py
 python scripts/evaluate_boosted_models.py --device gpu
 python scripts/evaluate_model_robustness.py --device gpu
+python scripts/evaluate_uncertainty.py --device gpu
 python -m pytest
 ```
 
