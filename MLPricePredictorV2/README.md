@@ -236,7 +236,8 @@ Results are research benchmarks, not evidence of production valuation quality.
 The large, slow Extra Trees fit and high serialized estimator size are material
 deployment limitations. Next, investigate a compute-efficient and stable model
 that improves validation error over the comparable-sales baseline before
-considering persistence or inference integration.
+considering production integration. The later CatBoost benchmark and persisted
+research bundle are documented separately below.
 
 ## CatBoost and XGBoost benchmarks
 
@@ -456,15 +457,14 @@ MAE evaluation used its default metric period of five. A direct run exited
 successfully in 602.52 seconds. A second run printed its complete report in
 345.93 seconds, although the PowerShell output-capture wrapper returned status
 1 without a Python traceback. Runtime varied between invocations. Exact
-per-year and repeat-fit times are printed by the script. No model or processed
-dataset was persisted.
+per-year and repeat-fit times are printed by the script. That evaluation stage
+does not persist its candidate models or processed datasets.
 
-The matched comparisons and four annual MAE wins support proceeding to
-uncertainty estimation and explicit model-artifact metadata as the next local
-research stage. This does not establish production readiness or justify
-application integration. Temporal drift, recurrent group error, low-support
-groups, GPU variation, and the retrospective nature of earlier backtests still
-need to inform any uncertainty range and subsequent evaluation.
+The matched comparisons and four annual MAE wins supported the follow-on
+uncertainty and persistence research stages documented below. This does not
+establish production readiness or justify application integration. Temporal
+drift, recurrent group error, low-support groups, GPU variation, and the
+retrospective nature of earlier backtests still matter to any uncertainty range.
 
 ## CatBoost uncertainty ranges
 
@@ -533,9 +533,91 @@ The 90% method passes the historical research gate and exceeds 90% pooled
 coverage in this single later test, but the high-price and flat-type results
 show meaningful subgroup undercoverage. Keep the interval as a research
 candidate; it is not yet an approved production valuation range. Validate a
-predeclared subgroup-calibration approach on a later chronological holdout
-before approving a persisted inference contract. Calibration residuals and
-model artifacts are not written to disk.
+predeclared subgroup-calibration approach on a later chronological holdout.
+
+## Persisted local valuation bundle
+
+`scripts/build_valuation_bundle.py --device gpu` builds the immutable local
+research bundle `hdb-catboost-2025-12-v1` under `artifacts/`. It uses the frozen
+CatBoost feature contract and 1,998 rounds, fitted on 222,067 rows through
+2025-12. Calibration uses only 134,478 out-of-sample absolute residuals from
+2021–2025. Rows and targets from 2026 are excluded from model fitting and
+calibration. GPU preflight is mandatory by default; `--device cpu` is an
+explicit development option. An existing version is never overwritten.
+
+The bundle contains the native `model.cbm`, compact global and eligible-town
+thresholds in `uncertainty.json`, provenance and feature/version metadata in
+`metadata.json`, and a SHA-256 `manifest.json` covering the other three files.
+The loader verifies hashes, metadata, exact ordered feature names, cutoff,
+model feature names, and supported coverage levels before exposing prediction.
+Prediction defaults to 90% and accepts 80%, 90%, or 95%. It returns a point
+estimate and symmetric lower/upper bounds. Town lookup trims whitespace and
+uppercases the town; unknown or ineligible towns use the global threshold.
+Groups need at least 30 calibration residuals for town-specific thresholds.
+
+The build round-tripped eight pre-2026 feature rows through the fitted and
+reloaded CBM at `rtol=1e-12`, `atol=1e-8`; stored thresholds matched exactly.
+The built global conformal radii (half-widths) are:
+
+| Nominal coverage | Global half-width | Global full width |
+|---|---:|---:|
+| 80% | $57,801 | $115,602 |
+| 90% | $75,689 | $151,379 |
+| 95% | $94,409 | $188,817 |
+
+Eligible town-specific 90% calibration radii and supports are:
+
+| Town | Calibration rows | Half-width | Full width |
+|---|---:|---:|---:|
+| Ang Mo Kio | 5,157 | $81,957 | $163,913 |
+| Bedok | 6,812 | $74,976 | $149,953 |
+| Bishan | 2,173 | $108,164 | $216,328 |
+| Bukit Batok | 6,084 | $62,484 | $124,968 |
+| Bukit Merah | 5,093 | $86,708 | $173,415 |
+| Bukit Panjang | 4,432 | $75,462 | $150,925 |
+| Bukit Timah | 306 | $126,890 | $253,779 |
+| Central Area | 1,020 | $122,516 | $245,032 |
+| Choa Chu Kang | 6,422 | $66,944 | $133,888 |
+| Clementi | 2,953 | $77,793 | $155,586 |
+| Geylang | 3,366 | $77,725 | $155,450 |
+| Hougang | 6,990 | $78,417 | $156,833 |
+| Jurong East | 2,565 | $67,612 | $135,224 |
+| Jurong West | 8,268 | $64,041 | $128,081 |
+| Kallang/Whampoa | 4,309 | $95,586 | $191,173 |
+| Marine Parade | 846 | $83,790 | $167,579 |
+| Pasir Ris | 3,709 | $79,538 | $159,076 |
+| Punggol | 10,396 | $63,188 | $126,375 |
+| Queenstown | 3,643 | $94,405 | $188,809 |
+| Sembawang | 4,514 | $71,347 | $142,693 |
+| Sengkang | 11,026 | $76,204 | $152,407 |
+| Serangoon | 2,209 | $92,039 | $184,079 |
+| Tampines | 9,369 | $72,140 | $144,280 |
+| Toa Payoh | 4,353 | $101,528 | $203,056 |
+| Woodlands | 9,353 | $74,100 | $148,200 |
+| Yishun | 9,110 | $67,726 | $135,452 |
+
+Across the 26 eligible towns, 90% half-widths had a minimum of $62,484,
+median $77,759, mean $82,434, and maximum $126,890. Corresponding full-widths
+were minimum $124,968, median $155,518, mean $164,868, and maximum $253,779.
+Bukit Batok had the narrowest town interval; Bukit Timah had the widest. These
+are calibration widths, not guaranteed individual coverage. Historical and
+2026 diagnostics still showed undercoverage for some groups, especially
+Executive flats and the highest actual-price quartile.
+
+The measured build used Python 3.11.9, CatBoost 1.2.10, pandas 3.0.6, NumPy
+2.4.6, and an NVIDIA GeForce RTX 3080 Ti Laptop GPU. The model file was
+148,656,560 bytes (141.77 MiB); the complete bundle was 148,665,872 bytes
+(141.78 MiB). Build runtime was 249.92 seconds. These are local measurements;
+rebuilds may vary with library/device versions and CatBoost GPU behavior.
+`artifacts/` is ignored by Git: the local bundle is not committed, uploaded, or
+automatically synchronized. Rebuilding this immutable version fails if it
+already exists. Version changes require an explicitly reviewed new semantic
+version and compatible loader policy.
+
+This bundle is a research candidate, not an approved or authoritative
+valuation. It is not integrated into SG Homie and does not establish
+production readiness. The next recommended step is a narrow local FastAPI
+inference service that loads this verified artifact without retraining.
 
 The legacy `MLPricePredictor/` experiments contain target leakage, including
 features derived from the transaction price being predicted. Their model
@@ -548,9 +630,9 @@ also research candidates only and do not establish production readiness.
 The eventual purpose is to evaluate an HDB resale price estimate using only
 information available at prediction time, with chronological validation,
 appropriate baseline comparisons, and documented provenance. Historical
-baselines, linear and Ridge models, and initial nonlinear tree benchmarks are
-implemented. Broader feature design and model evaluation, model persistence,
-and a narrow FastAPI inference interface remain future work.
+baselines, linear and Ridge models, nonlinear tree benchmarks, a research
+uncertainty evaluation, and a local research bundle are implemented. A narrow
+FastAPI inference interface remains future work.
 
 ## Setup and commands
 
@@ -566,11 +648,13 @@ python scripts/evaluate_tree_models.py
 python scripts/evaluate_boosted_models.py --device gpu
 python scripts/evaluate_model_robustness.py --device gpu
 python scripts/evaluate_uncertainty.py --device gpu
+python scripts/build_valuation_bundle.py --device gpu
 python -m pytest
 ```
 
 The profiler, preparation script, and baseline evaluation script load the raw
 CSV without modifying it. Preparation reports partition shapes/date ranges and
-quality screening without writing processed artifacts. Evaluation prints
-metrics and diagnostics without persisting a large artifact. Learned models
-are fitted in memory by the evaluation script and are not saved.
+quality screening without writing processed artifacts. Evaluation scripts
+print metrics and diagnostics without persisting candidate models. The bundle
+builder is the exception: it writes one immutable version under ignored
+`artifacts/` after training, calibration, integrity, and round-trip checks.
