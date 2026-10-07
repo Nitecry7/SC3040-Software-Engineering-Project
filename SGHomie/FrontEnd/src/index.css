@@ -210,6 +210,125 @@ body.leaflet-dragging .leaflet-container .leaflet-pane {
   font-weight: 700;
 }
 
+.nearby-marker-icon {
+  background: transparent;
+  border: 0;
+}
+
+.nearby-marker {
+  display: block;
+  width: 23px;
+  height: 23px;
+  border: 2px solid #fff;
+  border-radius: 9999px;
+  box-shadow: 0 2px 8px rgb(15 23 42 / 35%);
+  background: var(--amenity-strong);
+}
+
+.amenity-tone--neutral {
+  --amenity-strong: #475569;
+  --amenity-soft: #f1f5f9;
+  --amenity-foreground: #334155;
+}
+
+.amenity-tone--transport {
+  --amenity-strong: #2563eb;
+  --amenity-soft: #eff6ff;
+  --amenity-foreground: #1e40af;
+}
+
+.amenity-tone--school {
+  --amenity-strong: #0f766e;
+  --amenity-soft: #f0fdfa;
+  --amenity-foreground: #115e59;
+}
+
+.amenity-tone--shopping {
+  --amenity-strong: #c2410c;
+  --amenity-soft: #fff7ed;
+  --amenity-foreground: #9a3412;
+}
+
+.amenity-tone--healthcare {
+  --amenity-strong: #be123c;
+  --amenity-soft: #fff1f2;
+  --amenity-foreground: #9f1239;
+}
+
+.amenity-tone--food {
+  --amenity-strong: #b45309;
+  --amenity-soft: #fffbeb;
+  --amenity-foreground: #92400e;
+}
+
+.amenity-tone--park {
+  --amenity-strong: #15803d;
+  --amenity-soft: #f0fdf4;
+  --amenity-foreground: #166534;
+}
+
+.amenity-tone--community {
+  --amenity-strong: #475569;
+  --amenity-soft: #f1f5f9;
+  --amenity-foreground: #334155;
+}
+
+.amenity-list-icon {
+  background: var(--amenity-soft);
+  color: var(--amenity-foreground);
+}
+
+.amenity-category-label,
+.amenity-distance-badge {
+  color: var(--amenity-foreground);
+}
+
+.amenity-distance-badge {
+  background: var(--amenity-soft);
+}
+
+.nearby-category-chip__dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 0.5rem;
+  border-radius: 9999px;
+  background: #cbd5e1;
+}
+
+.nearby-category-chip.is-selected .nearby-category-chip__dot {
+  background: var(--amenity-strong);
+  box-shadow: 0 0 0 2px rgb(255 255 255 / 90%);
+}
+
+.property-location-icon {
+  background: transparent;
+  border: 0;
+}
+
+.property-location-marker {
+  position: relative;
+  display: block;
+  width: 30px;
+  height: 30px;
+  border: 3px solid #fff;
+  border-radius: 50% 50% 50% 0;
+  background: #0f172a;
+  box-shadow: 0 2px 10px rgb(15 23 42 / 35%);
+  transform: rotate(-45deg);
+}
+
+.property-location-marker::after {
+  position: absolute;
+  top: 7px;
+  left: 7px;
+  width: 10px;
+  height: 10px;
+  border-radius: 9999px;
+  background: #fff;
+  content: '';
+}
+
 /* Image hover effects */
 .image-hover {
   @apply transition-all duration-300 ease-in-out;
