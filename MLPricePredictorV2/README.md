@@ -237,6 +237,116 @@ deployment limitations. Next, investigate a compute-efficient and stable model
 that improves validation error over the comparable-sales baseline before
 considering persistence or inference integration.
 
+## CatBoost and XGBoost benchmarks
+
+`scripts/evaluate_boosted_models.py` adds validation-only CatBoost and XGBoost
+comparisons. It defaults to `--device gpu`; the script checks `nvidia-smi`,
+CatBoost GPU availability, and small CatBoost/XGBoost CUDA smoke fits before
+training. `--device cpu` is an explicit development option. A requested GPU
+that either library cannot use is an error; the script never deliberately
+switches a GPU request to CPU. On Windows, install the pinned-compatible
+requirements from this directory before running the benchmark.
+
+Both models use the same ten base features as the linear and tree experiments:
+numeric `transaction_year`, `transaction_month`, `floor_area_sqm`,
+`storey_mid`, and `remaining_lease_months`, plus native categorical `town`,
+`flat_type`, `block`, `street_name`, and `flat_model`. No target-derived or
+price aggregate features are used. Train partitions are stable-sorted by
+transaction year/month before fitting. CatBoost receives the five categorical
+columns directly, uses `has_time=True`, and learns its categorical statistics
+from the current fit rows and labels only. XGBoost receives pandas categorical
+columns with category vocabularies fitted on training rows only; unknown
+validation/test values become missing. Neither model uses external target
+encoding. Numeric features are not scaled.
+
+Each family has four validation configurations (2,000 maximum rounds, seed 42,
+100-round early stopping). CatBoost crosses depth 6/8 with learning rate
+0.03/0.05, fixing RMSE objective, MAE evaluation, and L2 leaf regularization 3.
+XGBoost crosses depth 6/8 with minimum child weight 5/10, fixing learning rate
+0.05, subsample and column sample 0.8, L2 regularization 1, MAE evaluation,
+and native-category limits 4/64. Selection considers all eight validation
+results: lowest MAE, then the 1% MAE tie band and deterministic RMSE, median
+absolute error, MAPE, simplicity, serialized-size, runtime, and config ordering
+rules. Test results are excluded from selection. The selected round count is
+frozen from validation; that configuration is refitted on train plus validation
+through 2025-12 and evaluated once on 2026-01 through 2026-09. The partial
+2026-10 rows are excluded.
+
+The local GPU run used CatBoost 1.2.10 and XGBoost 3.2.0 on an NVIDIA GeForce
+RTX 3080 Ti Laptop GPU (GPU 0, 16 GiB, CUDA-enabled XGBoost build). XGBoost
+3.2.0 is the newest version available for this Python 3.11 environment on the
+configured package index; its supported CUDA and categorical interfaces match
+the implementation. CatBoost GPU training can be nondeterministic. The local
+source file remains a manually retrieved dataset and does not sync automatically.
+
+| Validation candidate | MAE | RMSE | MAPE | Fit seconds | Serialized MiB |
+|---|---:|---:|---:|---:|---:|
+| CatBoost depth 6, LR 0.03 | $36,331.24 | $49,535.14 | 5.41% | 40.86 | 63.54 |
+| CatBoost depth 6, LR 0.05 | $35,018.66 | $47,467.15 | 5.22% | 41.30 | 79.05 |
+| CatBoost depth 8, LR 0.03 | $34,492.75 | $46,716.88 | 5.15% | 56.69 | 114.83 |
+| CatBoost depth 8, LR 0.05 | **$33,524.38** | **$45,217.47** | **5.02%** | 59.87 | 147.35 |
+| XGBoost depth 6, child weight 5 | $44,089.44 | $58,607.68 | 6.59% | 12.28 | 138.48 |
+| XGBoost depth 6, child weight 10 | $43,565.62 | $57,343.66 | 6.54% | 11.79 | 114.96 |
+| XGBoost depth 8, child weight 5 | $43,817.40 | $58,704.31 | 6.55% | 22.63 | 296.82 |
+| XGBoost depth 8, child weight 10 | $43,261.07 | $56,663.10 | 6.51% | 22.36 | 173.72 |
+
+CatBoost depth 8 at learning rate 0.05 was selected by validation MAE. Its
+validation metrics were RMSE $45,217.47, MAPE 5.02%, R2 0.9509, and median
+absolute error $26,456.09. It improved on the recorded validation MAE of the
+comparable-sales baseline ($39,354.92), Linear Regression ($50,772.32), and
+Extra Trees ($43,443.85). Those recorded benchmarks were comparison references
+only; they were not rerun or used to select this model.
+
+The final refit used 1,998 rounds on 222,067 rows through 2025-12. The test
+metrics were MAE $29,490.56, RMSE $41,587.78, MAPE 4.52%, R2 0.9630, and median
+absolute error $21,852.89. Mean actual price was $663,826.70 and mean predicted
+price was $669,591.22. The recorded comparable baseline, Linear Regression,
+and Extra Trees test MAEs were $40,932.90, $49,861.68, and $30,056.10
+respectively. Their references were not re-evaluated. The comparable baseline
+advances history month by month, while this learned model is frozen after
+2025-12, so these figures use different update protocols.
+
+Test MAE by town (support n): Ang Mo Kio $31,326 (674), Bedok $35,002 (1,045),
+Bishan $42,240 (329), Bukit Batok $22,518 (1,118), Bukit Merah $40,579 (722),
+Bukit Panjang $28,331 (619), Bukit Timah $41,946 (46), Central Area $47,231
+(141), Choa Chu Kang $24,834 (820), Clementi $33,625 (392), Geylang $29,624
+(504), Hougang $29,642 (988), Jurong East $25,901 (384), Jurong West $26,590
+(1,170), Kallang/Whampoa $37,176 (586), Marine Parade $44,048 (98), Pasir Ris
+$26,070 (610), Punggol $29,152 (1,331), Queenstown $45,475 (616), Sembawang
+$26,427 (661), Sengkang $27,202 (1,391), Serangoon $31,629 (295), Tampines
+$23,579 (1,630), Toa Payoh $39,073 (762), Woodlands $24,351 (1,459), and
+Yishun $24,822 (1,250). By flat type: 1 ROOM $14,740 (8), 2 ROOM $15,265
+(588), 3 ROOM $21,844 (4,505), 4 ROOM $28,556 (8,649), 5 ROOM $37,425
+(4,613), EXECUTIVE $40,543 (1,272), and MULTI-GENERATION $88,056 (6). The
+1 ROOM and MULTI-GENERATION estimates have low support.
+
+Aggregated CatBoost model-native prediction-change importance ranked flat type,
+transaction year, street name, town, and remaining lease highest in this run.
+These are noncausal diagnostics and can be affected by correlated features and
+category cardinality; they do not explain causal price effects. The final
+model serialized to 143.99 MiB in a temporary file that was removed. Candidate
+training peaked at 15,542 MiB GPU memory used; sampled peak utilization was 73%.
+The selected validation fit took 59.87 seconds, final refit 82.77 seconds, and
+test prediction 0.25 seconds. Total benchmark time was 365.74 seconds. XGBoost
+warned that prediction from CPU-resident pandas input used a DMatrix fallback,
+which may increase memory use and prediction time. CatBoost reached the
+configured 2,000-round limit in all four candidates, so the 100-round early
+stopping setting did not shorten those fits. These results are local research
+measurements and do not establish production readiness.
+
+For Google Colab, clone/download this repository, put the same official CSV in
+`MLPricePredictorV2/data/raw/`, install `MLPricePredictorV2/requirements.txt`,
+and select a CUDA runtime. From the V2 directory, run:
+
+```powershell
+python scripts/evaluate_boosted_models.py --device gpu
+```
+
+The script will validate GPU availability and fail rather than run a requested
+GPU benchmark on CPU. Results can differ by GPU, library build, and CatBoost
+GPU nondeterminism. Do not upload the raw CSV to Git or treat Colab output as
+an approved production model.
+
 The legacy `MLPricePredictor/` experiments contain target leakage, including
 features derived from the transaction price being predicted. Their model
 metrics and generated outputs therefore must not be trusted as evidence of
@@ -263,6 +373,7 @@ python scripts/prepare_data.py
 python scripts/evaluate_baselines.py
 python scripts/evaluate_linear_models.py
 python scripts/evaluate_tree_models.py
+python scripts/evaluate_boosted_models.py --device gpu
 python -m pytest
 ```
 

@@ -45,3 +45,32 @@ __all__ = [
     "select_tree_features",
     "tree_configurations",
 ]
+"""Leakage-safe model builders and evaluation helpers."""
+
+from src.models.boosted import (
+    BoostedModelConfig,
+    BoostedValidationResult,
+    FittedBoostedModel,
+    TrainCategoryPreprocessor,
+    build_boosted_estimator,
+    boosted_configurations,
+    evaluate_boosted_candidates,
+    fit_selected_boosted_model,
+    predict_boosted_model,
+    select_boosted_candidate,
+    select_boosted_features,
+)
+
+__all__ = [
+    "BoostedModelConfig",
+    "BoostedValidationResult",
+    "FittedBoostedModel",
+    "TrainCategoryPreprocessor",
+    "build_boosted_estimator",
+    "boosted_configurations",
+    "evaluate_boosted_candidates",
+    "fit_selected_boosted_model",
+    "predict_boosted_model",
+    "select_boosted_candidate",
+    "select_boosted_features",
+]
