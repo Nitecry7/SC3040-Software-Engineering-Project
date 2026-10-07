@@ -214,7 +214,18 @@ test('literal Sengkang and budget requirements survive omitted or incorrect mode
 
 test('town changes, alternatives, removals and budget refinements override earlier context', () => {
   const previous = parseListingFilters({ locations: ['YISHUN'], max_price: 1000000 });
-  const guard = (...texts) => explicitBuyerRequirements(texts.map(content => ({ role: 'user', content })), previous);
+  const guard = (...texts) => {
+    let saved = previous;
+    const history = [];
+    let required;
+    for (const [index, content] of texts.entries()) {
+      history.push({ role: 'user', content });
+      required = explicitBuyerRequirements(history, saved);
+      // Each successful turn saves the effective query for the next refinement.
+      if (index < texts.length - 1) saved = applyExplicitRequirements(saved, required);
+    }
+    return required;
+  };
   const apply = (...texts) => applyExplicitRequirements(parseListingFilters({ locations: ['YISHUN'], max_price: 1000000 }), guard(...texts));
   assert.deepEqual(apply('Sengkang under 500k', 'under 450k'), { locations: ['SENGKANG'], max_price: 450000, sort_by: 'price_asc' });
   assert.deepEqual(apply('Sengkang under 500k', 'Tampines instead of Sengkang'), { locations: ['TAMPINES'], max_price: 500000, sort_by: 'price_asc' });
@@ -229,6 +240,42 @@ test('town changes, alternatives, removals and budget refinements override earli
   assert.deepEqual(guard('Sengkang').filters.locations, ['SENGKANG']);
   assert.equal(guard('Sengkang with at least 3 bedrooms and at least 900 sqft').filters.min_price, undefined);
   assert.equal(guard('Sengkang under 500 metres from MRT').filters.max_price, 1000000);
+});
+
+test('nonliteral budget refinements replace saved bounds and survive subsequent literal searches', async () => {
+  const original = parseListingFilters({ locations: ['TAMPINES'], max_price: 600000, room_type: '4 ROOM' });
+  const history = [{ role: 'user', content: BUY_MESSAGE }, { role: 'assistant', content: BUY_REQUIREMENTS_PROMPT },
+    { role: 'user', content: '4-room in Tampines under 600k' }, { role: 'assistant', content: 'Here are the results.' }];
+  for (const [latest, price] of [['Make it 450k instead', 450000], ['My limit is 750k', 750000]]) {
+    const refinedHistory = [...history, { role: 'user', content: latest }];
+    const client = clientReturning(completion(null, [toolCall({ ...original, max_price: price })]));
+    const refined = await prepareBuyConversation({ ...options(client), forceSearch: false,
+      history: refinedHistory, previousFilters: original });
+    assert.deepEqual(refined.search.filters, { ...original, max_price: price });
+
+    const noExtraction = { chat: { completions: { create: async () => assert.fail('literal town refinement needs no provider') } } };
+    const next = await prepareBuyConversation({ ...options(noExtraction), forceSearch: false,
+      history: [...refinedHistory, { role: 'assistant', content: 'Updated results.' }, { role: 'user', content: 'Clementi' }],
+      previousFilters: refined.search.filters });
+    assert.deepEqual(next.search.filters, { ...original, max_price: price, locations: ['CLEMENTI'] });
+  }
+});
+
+test('new budget extraction replaces an earlier removal while unrelated refinements retain saved ceilings', async () => {
+  const history = [{ role: 'user', content: 'Tampines under 600k' }, { role: 'assistant', content: 'Results.' },
+    { role: 'user', content: 'Any budget' }, { role: 'assistant', content: 'Results without a budget.' },
+    { role: 'user', content: 'I can only spend 450k' }];
+  const previous = parseListingFilters({ locations: ['TAMPINES'] });
+  const result = await prepareBuyConversation({ ...options(clientReturning(completion(null, [toolCall({ ...previous, max_price: 450000 })]))),
+    forceSearch: false, history, previousFilters: previous });
+  assert.equal(result.search.filters.max_price, 450000);
+  const nextHistory = [...history, { role: 'assistant', content: 'Updated results.' }, { role: 'user', content: 'Renovated please' }];
+  const next = await prepareBuyConversation({ ...options(clientReturning(completion(null, [toolCall({ max_price: 900000, keywords: ['renovated'] })]))),
+    forceSearch: false, history: nextHistory, previousFilters: result.search.filters });
+  assert.deepEqual(next.search.filters, { ...result.search.filters, keywords: ['renovated'] });
+
+  const required = explicitBuyerRequirements([{ role: 'user', content: 'under 400k, renovated please' }], result.search.filters);
+  assert.equal(applyExplicitRequirements(parseListingFilters({ max_price: 900000 }), required).max_price, 400000);
 });
 
 test('any executives removes a stale town, retains budget and enforces executive room type', async () => {
@@ -535,6 +582,61 @@ function mockAuth(url, profile = { is_seller: true, is_admin: false, name: 'Test
   if (url.includes('/auth/v1/user')) return Response.json({ id: '11111111-1111-4111-8111-111111111111', email: 'fixture@example.test' });
   if (url.includes('/rest/v1/user_profiles')) return Response.json([profile]);
 }
+
+test('typed Buy clears seller intake and following requirements stay in the buy journey', async t => {
+  let listingCalls = 0;
+  t.mock.method(globalThis, 'fetch', async (input) => {
+    const url = String(input);
+    const auth = mockAuth(url); if (auth) return auth;
+    if (url.includes('/rest/v1/properties')) {
+      listingCalls++;
+      assert.match(new URL(url).searchParams.get('and'), /TAMPINES/);
+      return Response.json([property('one')], { headers: { 'Content-Range': '0-0/1' } });
+    }
+    assert.ok(url.includes('openrouter.ai'), 'buying must not invoke postal lookup or seller writes');
+    return Response.json(completion('Here is a Tampines home. Tell me more to refine it.'));
+  });
+  for (const stage of ['postal', 'details', 'price']) {
+    const sellerContext = { stage, draft_id: '22222222-2222-4222-8222-222222222222',
+      postal_code: stage === 'postal' ? null : '560123', details: {}, title: null, suggested_price: stage === 'price' ? 600000 : null };
+    for (const stream of [false, true]) {
+      let currentSellerContext = sellerContext;
+      const intro = await handleRequest(request({ message: BUY_MESSAGE, seller_context: currentSellerContext, stream }, true));
+      assert.equal(intro.status, 200);
+      if (stream) {
+        const text = await consumeChatStream(intro, () => {}, () => assert.fail('intro cannot search'), event => { currentSellerContext = event.context; });
+        assert.equal(text, BUY_REQUIREMENTS_PROMPT);
+      } else {
+        const body = await intro.json();
+        assert.equal(body.response, BUY_REQUIREMENTS_PROMPT);
+        currentSellerContext = body.seller_flow.context;
+      }
+      assert.equal(currentSellerContext, null, `${stage}, stream ${stream}`);
+
+      // Also cover a caller resending stale context, e.g. an older frontend.
+      for (const retained of [currentSellerContext, sellerContext]) {
+        let appliedFilters;
+        const next = await handleRequest(request({ messages: [{ role: 'user', content: 'I want to sell my unit' },
+          { role: 'assistant', content: 'What is the 6-digit postal code?' }, { role: 'user', content: BUY_MESSAGE },
+          { role: 'assistant', content: BUY_REQUIREMENTS_PROMPT }, { role: 'user', content: '4-room in Tampines under 600k' }],
+          ...(retained ? { seller_context: retained } : {}), stream }, true));
+        assert.equal(next.status, 200);
+        if (stream) {
+          await consumeChatStream(next, () => {}, result => { appliedFilters = result.filters; }, event => {
+            assert.equal(appliedFilters, undefined, 'clear intake before storing new search preferences');
+            assert.equal(event.context, null);
+          });
+        } else {
+          const body = await next.json();
+          appliedFilters = body.recommendations.filters;
+          if (retained) assert.equal(body.seller_flow.context, null);
+        }
+        assert.deepEqual(appliedFilters, { sort_by: 'price_asc', locations: ['TAMPINES'], room_type: '4 ROOM', max_price: 600000 });
+      }
+    }
+  }
+  assert.equal(listingCalls, 12);
+});
 
 test('Buy starts with requirements in both response modes without model or listing calls', async t => {
   assert.equal(BUY_MESSAGE, 'I want to buy a house');

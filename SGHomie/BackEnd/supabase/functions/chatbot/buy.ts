@@ -7,6 +7,7 @@ import {
   type ListingFilters, type ListingSearchResult,
 } from '../_shared/listings.ts';
 import { containsToolMarkup } from '../_shared/chatOutput.ts';
+import type { SellerFlowEvent } from '../_shared/sellerFlow.ts';
 import { applyExplicitRequirements, explicitBuyerRequirements, literalBuyerSearch, simpleBuyerRefinement } from './buyerRequirements.ts';
 
 export const BUY_REQUIREMENTS_PROMPT = "What are your requirements for your new home? Share your budget, preferred town, HDB room type or bedroom count, and any must-haves. You can give just the preferences you already know, or say you have no preference.";
@@ -240,7 +241,7 @@ export async function generateListingReply(options: {
   }
 }
 
-export function createBuyStream(upstream: ReadableStream<Uint8Array> | string, search?: ListingSearchResult): ReadableStream<Uint8Array> {
+export function createBuyStream(upstream: ReadableStream<Uint8Array> | string, search?: ListingSearchResult, sellerFlow?: SellerFlowEvent): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const reader = typeof upstream === 'string' ? undefined : upstream.getReader();
   let initialized = false;
@@ -248,6 +249,9 @@ export function createBuyStream(upstream: ReadableStream<Uint8Array> | string, s
     async pull(controller) {
       if (!initialized) {
         initialized = true;
+        // Clear seller intake before publishing buyer preferences: the frontend's
+        // seller-flow handler also clears its previous search context.
+        if (sellerFlow) controller.enqueue(encoder.encode(`event: seller_flow\ndata: ${JSON.stringify(sellerFlow)}\n\n`));
         if (search) controller.enqueue(encoder.encode(`event: recommendations\ndata: ${JSON.stringify(search)}\n\n`));
         if (typeof upstream === 'string') {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: upstream } }] })}\n\ndata: [DONE]\n\n`));

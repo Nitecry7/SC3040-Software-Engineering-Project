@@ -735,20 +735,20 @@ export async function handleRequest(req: Request): Promise<Response> {
     const request = parseRequest(body);
     const latestUserMessage = request.messages.at(-1)?.content ?? '';
     // Starting a buying journey asks for preferences without querying listings or the model.
-    if (isBareBuyMessage(latestUserMessage)) return textResponse(BUY_REQUIREMENTS_PROMPT, request.stream);
+    if (isBareBuyMessage(latestUserMessage)) return textResponse(BUY_REQUIREMENTS_PROMPT, request.stream, { context: null });
     const authContext = await getAuthContext(req);
     // An explicit Buy selection must escape a pending seller address question.
     // Keep that journey active when the next message contains only requirements.
     const latestJourney = [...request.messages].reverse().find(message => message.role === 'user'
       && (isBuyIntent(message.content) || SELL_INTENT_PATTERN.test(message.content)));
-    const activeSell = request.intent === 'sell' || (request.sellerContext && request.sellerContext.stage !== 'complete');
     const startingBuy = request.intent === 'buy'
       || (request.intent !== 'sell' && isBuyIntent(latestUserMessage) && !SELL_INTENT_PATTERN.test(latestUserMessage))
-      || (!activeSell && !!latestJourney && isBuyIntent(latestJourney.content) && !SELL_INTENT_PATTERN.test(latestJourney.content));
+      || (request.intent !== 'sell' && !!latestJourney && isBuyIntent(latestJourney.content) && !SELL_INTENT_PATTERN.test(latestJourney.content));
     if (!startingBuy) {
       const sellFlow = await handleSellFlow(req, request.messages, authContext, request.sellerContext, request.intent);
       if (sellFlow.handled) return textResponse(sellFlow.response, request.stream, sellFlow.event);
     }
+    const clearedSellerFlow: SellerFlowEvent | undefined = startingBuy && request.sellerContext ? { context: null } : undefined;
 
     const { client: openrouter, model } = createChatProvider(name => Deno.env.get(name), req.headers.get('origin') ?? undefined);
 
@@ -776,17 +776,17 @@ export async function handleRequest(req: Request): Promise<Response> {
     // Generate prose separately from tool execution; cards retain the verified result.
     if (conversation.search) {
       const response = await generateListingReply({ client: openrouter, model, history: request.messages, search: conversation.search });
-      if (request.stream) return new Response(createBuyStream(response, conversation.search), { headers: streamHeaders });
+      if (request.stream) return new Response(createBuyStream(response, conversation.search, clearedSellerFlow), { headers: streamHeaders });
       return jsonResponse({ id: crypto.randomUUID(), object: 'chat.completion', model, created: Math.floor(Date.now() / 1000),
         choices: [{ index: 0, message: { role: 'assistant', content: response }, finish_reason: 'stop' }],
-        response, recommendations: conversation.search });
+        response, recommendations: conversation.search, ...(clearedSellerFlow ? { seller_flow: clearedSellerFlow } : {}) });
     }
     const completion = conversation.completion;
     if (!completion) throw new OpenRouterError('The model returned no answer', 502);
 
     if (request.stream) {
       return new Response(createBuyStream(
-        completion instanceof ReadableStream ? completion : getAssistantText(completion), conversation.search,
+        completion instanceof ReadableStream ? completion : getAssistantText(completion), conversation.search, clearedSellerFlow,
       ), {
         headers: streamHeaders,
       });
@@ -798,6 +798,7 @@ export async function handleRequest(req: Request): Promise<Response> {
     return jsonResponse({
       ...completion,
       response: getAssistantText(completion),
+      ...(clearedSellerFlow ? { seller_flow: clearedSellerFlow } : {}),
       ...(conversation.search ? { recommendations: conversation.search } : {}),
     });
   } catch (error) {
