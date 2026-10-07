@@ -48,6 +48,8 @@ __all__ = [
 """Leakage-safe model builders and evaluation helpers."""
 
 from src.models.boosted import (
+    FROZEN_CATBOOST_CONFIG,
+    FROZEN_CATBOOST_ITERATIONS,
     BoostedModelConfig,
     BoostedValidationResult,
     FittedBoostedModel,
@@ -55,6 +57,7 @@ from src.models.boosted import (
     build_boosted_estimator,
     boosted_configurations,
     evaluate_boosted_candidates,
+    fit_frozen_catboost,
     fit_selected_boosted_model,
     predict_boosted_model,
     select_boosted_candidate,
@@ -62,6 +65,8 @@ from src.models.boosted import (
 )
 
 __all__ = [
+    "FROZEN_CATBOOST_CONFIG",
+    "FROZEN_CATBOOST_ITERATIONS",
     "BoostedModelConfig",
     "BoostedValidationResult",
     "FittedBoostedModel",
@@ -69,6 +74,7 @@ __all__ = [
     "build_boosted_estimator",
     "boosted_configurations",
     "evaluate_boosted_candidates",
+    "fit_frozen_catboost",
     "fit_selected_boosted_model",
     "predict_boosted_model",
     "select_boosted_candidate",

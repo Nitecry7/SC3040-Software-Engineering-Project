@@ -347,6 +347,124 @@ GPU benchmark on CPU. Results can differ by GPU, library build, and CatBoost
 GPU nondeterminism. Do not upload the raw CSV to Git or treat Colab output as
 an approved production model.
 
+## Matched and temporal robustness
+
+The walk-forward comparable baseline remains unchanged: it adds each completed
+evaluation month to history before predicting later months. The matched
+`frozen_history_comparable` path uses a fixed prior-December history cutoff for
+every prediction in an evaluation year. It does not add evaluation-year
+transactions or targets to that history. The existing 12-month comparable
+lookback remains relative to each target transaction month; all candidate
+transactions still come from the same frozen pool. This matches the information
+cutoff of a CatBoost model trained once at the same prior December.
+
+The robustness script keeps CatBoost fixed at depth 8, learning rate 0.05, L2
+regularization 3, seed 42, the existing ten-feature schema and native
+categorical strategy, and exactly 1,998 rounds. Each annual model is fitted
+through the preceding December and evaluated without monthly model updates. The
+2026 window ends in September; the 212 partial October rows are excluded. The
+2022–2024 evaluations are retrospective checks of a design selected using 2025,
+not independent validation experiments. The 2025 comparison also reuses the
+selection period; 2026 remains the later test window. No robustness result
+retunes either method.
+
+On the local dataset, the matched 2025 comparison used training/history through
+2024-12 (25,085 predictions). CatBoost scored MAE $33,608.96, RMSE $45,241.57,
+MAPE 5.03%, R2 0.9509, and median absolute error $26,426.04. The frozen
+comparable scored MAE $54,982.31, RMSE $98,196.32, MAPE 7.64%, R2 0.7685, and
+median absolute error $30,000. CatBoost's MAE difference was -$21,373.35
+(38.87% improvement relative to the comparable). Mean actual price was
+$652,521.60; mean CatBoost prediction was $626,752.19 and mean comparable
+prediction was $612,665.03.
+
+The matched 2026 comparison used training/history through 2025-12 (19,641
+predictions). CatBoost scored MAE $29,490.56, RMSE $41,587.78, MAPE 4.52%, R2
+0.9630, and median absolute error $21,852.89. The frozen comparable scored MAE
+$48,612.05, RMSE $87,926.83, MAPE 6.86%, R2 0.8345, and median absolute error
+$28,500. CatBoost's MAE difference was -$19,121.50 (39.33% improvement).
+Mean actual price was $663,826.70; mean CatBoost prediction was $669,591.22 and
+mean comparable prediction was $653,524.91. CatBoost won MAE, RMSE, MAPE,
+median absolute error, and R2 in both matched comparisons.
+
+### Expanding-window annual backtests
+
+The same frozen CatBoost configuration and comparable settings were evaluated
+with each preceding December as the fixed cutoff. All prices are SGD.
+
+| Evaluation year | Train/history through | CatBoost MAE | CatBoost RMSE | MAPE | R2 | Median AE |
+|---|---|---:|---:|---:|---:|---:|
+| 2022 | 2021-12 | $42,085.23 | $52,197.96 | 7.57% | 0.9060 | $36,404.45 |
+| 2023 | 2022-12 | $30,250.84 | $40,785.62 | 5.19% | 0.9449 | $23,766.63 |
+| 2024 | 2023-12 | $37,791.19 | $51,154.63 | 5.93% | 0.9264 | $29,491.80 |
+| 2025 | 2024-12 | $33,608.96 | $45,241.57 | 5.03% | 0.9509 | $26,426.04 |
+
+| Evaluation year | Frozen comparable MAE | RMSE | MAPE | R2 | Median AE | CatBoost MAE difference | Relative improvement |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 2022 | $55,946.07 | $84,951.31 | 9.44% | 0.7511 | $38,500 | -$13,860.84 | 24.78% |
+| 2023 | $46,516.08 | $78,342.92 | 7.47% | 0.7969 | $27,500 | -$16,265.25 | 34.97% |
+| 2024 | $58,013.53 | $96,010.10 | 8.59% | 0.7408 | $35,000 | -$20,222.34 | 34.86% |
+| 2025 | $54,982.31 | $98,196.32 | 7.64% | 0.7685 | $30,000 | -$21,373.35 | 38.87% |
+
+CatBoost had lower MAE in all four annual windows and also won RMSE, MAPE,
+median absolute error, and R2 in each. The 2022–2024 measurements are useful
+for temporal robustness but are retrospective because the configuration was
+chosen after 2025 validation results were observed. They do not establish
+independent historical model selection.
+
+### GPU repeatability, group errors, and monthly drift
+
+Three same-seed GPU fits were evaluated on the same 2025 rows. The first was
+the 2025 annual fit; two identical fits were run afterward. No repeat was
+selected. Repeat MAEs were $33,608.96, $33,624.01, and $33,608.96; corresponding
+RMSEs were $45,241.57, $45,272.44, and $45,241.57. Their MAPEs were all 5.03%
+and R2 values were 0.9509, 0.9508, and 0.9509. Mean MAE was $33,613.98 with
+standard deviation $7.09 and range $15.05. Mean RMSE was $45,251.86 with
+standard deviation $14.56; mean MAPE was 5.0332% with standard deviation
+0.0011 percentage points. Across all pairwise prediction comparisons, mean
+absolute difference was $341.90 and maximum absolute difference was $6,552.67.
+Aggregate metric variation was small in this run, though individual prediction
+differences were larger than the MAE range.
+
+The script reports full MAE and support tables for every town and flat type in
+each year. Among groups with at least 30 observations, Bukit Timah, Bishan, and
+Central Area each appeared in the three highest town MAEs in three of the four
+years. EXECUTIVE, 5 ROOM, and 4 ROOM were among the three highest flat-type
+MAEs in all four years; 2 ROOM had the lowest supported flat-type MAE in all
+four. The most frequent lowest-error towns were Clementi or Choa Chu Kang in
+2022, 2023, and 2025, and Bukit Batok in 2024. These are descriptive group
+comparisons, not explanations of price differences.
+
+The existing support marker is fewer than 30 rows. 1 ROOM had only 5–11
+transactions per year and MULTI-GENERATION had 3–12, so their group errors are
+noisy and should not be overinterpreted. Complete group results, including
+these rows, are printed by `scripts/evaluate_model_robustness.py`.
+
+Monthly MAE increased across most of the year in 2022 (January $29,616 to
+December $46,746; slope +$1,761/month), 2023 ($27,284 to $31,364; +$270/month),
+and 2024 ($23,737 to $54,035; +$2,961/month). 2025 was broadly flat to slightly
+lower ($30,804 to $30,767; -$419/month). For January–September 2026, MAE rose
+from $25,210 to $35,069 (+$994/month). Year-level mean prediction bias
+(predicted minus actual) was -$38,872 in 2022, -$22,970 in 2023, -$32,303 in
+2024, -$25,769 in 2025, and +$5,765 in 2026. These trends are descriptive;
+they do not establish a cause, and the model was intentionally not updated
+within a year.
+
+The GPU run used device 0 on the NVIDIA GeForce RTX 3080 Ti Laptop GPU and
+passed the existing CatBoost/XGBoost GPU preflight. CatBoost reported that GPU
+MAE evaluation used its default metric period of five. A direct run exited
+successfully in 602.52 seconds. A second run printed its complete report in
+345.93 seconds, although the PowerShell output-capture wrapper returned status
+1 without a Python traceback. Runtime varied between invocations. Exact
+per-year and repeat-fit times are printed by the script. No model or processed
+dataset was persisted.
+
+The matched comparisons and four annual MAE wins support proceeding to
+uncertainty estimation and explicit model-artifact metadata as the next local
+research stage. This does not establish production readiness or justify
+application integration. Temporal drift, recurrent group error, low-support
+groups, GPU variation, and the retrospective nature of earlier backtests still
+need to inform any uncertainty range and subsequent evaluation.
+
 The legacy `MLPricePredictor/` experiments contain target leakage, including
 features derived from the transaction price being predicted. Their model
 metrics and generated outputs therefore must not be trusted as evidence of
@@ -374,6 +492,7 @@ python scripts/evaluate_baselines.py
 python scripts/evaluate_linear_models.py
 python scripts/evaluate_tree_models.py
 python scripts/evaluate_boosted_models.py --device gpu
+python scripts/evaluate_model_robustness.py --device gpu
 python -m pytest
 ```
 

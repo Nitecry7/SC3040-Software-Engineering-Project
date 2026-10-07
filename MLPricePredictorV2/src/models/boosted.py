@@ -106,6 +106,10 @@ class BoostedModelConfig:
         return parameters
 
 
+FROZEN_CATBOOST_CONFIG = BoostedModelConfig("catboost", 8, 0.05)
+FROZEN_CATBOOST_ITERATIONS = 1998
+
+
 @dataclass(frozen=True)
 class BoostedValidationResult:
     config: BoostedModelConfig
@@ -402,6 +406,37 @@ def fit_selected_boosted_model(
         iterations=iterations,
         estimator=estimator,
         category_preprocessor=preprocessor,
+        device=device,
+    )
+
+
+def fit_frozen_catboost(
+    X_training: pd.DataFrame,
+    y_training: pd.Series,
+    device: ComputeDevice = "gpu",
+) -> FittedBoostedModel:
+    """Fit the already selected CatBoost design for exactly 1,998 rounds."""
+    training_features, training_target = _ordered_rows(X_training, y_training)
+    if training_features.empty:
+        raise ValueError("CatBoost training data must contain at least one row")
+    estimator = build_boosted_estimator(
+        FROZEN_CATBOOST_CONFIG,
+        device,
+        iterations=FROZEN_CATBOOST_ITERATIONS,
+        validation=False,
+    )
+    prepared = prepare_catboost_features(training_features)
+    estimator.fit(
+        prepared,
+        training_target,
+        cat_features=list(CATEGORICAL_FEATURES),
+        verbose=False,
+    )
+    return FittedBoostedModel(
+        config=FROZEN_CATBOOST_CONFIG,
+        iterations=FROZEN_CATBOOST_ITERATIONS,
+        estimator=estimator,
+        category_preprocessor=None,
         device=device,
     )
 
