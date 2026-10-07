@@ -4,3 +4,24 @@ dist/
 .env
 .env.*
 !.env.example
+# Local AI coding and design tooling
+.agents/
+.codex/
+.impeccable/
+
+# Raw ML datasets
+MLPricePredictorV2/data/raw/*.csv
+MLPricePredictorV2/data/processed/
+
+# Python environment and caches
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Local listing seeding data, generated images, and helper scripts
+/SGHomie/BackEnd/supabase/seeds/
+/SGHomie/BackEnd/scripts/seed-test-listings.mjs
+/SGHomie/BackEnd/scripts/enhance-listing-seeds.mjs
+.temp/
+.branches/

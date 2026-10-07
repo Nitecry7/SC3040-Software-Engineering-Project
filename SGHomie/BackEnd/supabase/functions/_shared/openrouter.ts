@@ -7,6 +7,13 @@ export interface ChatCompletionMessageParam {
   content: string;
   name?: string;
   tool_call_id?: string;
+  tool_calls?: ChatCompletionToolCall[];
+}
+
+export interface ChatCompletionToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
 }
 
 export interface ChatCompletionCreateParams {
@@ -25,6 +32,7 @@ export interface ChatCompletionChoice {
     role: 'assistant';
     content: string | null;
     refusal?: string | null;
+    tool_calls?: ChatCompletionToolCall[];
   };
   finish_reason: string | null;
 }
@@ -65,7 +73,7 @@ interface OpenRouterClientOptions {
   timeoutMs?: number;
 }
 
-interface OpenRouterClient {
+export interface OpenRouterClient {
   chat: {
     completions: {
       create: (params: ChatCompletionCreateParams) => Promise<ChatCompletionResponse | ChatCompletionStream>;
