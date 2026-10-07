@@ -3,8 +3,8 @@
 V2 is the clean research pipeline for HDB resale price evaluation. It supports
 raw data profiling, deterministic row-wise feature preparation, chronological
 partitions, historical transaction-price baselines, and initial leakage-safe
-Linear and Ridge regression experiments. It does not serve valuations or
-provide a production model.
+Linear, Ridge, and nonlinear tree benchmark experiments. It does not serve
+valuations or provide a production model.
 
 ## Dataset
 
@@ -162,6 +162,81 @@ months, while the learned model is frozen after 2025-12 as required by this
 evaluation. Neither test result was used for model selection. Current partial
 period rows from 2026-10 onward remain excluded.
 
+## Nonlinear tree benchmarks
+
+`scripts/evaluate_tree_models.py` compares Extra Trees, Random Forest, and
+HistGradientBoosting using the chronological partitions above. The four forest
+candidates use the fixed 100-tree, `max_features=1.0`, seed-42 setup and compare
+minimum leaf sizes 2 and 10. Forests use the same five one-hot categorical and
+five numeric features as the linear pipeline, but numeric columns are not
+scaled. The two HistGradientBoosting candidates compare 100 and 200 boosting
+iterations; both use learning rate 0.1, `max_leaf_nodes=31`,
+`min_samples_leaf=20`, `l2_regularization=1.0`, `early_stopping=False`, and
+seed 42. It uses native categorical data for town, flat type, and flat model;
+block and street are omitted because their category cardinalities exceed the
+estimator's `max_bins=255` limit. Category values are learned from the fitting
+partition only, and unseen values map to missing.
+
+All six candidates fit only on 2017-01 through 2024-12 and are scored on 2025.
+Selection uses the 1% validation MAE band, followed by RMSE, median absolute
+error, MAPE, configuration simplicity, measured runtime and memory, and a
+stable tie-break. The frozen selected configuration is refitted through
+2025-12 and evaluated once on 2026-01 through 2026-09. Validation and test
+targets do not fit preprocessing or model parameters; 2026-10 onward is
+excluded. The script reports candidate and final matrix/model memory, fit and
+prediction time, test MAE by town and flat type with support, and aggregated
+impurity feature importance where the estimator exposes it. Impurity importance
+is noncausal and can favor high-cardinality features.
+
+On the local 241,920-row CSV, the six validation candidates produced:
+
+| Candidate | Validation MAE | RMSE | MAPE | Fit seconds | Estimator size estimate |
+|---|---:|---:|---:|---:|---:|
+| Extra Trees, leaf 2 | $43,443.85 | $56,546.91 | 6.55% | 989.27 | 1,136.57 MiB |
+| Extra Trees, leaf 10 | $46,452.53 | $64,009.61 | 6.80% | 225.28 | 185.61 MiB |
+| Random Forest, leaf 2 | $46,808.59 | $62,509.40 | 6.97% | 678.24 | 741.90 MiB |
+| Random Forest, leaf 10 | $51,095.84 | $73,152.73 | 7.41% | 131.25 | 131.90 MiB |
+| HistGradientBoosting, 100 iterations | $49,911.97 | $66,744.98 | 7.32% | 0.61 | 0.43 MiB |
+| HistGradientBoosting, 200 iterations | $48,578.84 | $64,173.23 | 7.17% | 0.91 | 0.84 MiB |
+
+Extra Trees with minimum leaf size 2 had the lowest validation MAE and was
+selected. Its validation MAE was $43,443.85, RMSE $56,546.91, MAPE 6.55%, R2
+0.9232, and median absolute error $36,050.04. It was better than the recorded
+Linear/Ridge validation MAEs ($50,772.32 / $50,793.75), but worse than the
+fixed comparable-baseline validation MAE of $39,354.92. The comparable
+configuration was evaluated as a reference only and did not enter tree
+selection.
+
+After refitting on train plus validation, the frozen Extra Trees model scored
+the test period at MAE $30,056.10, RMSE $44,414.51, MAPE 4.55%, R2 0.9578,
+median absolute error $21,287.12, mean actual price $663,826.70, and mean
+predicted price $663,921.94. The previously recorded comparable baseline test
+metrics were MAE $40,932.90, RMSE $70,470.57, MAPE 5.90%; recorded Linear
+Regression test metrics were $49,861.68, $69,194.33, and 8.08% respectively.
+These references were not rerun or used to select the tree model. The
+comparable baseline uses month-by-month test updates, whereas the learned model
+is frozen after 2025-12, so this is not a matched update protocol.
+
+The final encoded design matrix was 222,067 by 3,380 with 2,220,670 nonzero
+entries and 26.26 MiB of CSR storage. The selected final estimator's serialized
+size estimate was 1,281.10 MiB; its train-only validation counterpart was
+1,136.57 MiB. Extra Trees fit on train plus validation in 956.98 seconds and
+predicted test rows in 0.07 seconds. The full script, including all six
+validation fits and the validation comparable reference, took 2,999.24 seconds
+(about 50 minutes) on the local environment. The validation forest input
+matrix was 196,982 by 3,358 with 23.29 MiB of CSR storage. Test town MAEs
+ranged from $21,712.50 (Bukit Batok, n=1,118) to $48,938.84 (Queenstown,
+n=616). Flat-type MAEs ranged from $17,805.21 (2 ROOM, n=588) to $136,968.90
+(MULTI-GENERATION, n=6); the low-support group estimate is noisy.
+
+Aggregated impurity importance ranked flat type, town, and transaction year
+highest. These values are noncausal and may favor high-cardinality predictors.
+Results are research benchmarks, not evidence of production valuation quality.
+The large, slow Extra Trees fit and high serialized estimator size are material
+deployment limitations. Next, investigate a compute-efficient and stable model
+that improves validation error over the comparable-sales baseline before
+considering persistence or inference integration.
+
 The legacy `MLPricePredictor/` experiments contain target leakage, including
 features derived from the transaction price being predicted. Their model
 metrics and generated outputs therefore must not be trusted as evidence of
@@ -173,9 +248,9 @@ also research candidates only and do not establish production readiness.
 The eventual purpose is to evaluate an HDB resale price estimate using only
 information available at prediction time, with chronological validation,
 appropriate baseline comparisons, and documented provenance. Historical
-baselines and initial linear model evaluation are implemented. Stronger
-feature design and model families, model persistence, and a narrow FastAPI
-inference interface remain future work.
+baselines, linear and Ridge models, and initial nonlinear tree benchmarks are
+implemented. Broader feature design and model evaluation, model persistence,
+and a narrow FastAPI inference interface remain future work.
 
 ## Setup and commands
 
@@ -187,6 +262,7 @@ python scripts/profile_data.py
 python scripts/prepare_data.py
 python scripts/evaluate_baselines.py
 python scripts/evaluate_linear_models.py
+python scripts/evaluate_tree_models.py
 python -m pytest
 ```
 

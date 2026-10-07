@@ -12,6 +12,17 @@ from src.models.linear import (
     select_model_features,
     select_validation_candidate,
 )
+from src.models.tree import (
+    TreeModelConfig,
+    TreeValidationResult,
+    aggregate_tree_feature_importances,
+    build_tree_pipeline,
+    evaluate_tree_validation_candidates,
+    fit_selected_tree_model,
+    select_tree_candidate,
+    select_tree_features,
+    tree_configurations,
+)
 
 __all__ = [
     "CATEGORICAL_FEATURES",
@@ -24,4 +35,13 @@ __all__ = [
     "fit_selected_model",
     "select_model_features",
     "select_validation_candidate",
+    "TreeModelConfig",
+    "TreeValidationResult",
+    "aggregate_tree_feature_importances",
+    "build_tree_pipeline",
+    "evaluate_tree_validation_candidates",
+    "fit_selected_tree_model",
+    "select_tree_candidate",
+    "select_tree_features",
+    "tree_configurations",
 ]
