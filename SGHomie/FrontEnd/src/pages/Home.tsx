@@ -119,7 +119,7 @@ const Home = () => {
                 onClick={() => navigate('/search')}
                 className="px-8 py-4 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-all duration-300 transform hover:scale-105 flex items-center space-x-2 group"
               >
-                <span>Start Exploring</span>
+                <span>Explore homes</span>
                 <ArrowRight className="h-5 w-5 group-hover:translate-x-1 transition-transform duration-300" />
               </button>
               {/* Button to navigate to the analytics page */}
@@ -128,7 +128,7 @@ const Home = () => {
                 className="px-8 py-4 bg-white/90 text-gray-900 rounded-full hover:bg-white transition-all duration-300 transform hover:scale-105 flex items-center space-x-2"
               >
                 <TrendingUp className="h-5 w-5" />
-                <span>View Market Trends</span>
+                <span>View Trends</span>
               </button>
             </div>
           </div>

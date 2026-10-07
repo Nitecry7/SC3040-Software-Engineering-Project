@@ -65,17 +65,19 @@ const PropertyDetails = () => {
 
   // Function to navigate to the previous image in the gallery.
   const prevImage = () => {
-    if (!property?.photos) return;
+    const photos = property?.photos ?? [];
+    if (photos.length === 0) return;
     setCurrentImageIndex((prevIndex) => 
-      prevIndex === 0 ? property.photos.length - 1 : prevIndex - 1
+      prevIndex === 0 ? photos.length - 1 : prevIndex - 1
     );
   };
 
   // Function to navigate to the next image in the gallery.
   const nextImage = () => {
-    if (!property?.photos) return;
+    const photos = property?.photos ?? [];
+    if (photos.length === 0) return;
     setCurrentImageIndex((prevIndex) => 
-      prevIndex === property.photos.length - 1 ? 0 : prevIndex + 1
+      prevIndex === photos.length - 1 ? 0 : prevIndex + 1
     );
   };
 
@@ -126,38 +128,26 @@ const PropertyDetails = () => {
           .from('properties')
           .select('*')
           .eq('id', id)
-          .single();
+          .maybeSingle();
 
         if (propertyError) throw propertyError;
+        if (!propertyData) {
+          setProperty(null);
+          toast.error('This property is unavailable or has not been approved yet');
+          return;
+        }
+
         // Set the fetched property data.
         setProperty(propertyData);
 
-        // Fetch the seller's information from the "user_profiles" table if a seller_id exists.
-        if (propertyData.seller_id) {
-          const { data: userData, error: userError } = await supabase
-            .from('user_profiles')
-            .select('name, phone')
-            .eq('id', propertyData.seller_id)
-            .single();
-
-          if (userError) throw userError;
-
-          // Also fetch seller's email from a view (auth_users_view) containing authenticated users' emails.
-          const { data: authData, error: authError } = await supabase
-            .from('auth_users_view')
-            .select('email')
-            .eq('id', propertyData.seller_id)
-            .single();
-
-          // If email is fetched successfully, update sellerInfo state.
-          if (!authError && authData) {
-            setSellerInfo({
-              name: userData?.name || propertyData.seller_name || 'Unknown',
-              phone: userData?.phone || propertyData.seller_phone || 'Not provided',
-              email: authData.email || 'Not provided'
-            });
-          }
-        }
+        // Use the public seller details stored on the property. Reading another
+        // user's private profile or Auth email is blocked by RLS and caused
+        // PostgREST 406 errors for buyers viewing property details.
+        setSellerInfo({
+          name: propertyData.seller_name || 'Unknown',
+          phone: propertyData.seller_phone || 'Not provided',
+          email: 'Not provided',
+        });
 
         // Fetch related amenities from the "property_amenities" table.
         const { data: amenitiesData, error: amenitiesError } = await supabase

@@ -1,5 +1,6 @@
 // Import React and hooks needed for managing state and side effects in the component
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 // Import icon components from the lucide-react library for visual elements in the UI
 import { X, Mail, Lock, UserPlus, LogIn, ShieldCheck } from 'lucide-react';
 // Import the Supabase client instance configured for your project, used for authentication and database calls
@@ -9,6 +10,7 @@ import toast from 'react-hot-toast';
 
 // Define the AuthModal component, a pop-up modal used for user sign in and account creation
 const AuthModal = () => {
+  const navigate = useNavigate();
   // isOpen: controls if the modal is visible or hidden
   const [isOpen, setIsOpen] = useState(false);
   // isSignUp: determines if the modal is in "sign up" mode (account creation) or "sign in" mode
@@ -111,6 +113,8 @@ const AuthModal = () => {
       toast.success('Successfully signed in as admin!');
       // Close the modal
       setIsOpen(false);
+      // Take admins straight to the dashboard after authentication.
+      navigate('/admin');
       // Reset the form inputs
       setFormData({ email: '', password: '' });
     } catch (error) {

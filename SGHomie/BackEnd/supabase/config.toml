@@ -123,6 +123,18 @@ file_size_limit = "50MiB"
 # allowed_mime_types = ["image/png", "image/jpeg"]
 # objects_path = "./images"
 
+[storage.buckets.property-images]
+public = true
+file_size_limit = "10MiB"
+allowed_mime_types = ["image/jpeg", "image/png", "image/webp"]
+
+[functions.cleanup-unlinked-property-images]
+verify_jwt = false
+
+[functions.chatbot]
+# The chatbot welcomes anonymous users, then applies the seller gate itself.
+verify_jwt = false
+
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]
 enabled = true

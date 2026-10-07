@@ -62,7 +62,7 @@ VITE_SUPABASE_ANON_KEY=your-supabase-publishable-or-anon-key
 # Leave blank to use the hosted Supabase Edge Functions.
 VITE_SUPABASE_FUNCTIONS_URL=
 
-OPENROUTER_MODEL=openrouter/free
+OPENROUTER_MODEL=openai/gpt-oss-20b:free
 OPENROUTER_SITE_NAME=SG Homie
 OPENROUTER_SITE_URL=http://localhost:5173
 ```
@@ -125,7 +125,7 @@ OPENROUTER_API_KEY=your-openrouter-key
 The model and site metadata have safe defaults in the function. If you want to override them for the hosted project, add these values as Edge Function environment variables as well:
 
 ```text
-OPENROUTER_MODEL=openrouter/free
+OPENROUTER_MODEL=openai/gpt-oss-20b:free
 OPENROUTER_SITE_NAME=SG Homie
 OPENROUTER_SITE_URL=https://your-live-site-url
 ```
