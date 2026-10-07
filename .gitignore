@@ -18,3 +18,8 @@ MLPricePredictorV2/data/processed/
 __pycache__/
 .pytest_cache/
 *.pyc
+
+# Seeding Info
+supabase/seeds/
+.temp/
+.branches/

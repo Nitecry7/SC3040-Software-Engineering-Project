@@ -1,12 +1,16 @@
 // Import React and its hooks for state management, referencing, and side-effects.
 import React, { useState, useRef, useEffect } from 'react';
 // Import icons from the lucide-react library to use in the UI.
-import { MessageCircle, X, Send, ChevronDown, ChevronUp } from 'lucide-react';
-// Import ReactMarkdown to render Markdown content in the chat messages.
-import ReactMarkdown from 'react-markdown';
+import { MessageCircle, X, Send, Maximize2, Minimize2, GripVertical, MoveDiagonal2 } from 'lucide-react';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 // Import the Supabase client for making API requests.
 import { chatbotSupabase, supabase } from '../lib/supabase';
+import { BUY_MESSAGE, chatFailureText, consumeChatStream, type ListingSearchResult } from '../lib/chat';
+import ListingRecommendations from './ListingRecommendations';
+import ChatMarkdown from './ChatMarkdown';
+import useChatWindow from '../hooks/useChatWindow';
+import { LAUNCHER_SIZE, WINDOW_MARGIN } from '../lib/chatWindow';
+import './Chatbot.css';
 
 // Define a TypeScript interface for a chat message.
 // Each message has a 'role' (either 'user' or 'assistant')
@@ -14,19 +18,12 @@ import { chatbotSupabase, supabase } from '../lib/supabase';
 interface Message {
   role: 'user' | 'assistant';
   content: string;
-}
-
-interface ChatCompletionChunk {
-  choices?: Array<{
-    delta?: {
-      content?: string | null;
-    };
-  }>;
+  recommendations?: ListingSearchResult;
 }
 
 // Keep the initial chatbot menu focused on the two supported journeys.
 const SUGGESTED_PROMPTS = [
-  { label: "Buy", message: "I want to buy a property" },
+  { label: "Buy", message: BUY_MESSAGE },
   { label: "Sell", message: "I want to sell my unit" },
 ];
 
@@ -36,25 +33,45 @@ const MAX_HISTORY_MESSAGES = 20;
 const Chatbot: React.FC = () => {
   // State to manage whether the chat window is open.
   const [isOpen, setIsOpen] = useState(false);
-  // State to manage if the chat window is minimized.
-  const [isMinimized, setIsMinimized] = useState(true);
+  const [isClosing, setIsClosing] = useState(false);
+  const chatWindow = useChatWindow();
   // State to manage the current message input by the user.
   const [message, setMessage] = useState('');
   // State to store the list of messages exchanged in the chat.
   const [messages, setMessages] = useState<Message[]>([]);
   // State to indicate if the chatbot is waiting for a response (i.e. loading state).
   const [isLoading, setIsLoading] = useState(false);
-  // Reference to the end of the messages list, used to scroll into view.
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  // Reference to the chatbox container (useful for any future adjustments).
-  const chatboxRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<HTMLDivElement>(null);
+  const launcherRef = useRef<HTMLButtonElement>(null);
+  const moveButtonRef = useRef<HTMLButtonElement>(null);
+  const hasOpenedRef = useRef(false);
+  const followStreamRef = useRef(true);
+  const requestInFlightRef = useRef(false);
+  const searchContextRef = useRef<ListingSearchResult['filters']>();
 
-  // useEffect hook to automatically scroll the chat view to the bottom when a new message is added.
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    const container = messagesRef.current;
+    if (container && followStreamRef.current) container.scrollTop = container.scrollHeight;
+  }, [messages, isOpen, chatWindow.mode]);
+
+  useEffect(() => {
+    if (isOpen) {
+      hasOpenedRef.current = true;
+      moveButtonRef.current?.focus({ preventScroll: true });
+    } else if (hasOpenedRef.current) {
+      launcherRef.current?.focus({ preventScroll: true });
     }
-  }, [messages]);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isClosing) return;
+    const delay = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180;
+    const timer = window.setTimeout(() => {
+      setIsOpen(false);
+      setIsClosing(false);
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [isClosing]);
 
   const updateLastAssistantMessage = (content: string) => {
     setMessages(prev => {
@@ -71,59 +88,12 @@ const Chatbot: React.FC = () => {
     });
   };
 
-  const streamAssistantResponse = async (response: Response): Promise<string> => {
-    if (!response.body) {
-      throw new Error('The chatbot returned an empty response stream');
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    let assistantContent = '';
-    let streamComplete = false;
-
-    const processEvent = (event: string) => {
-      const data = event
-        .split(/\r?\n/)
-        .filter(line => line.startsWith('data:'))
-        .map(line => line.slice(5).trimStart())
-        .join('\n')
-        .trim();
-
-      if (!data || data === '[DONE]') return;
-
-      const chunk = JSON.parse(data) as ChatCompletionChunk;
-      const content = chunk.choices?.[0]?.delta?.content;
-
-      if (typeof content === 'string' && content !== '') {
-        assistantContent += content;
-        updateLastAssistantMessage(assistantContent);
-      }
-    };
-
-    while (!streamComplete) {
-      const { value, done } = await reader.read();
-      buffer += decoder.decode(value, { stream: !done });
-
-      const events = buffer.split(/\r?\n\r?\n/);
-      buffer = events.pop() ?? '';
-      events.forEach(processEvent);
-
-      streamComplete = done;
-    }
-
-    if (buffer.trim()) processEvent(buffer);
-
-    if (!assistantContent) {
-      throw new Error('The chatbot returned no text');
-    }
-
-    return assistantContent;
-  };
-
-  const sendMessage = async (value: string) => {
+  const sendMessage = async (value: string, intent?: 'buy') => {
     const userMessage = value.trim();
-    if (!userMessage || isLoading) return;
+    if (!userMessage || requestInFlightRef.current) return;
+    requestInFlightRef.current = true;
+    followStreamRef.current = true;
+    if (intent === 'buy') searchContextRef.current = undefined;
 
     // Clear the input field.
     setMessage('');
@@ -131,7 +101,9 @@ const Chatbot: React.FC = () => {
     // Keep the current message within the backend's history limit.
     const nextMessages = [...messages, { role: 'user' as const, content: userMessage }];
     const requestMessages = [
-      ...messages.slice(-(MAX_HISTORY_MESSAGES - 1)),
+      ...messages.filter(msg => msg.content.trim()).slice(-(MAX_HISTORY_MESSAGES - 1)).map(({ role, content }) => ({
+        role, content: content.slice(0, 4000),
+      })),
       { role: 'user' as const, content: userMessage },
     ];
     // Add the user's message to the messages state.
@@ -139,6 +111,7 @@ const Chatbot: React.FC = () => {
     // Set the loading state to true while waiting for the assistant response.
     setIsLoading(true);
 
+    let hasRecommendations = false;
     try {
       // The chatbot Edge Function uses the same session to enforce the
       // login/seller gates and to create a draft owned by the current seller.
@@ -150,6 +123,8 @@ const Chatbot: React.FC = () => {
         body: {
           messages: requestMessages,
           stream: true,
+          ...(intent ? { intent } : {}),
+          ...(searchContextRef.current ? { search_context: searchContextRef.current } : {}),
         },
       });
 
@@ -159,22 +134,34 @@ const Chatbot: React.FC = () => {
         throw new Error('The chatbot returned an invalid response');
       }
 
-      const assistantResponse = await streamAssistantResponse(data);
+      const assistantResponse = await consumeChatStream(data, updateLastAssistantMessage, (recommendations) => {
+        hasRecommendations = recommendations.listings.length > 0;
+        searchContextRef.current = recommendations.filters;
+        setMessages(prev => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last?.role === 'assistant') next[next.length - 1] = { ...last, recommendations };
+          return next;
+        });
+      });
       if (/created a draft listing|already have a draft listing/i.test(assistantResponse)) {
         window.dispatchEvent(new CustomEvent('seller-dashboard-refresh'));
       }
     } catch (error) {
+      let failureText = chatFailureText();
       // Surface the Edge Function status and response body in the browser
       // console during local development to help diagnose backend failures.
-      if (import.meta.env.DEV && error instanceof FunctionsHttpError) {
-        const responseBody = await error.context.clone().text();
+      if (error instanceof FunctionsHttpError) {
+        const responseBody = await error.context.clone().text().catch(() => '');
         let parsedBody: unknown = responseBody;
         try {
           parsedBody = JSON.parse(responseBody);
         } catch {
           // Keep the raw response text when the function did not return JSON.
         }
-        console.error('Chatbot Edge Function failed:', {
+        const code = typeof parsedBody === 'object' && parsedBody !== null && 'code' in parsedBody && typeof parsedBody.code === 'string' ? parsedBody.code : undefined;
+        failureText = chatFailureText(error.context.status, code);
+        if (import.meta.env.DEV) console.error('Chatbot Edge Function failed:', {
           status: error.context.status,
           statusText: error.context.statusText,
           body: parsedBody,
@@ -182,9 +169,12 @@ const Chatbot: React.FC = () => {
       } else {
         console.error('Error getting response:', error);
       }
-      updateLastAssistantMessage("I'm sorry, I'm having trouble responding right now. Please try again later.");
+      updateLastAssistantMessage(hasRecommendations
+        ? "I couldn't finish the explanation. You can open the matching listings below or try again."
+        : failureText);
     } finally {
       // Turn off the loading indicator when the request is complete.
+      requestInFlightRef.current = false;
       setIsLoading(false);
     }
   };
@@ -197,189 +187,122 @@ const Chatbot: React.FC = () => {
 
   // Handler for when a suggested prompt is clicked.
   const handlePromptClick = (prompt: string) => {
-    void sendMessage(prompt);
+    void sendMessage(prompt, prompt === BUY_MESSAGE ? 'buy' : undefined);
   };
 
-  // Function to toggle the chat window's open/minimized state.
-  const toggleChat = () => {
-    if (!isOpen) {
-      // Open the chat window and set it to full view.
-      setIsOpen(true);
-      setIsMinimized(false);
-    } else {
-      // Toggle the minimized state if already open.
-      setIsMinimized(!isMinimized);
-    }
+  const minimise = () => {
+    if (!isOpen || isClosing) return;
+    setIsClosing(true);
   };
 
-  // Handler to close the chat window completely.
-  const closeChat = () => {
-    setIsOpen(false);
-    setIsMinimized(true);
+  const handleListingOpen: React.MouseEventHandler<HTMLAnchorElement> = event => {
+    if (!event.defaultPrevented && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) minimise();
   };
 
   return (
-    // The chatbot is a fixed component located at the bottom-right of the window.
-    <div className="fixed bottom-4 right-4 z-50">
-      {/* Render a floating button when the chat is not open */}
+    <>
       {!isOpen && (
         <button
-          onClick={toggleChat}
-          className="bg-blue-600 text-white p-4 rounded-full shadow-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
+          ref={launcherRef}
+          onClick={() => setIsOpen(true)}
+          aria-label="Open SG Homie chat"
+          aria-expanded={isOpen}
+          title="Open chat"
+          className="chat-launcher fixed z-50 flex items-center justify-center rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-600"
+          style={{ right: WINDOW_MARGIN, bottom: WINDOW_MARGIN, width: LAUNCHER_SIZE, height: LAUNCHER_SIZE }}
         >
-          <MessageCircle className="h-6 w-6" />
-          <span>Any questions? Ask chatbot</span>
+          <MessageCircle className="h-6 w-6" aria-hidden="true" />
+          {isLoading && <span className="absolute right-0 top-0 h-3 w-3 animate-pulse rounded-full border-2 border-white bg-amber-400" />}
         </button>
       )}
-
-      {/* Render the chat window when it is open */}
       {isOpen && (
-        <div
-          ref={chatboxRef}
-          className={`bg-white rounded-lg shadow-xl transition-all duration-300 ease-in-out ${
-            isMinimized ? 'h-14' : 'h-[500px]'
-          } w-[380px] flex flex-col`}
+        <section
+          aria-label="SG Homie chat window"
+          className={`chat-window fixed z-50 flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl ${chatWindow.interacting ? 'select-none' : ''}`}
+          data-closing={isClosing}
+          data-interacting={chatWindow.interacting}
+          style={{ left: chatWindow.bounds.x, top: chatWindow.bounds.y, width: chatWindow.bounds.width, height: chatWindow.bounds.height }}
+          onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); minimise(); } }}
         >
-          {/* Chat header containing the title, icon, and minimize/close buttons */}
-          <div
-            className="flex items-center justify-between p-4 bg-blue-600 text-white rounded-t-lg cursor-pointer"
-            onClick={toggleChat}
-          >
-            <div className="flex items-center space-x-2">
-              <MessageCircle className="h-5 w-5" />
-              <span className="font-medium">SG Homie Assistant</span>
-            </div>
-            <div className="flex items-center space-x-2">
-              {/* Display toggle icons based on whether the chat window is minimized or not */}
-              {isMinimized ? (
-                <ChevronUp className="h-5 w-5" />
-              ) : (
-                <>
-                  <ChevronDown className="h-5 w-5" />
-                  {/* Button to close the chat window. Stop propagation to avoid toggling the chat */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      closeChat();
-                    }}
-                    className="hover:bg-blue-700 rounded-full p-1"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                </>
+          <header className="flex shrink-0 items-center gap-1 bg-blue-600 px-3 py-2 text-white">
+            <button
+              ref={moveButtonRef}
+              {...chatWindow.gestureProps('window')}
+              type="button"
+              aria-label="Move chat window"
+              title="Drag to move · Arrow keys move · Shift moves faster"
+              className="flex min-w-0 flex-1 touch-none cursor-grab items-center gap-2 rounded-lg py-1.5 text-left active:cursor-grabbing focus-visible:outline focus-visible:outline-2 focus-visible:outline-white"
+            >
+              <GripVertical className="h-4 w-4 shrink-0 opacity-70" aria-hidden="true" />
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-semibold">SG Homie Assistant</span>
+                <span className="block text-[11px] text-blue-100">{chatWindow.mode === 'compact' ? 'Compact chat' : 'Expanded chat'}</span>
+              </span>
+            </button>
+            <button type="button"
+              onClick={() => chatWindow.setMode(chatWindow.mode === 'compact' ? 'expanded' : 'compact')}
+              aria-label={chatWindow.mode === 'compact' ? 'Expand chat' : 'Use compact chat'}
+              title={chatWindow.mode === 'compact' ? 'Expand chat' : 'Use compact chat'}
+              className="rounded-lg p-2 hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
+              {chatWindow.mode === 'compact' ? <Maximize2 className="h-4 w-4" /> : <Minimize2 className="h-4 w-4" />}
+            </button>
+            <button type="button" onClick={minimise} aria-label="Close chat" title="Close chat"
+              className="rounded-lg p-2 hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
+              <X className="h-4 w-4" />
+            </button>
+          </header>
+          <div ref={messagesRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4"
+            onScroll={event => {
+              const container = event.currentTarget;
+              followStreamRef.current = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
+            }}>
+            <div className={`mx-auto space-y-4 ${chatWindow.mode === 'expanded' ? 'max-w-3xl' : ''}`}>
+              {messages.length === 0 && (
+                <div className="space-y-4 py-4">
+                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-600"><MessageCircle className="h-6 w-6" /></div>
+                  <p className="text-center font-medium text-gray-900">How can I help with your home?</p>
+                  <p className="text-center text-sm text-gray-500">Choose Buy or Sell, or ask a question.</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {SUGGESTED_PROMPTS.map(prompt => (
+                      <button key={prompt.label} onClick={() => handlePromptClick(prompt.message)} disabled={isLoading}
+                        className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-sm font-semibold text-blue-700 hover:bg-blue-100 disabled:opacity-50">{prompt.label}</button>
+                    ))}
+                  </div>
+                </div>
               )}
+              {messages.map((msg, index) => (
+                <div key={index} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`${msg.recommendations ? 'w-full' : 'max-w-[92%]'} min-w-0 rounded-2xl px-3 py-2.5 text-sm ${msg.role === 'user' ? 'chat-user-message bg-blue-600 text-white' : 'bg-gray-50 text-gray-800'}`}>
+                    {msg.content && <ChatMarkdown content={msg.content} onListingOpen={handleListingOpen} />}
+                    {msg.recommendations && <ListingRecommendations result={msg.recommendations} compact={chatWindow.mode === 'compact'} onListingOpen={handleListingOpen} />}
+                    {!msg.content && !msg.recommendations && isLoading && index === messages.length - 1 && <span className="text-gray-500">Thinking…</span>}
+                  </div>
+                </div>
+              ))}
+              {isLoading && <p role="status" className="text-xs text-gray-500">SG Homie is responding…</p>}
             </div>
           </div>
-
-          {/* Render chat messages and input only when the chat window is not minimized */}
-          {!isMinimized && (
-            <>
-              {/* Container for chat messages */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {/* If there are no messages, display a greeting and suggested prompts */}
-                {messages.length === 0 && (
-                  <div className="space-y-4">
-                    <div className="text-center text-gray-500">
-                      👋 Hi! I'm your SG Homie Assistant. What would you like to do?
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {/* Map over suggested prompts and display them as clickable buttons */}
-                      {SUGGESTED_PROMPTS.map((prompt, index) => (
-                        <button
-                          key={index}
-                          onClick={() => handlePromptClick(prompt.message)}
-                          disabled={isLoading}
-                          className="p-3 text-sm font-medium bg-gray-50 hover:bg-gray-100 rounded-lg transition-colors"
-                        >
-                          {prompt.label}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="text-center text-sm text-gray-500">
-                      Choose Buy or Sell, or type your question below.
-                    </div>
-                  </div>
-                )}
-                {/* Render chat messages */}
-                {messages.map((msg, index) => (
-                  <div
-                    key={index}
-                    className={`flex ${
-                      // Align user messages to the right and assistant messages to the left.
-                      msg.role === 'user' ? 'justify-end' : 'justify-start'
-                    }`}
-                  >
-                    <div
-                      className={`max-w-[80%] rounded-lg p-3 ${
-                        // Style user messages with a blue background and white text,
-                        // and assistant messages with a gray background and dark text.
-                        msg.role === 'user'
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-gray-100 text-gray-800'
-                      }`}
-                    >
-                      {/* Render the message content as Markdown for enhanced formatting */}
-                      <ReactMarkdown
-                        components={{
-                          // Customize paragraph and link rendering.
-                          p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                          a: ({ href, children }) => (
-                            <a href={href} className="text-blue-600 underline" target="_blank" rel="noopener noreferrer">
-                              {children}
-                            </a>
-                          ),
-                        }}
-                      >
-                        {msg.content}
-                      </ReactMarkdown>
-                    </div>
-                  </div>
-                ))}
-                {/* Display a loading animation when waiting for a response */}
-                {isLoading && (
-                  <div className="flex justify-start">
-                    <div className="bg-gray-100 rounded-lg p-3 text-gray-800">
-                      <div className="flex space-x-2">
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                      </div>
-                    </div>
-                  </div>
-                )}
-                {/* Invisible element to automatically scroll to the end of messages */}
-                <div ref={messagesEndRef} />
-              </div>
-
-              {/* Chat input form */}
-              <form onSubmit={handleSubmit} className="p-4 border-t">
-                <div className="flex space-x-2">
-                  {/* Input field for user's message */}
-                  <input
-                    type="text"
-                    value={message}
-                    onChange={(e) => setMessage(e.target.value)}
-                    placeholder="Type your message..."
-                    className="flex-1 border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    disabled={isLoading} // Disable input while waiting for a response.
-                  />
-                  {/* Submit button with a send icon */}
-                  <button
-                    type="submit"
-                    disabled={isLoading || !message.trim()}
-                    className="bg-blue-600 text-white p-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Send className="h-5 w-5" />
-                  </button>
-                </div>
-              </form>
-            </>
-          )}
-        </div>
+          <form onSubmit={handleSubmit} className="shrink-0 border-t border-gray-100 bg-white px-3 pb-3 pt-3">
+            <div className="flex gap-2">
+              <input type="text" value={message} onChange={event => setMessage(event.target.value)}
+                placeholder="Type your message…" aria-label="Message SG Homie Assistant" maxLength={4000}
+                className="min-w-0 flex-1 rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100" disabled={isLoading} />
+              <button type="submit" aria-label="Send message" disabled={isLoading || !message.trim()}
+                className="rounded-xl bg-blue-600 px-3 text-white hover:bg-blue-700 disabled:opacity-40"><Send className="h-4 w-4" /></button>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-[10px] text-gray-400">
+              <span>Drag the header to move</span>
+              <button {...chatWindow.gestureProps('resize')} type="button" aria-label="Resize chat window"
+                title="Drag to resize · Arrow keys resize · Shift resizes faster"
+                className="-mb-1 -mr-1 flex h-5 w-5 touch-none cursor-nwse-resize items-center justify-center rounded text-gray-400 hover:text-blue-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500">
+                <MoveDiagonal2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </form>
+        </section>
       )}
-    </div>
+    </>
   );
 };
 
-// Export the Chatbot component as the default export.
 export default Chatbot;

@@ -1,5 +1,8 @@
 # Supabase setup
 
+The chatbot Buy flow, listing-search tool contract, verification and deployment
+steps are documented in [Chatbot buy flow](../../docs/buy-flow.md).
+
 The active migration path starts with one complete initial migration and then
 applies incremental migrations for the current application features:
 
@@ -97,7 +100,10 @@ supabase functions deploy chatbot
 
 The chatbot has no application-level request rate limit. Its default model can
 be overridden with the `OPENROUTER_MODEL` Edge Function secret; the default is
-`openai/gpt-oss-20b:free`.
+`openrouter/free`, which selects available free models with the required capabilities.
+`OPENROUTER_*` settings in frontend `.env` files do not configure the hosted Edge
+Function. Set overrides with `supabase secrets set OPENROUTER_MODEL=...` and deploy
+the chatbot after changing its source.
 
 ## Property image storage and cleanup
 
