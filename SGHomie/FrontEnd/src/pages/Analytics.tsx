@@ -1,5 +1,5 @@
 // Import React and hooks for state management and side effects.
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 // Import Tremor UI components for card layouts and text display.
 import { Card, Title, Text } from '@tremor/react';
 // Import icons from lucide-react to be used in the UI.
@@ -200,7 +200,7 @@ const Analytics = () => {
     <div className="pt-16 min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Page Title */}
-        <h1 className="text-3xl font-bold text-gray-900 mb-8">Market Analytics</h1>
+        <h1 className="text-3xl font-bold text-gray-900 mb-8">Market Trends</h1>
 
         {/* Market Statistics Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
