@@ -15,7 +15,11 @@ const AuthModal = () => {
   const [isRegister, setIsRegister] = useState(false);
   // loading: indicates if a request is in progress (displays "Processing..." to the user)
   const [loading, setLoading] = useState(false);
-  const [registration, setRegistration] = useState<{ email: string; requiresVerification: boolean } | null>(null);
+  const [registration, setRegistration] = useState<{
+    email: string;
+    status: 'verification-sent' | 'verification-already-sent' | 'account-exists' | 'complete';
+  } | null>(null);
+  const [sentVerificationEmails, setSentVerificationEmails] = useState<string[]>([]);
   // formData: stores the input values for email and password entered by the user
   const [formData, setFormData] = useState({
     email: '',
@@ -39,6 +43,53 @@ const AuthModal = () => {
     setFormData({ email: '', password: '' });
   };
 
+  const getVerificationStorageKey = async (email: string) => {
+    try {
+      if (typeof crypto === 'undefined' || !crypto.subtle) return null;
+      const normalizedEmail = email.trim().toLowerCase();
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalizedEmail));
+      const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+      return `sghomie:verification-sent:${fingerprint}`;
+    } catch {
+      return null;
+    }
+  };
+
+  const rememberVerificationSent = (key: string | null) => {
+    if (!key) return;
+    try {
+      window.sessionStorage.setItem(key, 'true');
+    } catch {
+      // The in-memory guard still prevents another send during this app session.
+    }
+  };
+
+  const clearVerificationSent = (key: string | null) => {
+    if (!key) return;
+    try {
+      window.sessionStorage.removeItem(key);
+    } catch {
+      // Session storage may be unavailable in some browser privacy modes.
+    }
+  };
+
+  const wasVerificationSent = (key: string | null) => {
+    if (!key) return false;
+    try {
+      return window.sessionStorage.getItem(key) === 'true';
+    } catch {
+      return false;
+    }
+  };
+
+  const isExistingAccountError = (error: unknown) => {
+    if (!error || typeof error !== 'object') return false;
+    const authError = error as { code?: string; message?: string };
+    return authError.code === 'user_already_exists'
+      || authError.code === 'email_exists'
+      || /user already (?:registered|exists)|email already exists/i.test(authError.message ?? '');
+  };
+
   // Function to handle registration and sign in
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); // Prevent the default browser behavior for form submission
@@ -50,15 +101,40 @@ const AuthModal = () => {
       
       // If the modal is in registration mode, attempt to create a new account using Supabase's signUp method
       if (isRegister) {
+        const normalizedEmail = email.trim().toLowerCase();
+        const verificationStorageKey = await getVerificationStorageKey(normalizedEmail);
+        if (sentVerificationEmails.includes(normalizedEmail) || wasVerificationSent(verificationStorageKey)) {
+          setRegistration({ email, status: 'verification-already-sent' });
+          setFormData({ email: '', password: '' });
+          return;
+        }
+
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
         });
         
-        // If there is an error during registration, throw the error to be caught
+        if (error && isExistingAccountError(error)) {
+          setRegistration({ email, status: 'account-exists' });
+          setFormData({ email: '', password: '' });
+          return;
+        }
         if (error) throw error;
+
+        // Supabase can return an obfuscated user with no identities for an existing account.
+        if (data.user?.identities?.length === 0) {
+          setRegistration({ email, status: 'account-exists' });
+          setFormData({ email: '', password: '' });
+          return;
+        }
+
         // Keep the confirmation visible until the user dismisses it or returns to sign in.
-        setRegistration({ email, requiresVerification: !data.session });
+        const status = data.session ? 'complete' : 'verification-sent';
+        setRegistration({ email, status });
+        if (status === 'verification-sent') {
+          setSentVerificationEmails(previous => previous.includes(normalizedEmail) ? previous : [...previous, normalizedEmail]);
+          rememberVerificationSent(verificationStorageKey);
+        }
         setFormData({ email: '', password: '' });
         return;
       } else {
@@ -72,6 +148,9 @@ const AuthModal = () => {
         if (error) throw error;
         // Notify the user that they have successfully signed in
         toast.success('Successfully signed in!');
+        const verificationStorageKey = await getVerificationStorageKey(email);
+        clearVerificationSent(verificationStorageKey);
+        setSentVerificationEmails(previous => previous.filter(sentEmail => sentEmail !== email.trim().toLowerCase()));
       }
 
       // Close the modal after successful authentication
@@ -118,17 +197,33 @@ const AuthModal = () => {
                   <Mail className="h-7 w-7" aria-hidden="true" />
                 </div>
                 <h2 id="auth-modal-title" className="text-2xl font-bold text-gray-900">
-                  {registration.requiresVerification ? 'Verification email sent' : 'Registration successful'}
+                  {registration.status === 'verification-sent' && 'Verification email sent'}
+                  {registration.status === 'verification-already-sent' && 'Verification email already sent'}
+                  {registration.status === 'account-exists' && 'Account already exists'}
+                  {registration.status === 'complete' && 'Registration successful'}
                 </h2>
-                {registration.requiresVerification ? (
+                {registration.status === 'verification-sent' ? (
                   <>
                     <p className="mt-4 text-gray-600">
                       We've sent a verification link to <span className="break-words font-medium text-gray-900">{registration.email}</span>.
                     </p>
                     <p className="mt-3 text-sm leading-relaxed text-gray-600">
-                      Open the link to verify your account, then return here to sign in. If you don't see the email, check your spam folder.
+                      Open the link to verify your account, then return here to sign in. If you don't see it, check your junk or spam folder.
                     </p>
                   </>
+                ) : registration.status === 'verification-already-sent' ? (
+                  <>
+                    <p className="mt-4 text-gray-600">
+                      A verification email was already sent to <span className="break-words font-medium text-gray-900">{registration.email}</span>.
+                    </p>
+                    <p className="mt-3 text-sm leading-relaxed text-gray-600">
+                      Check your inbox and junk or spam folder for the message, then follow its link to verify your account.
+                    </p>
+                  </>
+                ) : registration.status === 'account-exists' ? (
+                  <p className="mt-4 text-gray-600">
+                    An account with <span className="break-words font-medium text-gray-900">{registration.email}</span> is already registered. Please sign in instead. If you haven't verified it yet, check your inbox and junk or spam folder for the verification email.
+                  </p>
                 ) : (
                   <p className="mt-4 text-gray-600">Your account is ready and you're signed in.</p>
                 )}
@@ -136,7 +231,7 @@ const AuthModal = () => {
               <button
                 type="button"
                 onClick={() => {
-                  if (!registration.requiresVerification) {
+                  if (registration.status === 'complete') {
                     closeModal();
                     return;
                   }
@@ -146,7 +241,7 @@ const AuthModal = () => {
                 }}
                 className="mt-6 w-full rounded-lg bg-blue-600 px-4 py-3 font-medium text-white hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
               >
-                {registration.requiresVerification ? 'Back to Sign In' : 'Done'}
+                {registration.status === 'complete' ? 'Done' : 'Go to Sign In'}
               </button>
             </div>
           ) : (
