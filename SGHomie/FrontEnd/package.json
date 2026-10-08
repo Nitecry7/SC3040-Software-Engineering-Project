@@ -10,6 +10,7 @@
     "test:buy": "node --experimental-strip-types --import ../tests/register-deno-imports.mjs --test ../tests/buy-flow.test.mjs",
     "test:chat": "node --experimental-strip-types --test ../tests/chat-window.test.mjs",
     "test:analytics": "node --experimental-strip-types --test ../tests/listing-analytics.test.mjs",
+    "test:counts": "node --experimental-strip-types --test ../tests/listing-counts.test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

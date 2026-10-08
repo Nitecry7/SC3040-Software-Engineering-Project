@@ -19,6 +19,27 @@
 .chat-window * { transition-property: color, background-color, border-color, box-shadow, opacity; }
 .chat-window { container-type: inline-size; }
 .chat-launcher { cursor: pointer; }
+.chat-invitation {
+  transform-origin: bottom right;
+  animation: chat-invitation-open 220ms ease-out both;
+}
+.chat-invitation::after {
+  content: '';
+  position: absolute;
+  bottom: -6px;
+  right: 22px;
+  width: 12px;
+  height: 12px;
+  background: white;
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+  transform: rotate(45deg);
+}
+
+@keyframes chat-invitation-open {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 
 @keyframes chat-window-open {
   from { opacity: 0; transform: translateY(12px) scale(0.94); }
@@ -33,7 +54,7 @@
   to { opacity: 1; transform: scale(1); }
 }
 @media (prefers-reduced-motion: reduce) {
-  .chat-window, .chat-launcher { animation: none !important; transition: none !important; }
+  .chat-window, .chat-launcher, .chat-invitation { animation: none !important; transition: none !important; }
 }
 
 .chat-markdown { line-height: 1.65; overflow-wrap: anywhere; }

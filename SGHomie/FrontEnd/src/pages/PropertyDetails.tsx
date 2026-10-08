@@ -1,15 +1,16 @@
 // Import React and its hooks for managing state and side effects.
-import React, { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 // Import routing hooks to extract parameters from URL and create links.
 import { useParams } from 'react-router-dom';
 // Import various icons from lucide-react for UI elements.
 import { MapPin, Phone, Calendar, Home, Maximize, Bath, Heart, ChevronLeft, ChevronRight, Store, Train, Trees as Tree, Mail } from 'lucide-react';
 // Import Leaflet components for displaying maps.
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 // Import the Icon constructor from Leaflet to create custom markers.
 import { Icon } from 'leaflet';
 // Import the Supabase client for backend operations.
 import { supabase } from '../lib/supabase';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 // Import the custom authentication context to access user data.
 import { useAuth } from '../contexts/AuthContext';
 // Import the Property type definition.
@@ -28,6 +29,56 @@ interface Amenity {
   latitude: number;
   longitude: number;
 }
+
+const formatAmenityDistance = (kilometres: number) => {
+  if (!Number.isFinite(kilometres) || kilometres < 0) return 'Distance unavailable';
+  const metres = kilometres * 1000;
+  if (metres > 0 && metres < 1) return '<1 m away';
+  return `${Math.round(metres).toLocaleString('en-SG')} m away`;
+};
+
+const hasAmenityCoordinates = (amenity: Amenity) =>
+  Number.isFinite(amenity.latitude) && Math.abs(amenity.latitude) <= 90 &&
+  Number.isFinite(amenity.longitude) && Math.abs(amenity.longitude) <= 180;
+
+const AMENITY_MAP_MAX_ZOOM = 21;
+
+const AmenityMapViewport = ({ latitude, longitude, amenities }: {
+  latitude: number;
+  longitude: number;
+  amenities: Amenity[];
+}) => {
+  const map = useMap();
+  const fitPins = useCallback(() => {
+    const points: [number, number][] = [
+      [latitude, longitude],
+      ...amenities.filter(hasAmenityCoordinates).map(amenity => [amenity.latitude, amenity.longitude] as [number, number]),
+    ];
+    if (points.length === 1) {
+      map.setView(points[0], 17, { animate: false });
+    } else {
+      map.fitBounds(points, { padding: [48, 48], maxZoom: AMENITY_MAP_MAX_ZOOM, animate: false });
+    }
+  }, [map, latitude, longitude, amenities]);
+
+  useEffect(() => {
+    fitPins();
+    map.on('resize', fitPins);
+    const observer = new ResizeObserver(() => map.invalidateSize({ pan: false }));
+    observer.observe(map.getContainer());
+    return () => {
+      observer.disconnect();
+      map.off('resize', fitPins);
+    };
+  }, [map, fitPins]);
+
+  return (
+    <button type="button" onClick={fitPins} className="absolute right-3 top-3 z-[1000] flex items-center gap-1.5 rounded-md bg-white px-3 py-2 text-xs font-medium text-gray-700 shadow-md hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600">
+      <Maximize className="h-4 w-4" aria-hidden="true" />
+      Fit all pins
+    </button>
+  );
+};
 
 // Define interface for SellerInfo.
 interface SellerInfo {
@@ -48,6 +99,7 @@ const PropertyDetails = () => {
   const { id } = useParams();
   // Get the currently authenticated user from the custom Auth context.
   const { user } = useAuth();
+  const userId = user?.id;
   // Local state to store the fetched property details.
   const [property, setProperty] = useState<Property | null>(null);
   // State to hold a list of amenities related to the property.
@@ -121,6 +173,22 @@ const PropertyDetails = () => {
 
   // useEffect hook to fetch property details, seller info, amenities, and interest count.
   useEffect(() => {
+    let active = true;
+    let channel: RealtimeChannel | undefined;
+    const controller = new AbortController();
+    setLoading(true);
+    setProperty(null);
+    setSellerInfo(null);
+    setAmenities([]);
+    setInterestCount(0);
+    setIsInterested(false);
+    setCurrentImageIndex(0);
+
+    if (!id) {
+      setLoading(false);
+      return;
+    }
+
     const fetchPropertyDetails = async () => {
       try {
         // Fetch property details from the "properties" table using the given id.
@@ -128,8 +196,10 @@ const PropertyDetails = () => {
           .from('properties')
           .select('*')
           .eq('id', id)
+          .abortSignal(controller.signal)
           .maybeSingle();
 
+        if (!active) return;
         if (propertyError) throw propertyError;
         if (!propertyData) {
           setProperty(null);
@@ -153,76 +223,86 @@ const PropertyDetails = () => {
         const { data: amenitiesData, error: amenitiesError } = await supabase
           .from('property_amenities')
           .select('*')
-          .eq('property_id', id);
+          .eq('property_id', id)
+          .abortSignal(controller.signal);
 
+        if (!active) return;
         if (amenitiesError) throw amenitiesError;
         // Set the amenities state with the fetched data.
-        setAmenities(amenitiesData);
+        setAmenities(amenitiesData ?? []);
 
         // Fetch the current count of "interest" records for this property.
         const { count, error: countError } = await supabase
           .from('property_interests')
-          .select('*', { count: 'exact' })
-          .eq('property_id', id);
+          .select('*', { count: 'exact', head: true })
+          .eq('property_id', id)
+          .abortSignal(controller.signal);
 
+        if (!active) return;
         if (countError) throw countError;
         // Set the interest count state.
         setInterestCount(count || 0);
 
         // If a user is logged in, check whether the current user has expressed interest in this property.
-        if (user) {
+        if (userId) {
           const { data: interestData, error: interestError } = await supabase
             .from('property_interests')
             .select('*')
             .eq('property_id', id)
-            .eq('user_id', user.id)
+            .eq('user_id', userId)
+            .abortSignal(controller.signal)
             .maybeSingle();
 
+          if (!active) return;
           if (interestError) throw interestError;
           // Set isInterested state based on whether the interest record exists.
           setIsInterested(!!interestData);
         }
 
         // Subscribe to real-time updates for the interest count on this property.
-        const channel = supabase
-          .channel('interests')
-          .on(
-            'postgres_changes',
-            {
-              event: '*',
-              schema: 'public',
-              table: 'property_interests',
-              filter: `property_id=eq.${id}`
-            },
-            async () => {
-              // When any change occurs, re-fetch the interest count.
-              const { count: newCount } = await supabase
-                .from('property_interests')
-                .select('*', { count: 'exact' })
-                .eq('property_id', id);
-              
-              setInterestCount(newCount || 0);
-            }
-          )
-          .subscribe();
+        // Removal is asynchronous; each effect must own a fresh channel even
+        // while an earlier route or Strict Mode subscription is leaving.
+        channel = supabase.channel(`property-interests:${id}:${crypto.randomUUID()}`);
+        channel.on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'property_interests',
+            filter: `property_id=eq.${id}`
+          },
+          async () => {
+            if (!active) return;
+            // When any change occurs, re-fetch the interest count.
+            const { count: newCount, error } = await supabase
+              .from('property_interests')
+              .select('*', { count: 'exact', head: true })
+              .eq('property_id', id)
+              .abortSignal(controller.signal);
 
-        // Cleanup function: Unsubscribe from real-time updates when component unmounts.
-        return () => {
-          supabase.removeChannel(channel);
-        };
+            if (active && !error) setInterestCount(newCount ?? 0);
+          }
+        ).subscribe();
       } catch (error) {
+        if (!active) return;
         // Log the error and show a notification if fetching fails.
         console.error('Error fetching property details:', error);
         toast.error('Failed to load property details');
       } finally {
         // Turn off the loading spinner once all operations complete.
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
 
     // Invoke the async function to fetch property details.
-    fetchPropertyDetails();
-  }, [id, user]);
+    void fetchPropertyDetails();
+    // React needs this cleanup synchronously, not inside the async fetch.
+    return () => {
+      active = false;
+      controller.abort();
+      if (channel) void supabase.removeChannel(channel);
+    };
+  }, [id, userId]);
 
   // Function to toggle the interest status for the current user.
   const toggleInterest = async () => {
@@ -411,16 +491,19 @@ const PropertyDetails = () => {
             {/* Map and Amenities Section */}
             <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Map Container */}
-              <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+              <div className="self-start bg-white rounded-xl shadow-lg overflow-hidden">
                 <div className="h-[400px]">
                   <MapContainer
                     center={[coordinates.latitude, coordinates.longitude]}
                     zoom={15}
+                    maxZoom={AMENITY_MAP_MAX_ZOOM}
                     style={{ height: '100%', width: '100%' }}
                   >
                     {/* Base map layer from OpenStreetMap */}
                     <TileLayer
                       url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                      maxNativeZoom={19}
+                      maxZoom={AMENITY_MAP_MAX_ZOOM}
                       attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                     />
                     {/* Marker for the property location with a popup */}
@@ -431,27 +514,28 @@ const PropertyDetails = () => {
                       </Popup>
                     </Marker>
                     {/* Render markers for each amenity associated with this property */}
-                    {amenities.map((amenity) => (
+                    {amenities.filter(hasAmenityCoordinates).map((amenity) => (
                       <Marker
                         key={amenity.id}
                         position={[amenity.latitude, amenity.longitude]}
-                        icon={amenityIcons[amenity.type as keyof typeof amenityIcons]}
+                        icon={amenityIcons[amenity.type as keyof typeof amenityIcons] ?? amenityIcons.Community}
                       >
                         <Popup>
                           <div className="font-semibold">{amenity.name}</div>
                           <div className="text-sm text-gray-600">
-                            {amenity.type} • {amenity.distance}km away
+                            {amenity.type} • {formatAmenityDistance(amenity.distance)}
                           </div>
                         </Popup>
                       </Marker>
                     ))}
+                    <AmenityMapViewport latitude={coordinates.latitude} longitude={coordinates.longitude} amenities={amenities} />
                   </MapContainer>
                 </div>
               </div>
 
               {/* Amenities List */}
               <div className="bg-white rounded-xl shadow-lg p-6">
-                <h2 className="text-xl font-semibold text-gray-900 mb-6">Nearby Amenities</h2>
+                <h2 className="text-lg font-medium text-gray-900 mb-6">Nearby Amenities</h2>
                 <div className="space-y-4">
                   {amenities.map((amenity) => (
                     <div
@@ -469,8 +553,8 @@ const PropertyDetails = () => {
                         </div>
                       </div>
                       {/* Display the distance of the amenity from the property */}
-                      <div className="text-sm font-medium text-gray-600">
-                        {amenity.distance}km away
+                      <div className="shrink-0 text-sm text-gray-500">
+                        {formatAmenityDistance(amenity.distance)}
                       </div>
                     </div>
                   ))}

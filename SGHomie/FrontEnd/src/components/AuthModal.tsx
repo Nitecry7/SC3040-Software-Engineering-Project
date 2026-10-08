@@ -1,8 +1,7 @@
 // Import React and hooks needed for managing state and side effects in the component
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 // Import icon components from the lucide-react library for visual elements in the UI
-import { X, Mail, Lock, UserPlus, LogIn, ShieldCheck } from 'lucide-react';
+import { X, Mail, Lock, UserPlus, LogIn } from 'lucide-react';
 // Import the Supabase client instance configured for your project, used for authentication and database calls
 import { supabase } from '../lib/supabase';
 // Import the toast notification library for showing pop-up messages (success/error) to the user
@@ -10,15 +9,17 @@ import toast from 'react-hot-toast';
 
 // Define the AuthModal component, a pop-up modal used for user sign in and account creation
 const AuthModal = () => {
-  const navigate = useNavigate();
   // isOpen: controls if the modal is visible or hidden
   const [isOpen, setIsOpen] = useState(false);
-  // isSignUp: determines if the modal is in "sign up" mode (account creation) or "sign in" mode
-  const [isSignUp, setIsSignUp] = useState(false);
-  // isAdminMode: toggles between regular user login and admin login modes
-  const [isAdminMode, setIsAdminMode] = useState(false);
+  // isRegister: selects account registration rather than sign in
+  const [isRegister, setIsRegister] = useState(false);
   // loading: indicates if a request is in progress (displays "Processing..." to the user)
   const [loading, setLoading] = useState(false);
+  const [registration, setRegistration] = useState<{
+    email: string;
+    status: 'verification-sent' | 'verification-already-sent' | 'account-guidance' | 'complete';
+  } | null>(null);
+  const [sentVerificationEmails, setSentVerificationEmails] = useState<string[]>([]);
   // formData: stores the input values for email and password entered by the user
   const [formData, setFormData] = useState({
     email: '',
@@ -28,12 +29,68 @@ const AuthModal = () => {
   // useEffect hook to attach an event listener to the window that toggles the modal visibility
   // when a "toggle-auth-modal" custom event is fired. The event listener is cleaned up on unmount.
   useEffect(() => {
-    const handleToggle = () => setIsOpen(prev => !prev);
+    const handleToggle = () => {
+      setRegistration(null);
+      setIsOpen(prev => !prev);
+    };
     window.addEventListener('toggle-auth-modal', handleToggle);
     return () => window.removeEventListener('toggle-auth-modal', handleToggle);
   }, []);
 
-  // Function to handle form submission for both signing up and signing in regular users
+  const closeModal = () => {
+    setIsOpen(false);
+    setRegistration(null);
+    setFormData({ email: '', password: '' });
+  };
+
+  const getVerificationStorageKey = async (email: string) => {
+    try {
+      if (typeof crypto === 'undefined' || !crypto.subtle) return null;
+      const normalizedEmail = email.trim().toLowerCase();
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(normalizedEmail));
+      const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+      return `sghomie:verification-sent:${fingerprint}`;
+    } catch {
+      return null;
+    }
+  };
+
+  const rememberVerificationSent = (key: string | null) => {
+    if (!key) return;
+    try {
+      window.sessionStorage.setItem(key, 'true');
+    } catch {
+      // The in-memory guard still prevents another send during this app session.
+    }
+  };
+
+  const clearVerificationSent = (key: string | null) => {
+    if (!key) return;
+    try {
+      window.sessionStorage.removeItem(key);
+    } catch {
+      // Session storage may be unavailable in some browser privacy modes.
+    }
+  };
+
+  const wasVerificationSent = (key: string | null) => {
+    if (!key) return false;
+    try {
+      return window.sessionStorage.getItem(key) === 'true';
+    } catch {
+      return false;
+    }
+  };
+
+  const isExistingAccountError = (error: unknown) => {
+    if (!error || typeof error !== 'object') return false;
+    const authError = error as { code?: string; message?: string };
+    return authError.code === 'user_already_exists'
+      || authError.code === 'email_exists'
+      || /user already (?:registered|exists)|email already exists/i.test(authError.message ?? '');
+  };
+
+  // Function to handle registration and sign in
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); // Prevent the default browser behavior for form submission
     setLoading(true);   // Set the loading state to true to indicate processing
@@ -42,19 +99,46 @@ const AuthModal = () => {
       // Destructure email and password from formData for ease of use
       const { email, password } = formData;
       
-      // If the modal is in sign up mode, attempt to create a new account using Supabase's signUp method
-      if (isSignUp) {
-        const { error } = await supabase.auth.signUp({
+      // If the modal is in registration mode, attempt to create a new account using Supabase's signUp method
+      if (isRegister) {
+        const normalizedEmail = email.trim().toLowerCase();
+        const verificationStorageKey = await getVerificationStorageKey(normalizedEmail);
+        if (sentVerificationEmails.includes(normalizedEmail) || wasVerificationSent(verificationStorageKey)) {
+          setRegistration({ email, status: 'verification-already-sent' });
+          setFormData({ email: '', password: '' });
+          return;
+        }
+
+        const { data, error } = await supabase.auth.signUp({
           email,
           password,
         });
         
-        // If there is an error during sign up, throw the error to be caught
+        if (error && isExistingAccountError(error)) {
+          setRegistration({ email, status: 'account-guidance' });
+          setFormData({ email: '', password: '' });
+          return;
+        }
         if (error) throw error;
-        // Notify user of successful sign up and prompt them to verify their account via email
-        toast.success('Sign up successful! Please check your email to verify your account.');
+
+        // Supabase can return an obfuscated user with no identities for an existing account.
+        if (data.user?.identities?.length === 0) {
+          setRegistration({ email, status: 'account-guidance' });
+          setFormData({ email: '', password: '' });
+          return;
+        }
+
+        // Keep the confirmation visible until the user dismisses it or returns to sign in.
+        const status = data.session ? 'complete' : 'verification-sent';
+        setRegistration({ email, status });
+        if (status === 'verification-sent') {
+          setSentVerificationEmails(previous => previous.includes(normalizedEmail) ? previous : [...previous, normalizedEmail]);
+          rememberVerificationSent(verificationStorageKey);
+        }
+        setFormData({ email: '', password: '' });
+        return;
       } else {
-        // Otherwise, if the modal is in sign in mode, attempt to sign in using Supabase's signInWithPassword method
+        // Sign in all accounts through the same Supabase flow. AuthContext reads the user's role.
         const { error } = await supabase.auth.signInWithPassword({
           email,
           password,
@@ -64,6 +148,9 @@ const AuthModal = () => {
         if (error) throw error;
         // Notify the user that they have successfully signed in
         toast.success('Successfully signed in!');
+        const verificationStorageKey = await getVerificationStorageKey(email);
+        clearVerificationSent(verificationStorageKey);
+        setSentVerificationEmails(previous => previous.filter(sentEmail => sentEmail !== email.trim().toLowerCase()));
       }
 
       // Close the modal after successful authentication
@@ -80,53 +167,6 @@ const AuthModal = () => {
     }
   };
 
-  // Function specifically for handling admin login submissions
-  const handleAdminSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); // Prevent default form submission behavior
-    setLoading(true);   // Set loading state to true
-
-    try {
-      // Destructure email and password from formData
-      const { email, password } = formData;
-      // Attempt to sign in with the provided credentials
-      const { data: { user }, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
-      // If there is an error during sign in, throw the error
-      if (error) throw error;
-
-      // After signing in, verify if the logged-in user has admin privileges
-      const { data: profile } = await supabase
-        .from('user_profiles') // Query the 'user_profiles' table for admin status
-        .select('is_admin')
-        .eq('id', user?.id)
-        .single();
-
-      // If the profile does not indicate the user is an admin, throw an error
-      if (!profile?.is_admin) {
-        throw new Error('Access denied. Admin privileges required.');
-      }
-
-      // Notify the user of successful admin authentication
-      toast.success('Successfully signed in as admin!');
-      // Close the modal
-      setIsOpen(false);
-      // Take admins straight to the dashboard after authentication.
-      navigate('/admin');
-      // Reset the form inputs
-      setFormData({ email: '', password: '' });
-    } catch (error) {
-      // Log the error and show an error message to the admin user if authentication fails
-      console.error('Admin login error:', error);
-      toast.error(error instanceof Error ? error.message : 'Admin authentication failed');
-    } finally {
-      // Stop the loading indicator whether the operation was successful or not
-      setLoading(false);
-    }
-  };
-
   // If the modal is not open, do not render anything (return null)
   if (!isOpen) return null;
 
@@ -136,144 +176,163 @@ const AuthModal = () => {
     <div className="fixed inset-0 z-50 overflow-y-auto">
       <div className="flex min-h-screen items-center justify-center px-4">
         {/* A semi-transparent backdrop that also closes the modal when clicked */}
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity" onClick={() => setIsOpen(false)}></div>
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm transition-opacity" onClick={closeModal}></div>
         
         {/* The modal window container */}
-        <div className="relative w-full max-w-md transform overflow-hidden rounded-2xl bg-white p-8 shadow-xl transition-all">
+        <div role="dialog" aria-modal="true" aria-labelledby="auth-modal-title" className="relative w-full max-w-md transform overflow-hidden rounded-2xl bg-white p-8 shadow-xl transition-all">
           {/* Button to manually close the modal */}
           <button
-            onClick={() => setIsOpen(false)}
+            type="button"
+            aria-label="Close authentication popup"
+            onClick={closeModal}
             className="absolute right-4 top-4 text-gray-400 hover:text-gray-500 focus:outline-none"
           >
             <X className="h-6 w-6" />
           </button>
           
-          {/* Modal header section with title and subtitle */}
-          <div className="text-center mb-8">
-            {/* Display different header text based on whether admin mode or sign up mode is active */}
-            <h2 className="text-3xl font-bold text-gray-900">
-              {isAdminMode ? 'Admin Login' : (isSignUp ? 'Create Account' : 'Welcome Back')}
-            </h2>
-            {/* Subheader message to guide the user */}
-            <p className="mt-2 text-gray-600">
-              {isAdminMode 
-                ? 'Sign in with your admin credentials' 
-                : (isSignUp ? 'Join our community today' : 'Sign in to your account')}
-            </p>
-          </div>
-
-          {/* Authentication form which submits either through handleAdminSubmit or handleSubmit based on admin mode */}
-          <form onSubmit={isAdminMode ? handleAdminSubmit : handleSubmit} className="space-y-6">
-            {/* Email input field */}
-            <div>
-              <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-                Email Address
-              </label>
-              <div className="mt-1 relative">
-                {/* Email icon inside the input field */}
-                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-                <input
-                  type="email"
-                  id="email"
-                  value={formData.email}
-                  onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
-                />
+          {registration ? (
+            <div className="text-center">
+              <div role="status" aria-live="polite">
+                <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+                  <Mail className="h-7 w-7" aria-hidden="true" />
+                </div>
+                <h2 id="auth-modal-title" className="text-2xl font-bold text-gray-900">
+                  {registration.status === 'verification-sent' && 'Verification email sent'}
+                  {registration.status === 'verification-already-sent' && 'Verification email already sent'}
+                  {registration.status === 'account-guidance' && 'Check your email or sign in'}
+                  {registration.status === 'complete' && 'Registration successful'}
+                </h2>
+                {registration.status === 'verification-sent' ? (
+                  <>
+                    <p className="mt-4 text-gray-600">
+                      We've sent a verification link to <span className="break-words font-medium text-gray-900">{registration.email}</span>.
+                    </p>
+                    <p className="mt-3 text-sm leading-relaxed text-gray-600">
+                      Open the link to verify your account, then return here to sign in. If you don't see it, check your junk or spam folder.
+                    </p>
+                  </>
+                ) : registration.status === 'verification-already-sent' ? (
+                  <>
+                    <p className="mt-4 text-gray-600">
+                      A verification email was already sent to <span className="break-words font-medium text-gray-900">{registration.email}</span>.
+                    </p>
+                    <p className="mt-3 text-sm leading-relaxed text-gray-600">
+                      Check your inbox and junk or spam folder for the message, then follow its link to verify your account.
+                    </p>
+                  </>
+                ) : registration.status === 'account-guidance' ? (
+                  <p className="mt-4 text-gray-600">
+                    If you already have an account, please sign in. If you're waiting to verify your email, check your inbox and junk or spam folder for a verification link.
+                  </p>
+                ) : (
+                  <p className="mt-4 text-gray-600">Your account is ready and you're signed in.</p>
+                )}
               </div>
-            </div>
-
-            {/* Password input field */}
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                Password
-              </label>
-              <div className="mt-1 relative">
-                {/* Lock icon inside the input field */}
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-                <input
-                  type="password"
-                  id="password"
-                  value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  required
-                />
-              </div>
-            </div>
-
-            {/* Submit button for either sign in/sign up or admin sign in */}
-            <button
-              type="submit"
-              disabled={loading} // Disable button during loading
-              className="w-full flex items-center justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              {/* Conditional rendering: show "Processing..." during loading, otherwise show icons and text based on mode */}
-              {loading ? (
-                'Processing...'
-              ) : isAdminMode ? (
-                <>
-                  <ShieldCheck className="h-5 w-5 mr-2" />
-                  Sign In as Admin
-                </>
-              ) : isSignUp ? (
-                <>
-                  <UserPlus className="h-5 w-5 mr-2" />
-                  Sign Up
-                </>
-              ) : (
-                <>
-                  <LogIn className="h-5 w-5 mr-2" />
-                  Sign In
-                </>
-              )}
-            </button>
-          </form>
-
-          {/* Section for toggling between sign up and sign in for regular users (not shown in admin mode) */}
-          {!isAdminMode && (
-            <div className="mt-6">
               <button
-                onClick={() => setIsSignUp(!isSignUp)}
-                className="w-full text-center text-sm text-blue-600 hover:text-blue-500"
+                type="button"
+                onClick={() => {
+                  if (registration.status === 'complete') {
+                    closeModal();
+                    return;
+                  }
+                  setFormData({ email: registration.email, password: '' });
+                  setRegistration(null);
+                  setIsRegister(false);
+                }}
+                className="mt-6 w-full rounded-lg bg-blue-600 px-4 py-3 font-medium text-white hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
               >
-                {isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}
+                {registration.status === 'complete' ? 'Done' : 'Go to Sign In'}
               </button>
             </div>
+          ) : (
+            <>
+              {/* Modal header section with title and subtitle */}
+              <div className="text-center mb-8">
+                {/* Display the current authentication mode. */}
+                <h2 id="auth-modal-title" className="text-3xl font-bold text-gray-900">
+                  {isRegister ? 'Register' : 'Welcome Back'}
+                </h2>
+                {/* Subheader message to guide the user */}
+                <p className="mt-2 text-gray-600">
+                  {isRegister ? 'Create your SG Homie account' : 'Sign in to your account'}
+                </p>
+              </div>
+
+              {/* Authentication form for registration and sign in. */}
+              <form onSubmit={handleSubmit} className="space-y-6">
+                {/* Email input field */}
+                <div>
+                  <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+                    Email Address
+                  </label>
+                  <div className="mt-1 relative">
+                    {/* Email icon inside the input field */}
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+                    <input
+                      type="email"
+                      id="email"
+                      value={formData.email}
+                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* Password input field */}
+                <div>
+                  <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+                    Password
+                  </label>
+                  <div className="mt-1 relative">
+                    {/* Lock icon inside the input field */}
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+                    <input
+                      type="password"
+                      id="password"
+                      value={formData.password}
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {/* Submit button for sign in or registration. */}
+                <button
+                  type="submit"
+                  disabled={loading} // Disable button during loading
+                  className="w-full flex items-center justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                >
+                  {/* Show a loading label while the authentication request is in progress. */}
+                  {loading ? (
+                    'Processing...'
+                  ) : isRegister ? (
+                    <>
+                      <UserPlus className="h-5 w-5 mr-2" />
+                      Register
+                    </>
+                  ) : (
+                    <>
+                      <LogIn className="h-5 w-5 mr-2" />
+                      Sign In
+                    </>
+                  )}
+                </button>
+              </form>
+
+              <div className="mt-6">
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={() => setIsRegister(!isRegister)}
+                  className="w-full text-center text-sm text-blue-600 hover:text-blue-500"
+                >
+                  {isRegister ? 'Already have an account? Sign in' : "Don't have an account? Register"}
+                </button>
+              </div>
+            </>
           )}
-
-          {/* Section for switching between admin mode and regular sign in */}
-          <div className="mt-6">
-            <div className="relative">
-              {/* Divider line for visual separation */}
-              <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300"></div>
-              </div>
-              {/* "Or" text displayed in the center of the divider */}
-              <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-gray-500">Or</span>
-              </div>
-            </div>
-
-            {/* Button to toggle admin mode */}
-            <button
-              onClick={() => {
-                setIsAdminMode(!isAdminMode);
-                // Reset form data when switching modes
-                setFormData({ email: '', password: '' });
-                // Ensure sign up mode is turned off when toggling admin mode
-                setIsSignUp(false);
-              }}
-              className="mt-6 w-full flex items-center justify-center py-3 px-4 border border-gray-300 rounded-lg shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-            >
-              {/* Change button text based on the current mode */}
-              {isAdminMode ? (
-                <>Back to Regular Sign In</>
-              ) : (
-                <>Sign in as Admin</>
-              )}
-            </button>
-          </div>
         </div>
       </div>
     </div>
