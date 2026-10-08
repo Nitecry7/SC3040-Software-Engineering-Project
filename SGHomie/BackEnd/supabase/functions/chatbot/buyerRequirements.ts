@@ -111,6 +111,8 @@ export function explicitBuyerRequirements(history: ChatCompletionMessageParam[],
       if (!filters.locations?.length && !excludedTowns.length) {
         delete filters.locations;
         unrestrictedLocation = true;
+      } else if (filters.locations?.length) {
+        explicitFields.add('locations');
       }
     }
     if (/\b(?:any room type|no (?:room|flat)[ -]?type preference|(?:remove|drop|clear) (?:the |my )?(?:room|flat)[ -]?type(?: filter)?)\b/i.test(text)) {

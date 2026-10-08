@@ -17,7 +17,7 @@ const AuthModal = () => {
   const [loading, setLoading] = useState(false);
   const [registration, setRegistration] = useState<{
     email: string;
-    status: 'verification-sent' | 'verification-already-sent' | 'account-exists' | 'complete';
+    status: 'verification-sent' | 'verification-already-sent' | 'account-guidance' | 'complete';
   } | null>(null);
   const [sentVerificationEmails, setSentVerificationEmails] = useState<string[]>([]);
   // formData: stores the input values for email and password entered by the user
@@ -115,7 +115,7 @@ const AuthModal = () => {
         });
         
         if (error && isExistingAccountError(error)) {
-          setRegistration({ email, status: 'account-exists' });
+          setRegistration({ email, status: 'account-guidance' });
           setFormData({ email: '', password: '' });
           return;
         }
@@ -123,7 +123,7 @@ const AuthModal = () => {
 
         // Supabase can return an obfuscated user with no identities for an existing account.
         if (data.user?.identities?.length === 0) {
-          setRegistration({ email, status: 'account-exists' });
+          setRegistration({ email, status: 'account-guidance' });
           setFormData({ email: '', password: '' });
           return;
         }
@@ -199,7 +199,7 @@ const AuthModal = () => {
                 <h2 id="auth-modal-title" className="text-2xl font-bold text-gray-900">
                   {registration.status === 'verification-sent' && 'Verification email sent'}
                   {registration.status === 'verification-already-sent' && 'Verification email already sent'}
-                  {registration.status === 'account-exists' && 'Account already exists'}
+                  {registration.status === 'account-guidance' && 'Check your email or sign in'}
                   {registration.status === 'complete' && 'Registration successful'}
                 </h2>
                 {registration.status === 'verification-sent' ? (
@@ -220,9 +220,9 @@ const AuthModal = () => {
                       Check your inbox and junk or spam folder for the message, then follow its link to verify your account.
                     </p>
                   </>
-                ) : registration.status === 'account-exists' ? (
+                ) : registration.status === 'account-guidance' ? (
                   <p className="mt-4 text-gray-600">
-                    An account with <span className="break-words font-medium text-gray-900">{registration.email}</span> is already registered. Please sign in instead. If you haven't verified it yet, check your inbox and junk or spam folder for the verification email.
+                    If you already have an account, please sign in. If you're waiting to verify your email, check your inbox and junk or spam folder for a verification link.
                   </p>
                 ) : (
                   <p className="mt-4 text-gray-600">Your account is ready and you're signed in.</p>
