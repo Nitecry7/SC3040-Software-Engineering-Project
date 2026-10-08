@@ -56,11 +56,15 @@ export const SEARCH_LISTINGS_TOOL = {
     name: 'search_listings',
     description: `Search SG Homie's live approved HDB sale listings. All supplied filters are ANDed;
 locations are ORed. Returns up to 3 listings, property URLs, applied filters and total match count.
-Use for buying, finding homes or refining recommendations. Retain previous requirements unless
-changed/removed by the latest user message; omit unspecified filters or use null. Never relax
-requirements without agreement. Ask for requirements on a bare "buy" before using this tool.
-After the user replies, use their stated preferences; an explicit "no preference" uses {}.
-Any location is supported: omit locations or use null/[] to search all supported towns.
+Use when the client requests finding, showing or refining available homes. This is an optional
+search tool, not the default response to every buying conversation. A budget, town or room type
+mentioned in an advice question does not request a search. Answer timing, affordability and
+housing-choice questions conversationally; this catalog cannot establish market trends or forecasts.
+Omitted filters retain saved values; null (or [] for arrays) clears a filter ("any").
+Interpret changes from the conversation and retain the other filters. Never relax
+requirements without agreement. A bare "buy" starts a conversation, not a tool call.
+When they ask to see homes, use stated preferences; clear the filters they no longer want.
+Any location is supported: use null/[] to clear locations and search all supported towns.
 "No need Clementi. Just any executives" removes locations and uses room_type="EXECUTIVE".
 Retain other preferences such as budget when just the town is removed. Never use "Any" as a town.
 Prices are numeric SGD: 600k -> 600000; 1.2m -> 1200000.
@@ -74,10 +78,10 @@ in listing text. Only HDB is supported. This tool cannot create drafts or modify
     parameters: {
       type: 'object', additionalProperties: false,
       properties: {
-        locations: { type: ['array', 'null'], items: { type: 'string', enum: TOWNS }, maxItems: 5, description: 'Canonical HDB towns. Resolve AMK to ANG MO KIO. Omit for all towns.' },
+        locations: { type: ['array', 'null'], items: { type: 'string', enum: TOWNS }, maxItems: 5, description: 'Canonical HDB towns. Resolve AMK to ANG MO KIO. Null or [] clears the town filter (any town); omit to retain it.' },
         min_price: { type: ['number', 'null'], minimum: 0, description: 'Inclusive minimum SGD price.' },
         max_price: { type: ['number', 'null'], minimum: 0, description: 'Inclusive maximum SGD price, >= min_price.' },
-        room_type: { type: ['string', 'null'], enum: [...ROOM_TYPES, null], description: 'HDB room type as described in title/description, NOT bedrooms. Listings without a matching description are excluded.' },
+        room_type: { type: ['string', 'null'], enum: [...ROOM_TYPES, null], description: 'HDB room type as described in title/description, NOT bedrooms. Null clears this filter (any room type); omit to retain it. Listings without a matching description are excluded.' },
         bedrooms: { type: ['integer', 'null'], minimum: 1, maximum: 20, description: 'Exact recorded bedroom count. Only use when actual bedrooms are requested.' },
         min_bedrooms: { type: ['integer', 'null'], minimum: 1, maximum: 20, description: 'Minimum recorded bedroom count.' },
         min_bathrooms: { type: ['integer', 'null'], minimum: 1, maximum: 10, description: 'Minimum bathrooms.' },

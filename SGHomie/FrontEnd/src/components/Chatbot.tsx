@@ -37,6 +37,7 @@ const Chatbot: React.FC = () => {
   const { user } = useAuth();
   // State to manage whether the chat window is open.
   const [isOpen, setIsOpen] = useState(false);
+  const [showInvitation, setShowInvitation] = useState(true);
   const [isClosing, setIsClosing] = useState(false);
   const chatWindow = useChatWindow();
   // State to manage the current message input by the user.
@@ -119,8 +120,12 @@ const Chatbot: React.FC = () => {
 
     // Keep the current message within the backend's history limit.
     const nextMessages = [...messages, { role: 'user' as const, content: userMessage }];
+    const retainedMessages = messages.filter(msg => msg.content.trim()).slice(-(MAX_HISTORY_MESSAGES - 1));
+    // Identify the last search snapshot within this request's bounded history.
+    // -1 means it has fallen outside the window: all retained turns are newer.
+    const lastSearchIndex = retainedMessages.map(msg => !!msg.recommendations).lastIndexOf(true);
     const requestMessages = [
-      ...messages.filter(msg => msg.content.trim()).slice(-(MAX_HISTORY_MESSAGES - 1)).map(({ role, content }) => ({
+      ...retainedMessages.map(({ role, content }) => ({
         role, content: content.slice(0, 4000),
       })),
       { role: 'user' as const, content: userMessage },
@@ -145,7 +150,7 @@ const Chatbot: React.FC = () => {
           messages: requestMessages,
           stream: true,
           ...(intent ? { intent } : {}),
-          ...(searchContextRef.current ? { search_context: searchContextRef.current } : {}),
+          ...(searchContextRef.current ? { search_context: searchContextRef.current, search_context_after: lastSearchIndex } : {}),
           ...(sellerContextRef.current ? { seller_context: sellerContextRef.current } : {}),
         },
       });
@@ -234,16 +239,40 @@ const Chatbot: React.FC = () => {
     setIsClosing(true);
   };
 
+  const openChat = () => {
+    setShowInvitation(false);
+    setIsOpen(true);
+  };
+
   const handleListingOpen: React.MouseEventHandler<HTMLAnchorElement> = event => {
     if (!event.defaultPrevented && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) minimise();
   };
 
   return (
     <>
+      {!isOpen && showInvitation && (
+        <aside
+          aria-label="Chat invitation"
+          className="chat-invitation fixed z-50 flex items-center gap-1 rounded-2xl border border-gray-200 bg-white p-2 shadow-lg"
+          style={{ right: WINDOW_MARGIN, bottom: WINDOW_MARGIN + LAUNCHER_SIZE + 12, maxWidth: `calc(100vw - ${WINDOW_MARGIN * 2}px)` }}
+        >
+          <button type="button" onClick={openChat} className="rounded-lg px-2 py-2 text-left text-sm font-medium text-gray-800 hover:text-blue-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600">
+            Talk to our AI consultant now!
+          </button>
+          <button
+            type="button"
+            aria-label="Dismiss chat invitation"
+            onClick={() => { setShowInvitation(false); launcherRef.current?.focus({ preventScroll: true }); }}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-500 hover:bg-gray-100 hover:text-gray-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </aside>
+      )}
       {!isOpen && (
         <button
           ref={launcherRef}
-          onClick={() => setIsOpen(true)}
+          onClick={openChat}
           aria-label="Open SG Homie chat"
           aria-expanded={isOpen}
           title="Open chat"
@@ -274,7 +303,7 @@ const Chatbot: React.FC = () => {
             >
               <GripVertical className="h-4 w-4 shrink-0 opacity-70" aria-hidden="true" />
               <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold">SG Homie Assistant</span>
+                <span className="block truncate text-sm font-semibold">SG Homie Consultant</span>
                 <span className="block text-[11px] text-blue-100">{chatWindow.mode === 'compact' ? 'Compact chat' : 'Expanded chat'}</span>
               </span>
             </button>
@@ -325,7 +354,7 @@ const Chatbot: React.FC = () => {
           <form onSubmit={handleSubmit} className="shrink-0 border-t border-gray-100 bg-white px-3 pb-3 pt-3">
             <div className="flex gap-2">
               <input type="text" value={message} onChange={event => setMessage(event.target.value)}
-                placeholder="Type your message…" aria-label="Message SG Homie Assistant" maxLength={4000}
+                placeholder="Type your message…" aria-label="Message SG Homie Consultant" maxLength={4000}
                 className="min-w-0 flex-1 rounded-xl border border-gray-200 px-3 py-2.5 text-sm focus:border-blue-400 focus:outline-none focus:ring-2 focus:ring-blue-100" disabled={isLoading} />
               <button type="submit" aria-label="Send message" disabled={isLoading || !message.trim()}
                 className="rounded-xl bg-blue-600 px-3 text-white hover:bg-blue-700 disabled:opacity-40"><Send className="h-4 w-4" /></button>

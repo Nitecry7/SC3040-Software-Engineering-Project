@@ -11,11 +11,12 @@ import {
   type ListingFilters,
 } from '../_shared/listings.ts';
 import {
-  BUY_REQUIREMENTS_PROMPT, BUY_SYSTEM_PROMPT, createBuyStream, generateListingReply, isBareBuyMessage,
+  BUY_SYSTEM_PROMPT, createBuyStream, generateListingReply, isBareBuyMessage,
   isBuyIntent, prepareBuyConversation,
 } from './buy.ts';
 import { parseSellerContext, parseSellerDetails, type SellerContext, type SellerDraftCard, type SellerFlowEvent } from '../_shared/sellerFlow.ts';
 import { sellerDetailsPrompt, useProfileContacts, collectSellerDetails, generatedSellerTitle, missingSellerFields, newSellerContext, priceDecision, suggestSellerPrice } from './sell.ts';
+import { profileListingFilters } from './buyerRequirements.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -74,6 +75,7 @@ type AuthContext = {
   isSeller: boolean;
   sellerName: string | null;
   sellerPhone: string | null;
+  buyerPreferences?: ListingFilters;
 };
 
 type SellFlowResult = {
@@ -142,7 +144,7 @@ function getAuthContext(req: Request): Promise<AuthContext> {
 
     const { data: profile } = await client
       .from('user_profiles')
-      .select('is_admin, is_seller, name, phone')
+      .select('is_admin, is_seller, name, phone, preferred_locations, preferred_property_type')
       .eq('id', authData.user.id)
       .maybeSingle();
 
@@ -153,6 +155,7 @@ function getAuthContext(req: Request): Promise<AuthContext> {
       isSeller: profile?.is_seller === true,
       sellerName: typeof profile?.name === 'string' ? profile.name : null,
       sellerPhone: typeof profile?.phone === 'string' ? profile.phone : null,
+      buyerPreferences: profileListingFilters(profile),
     };
   })();
 }
@@ -634,6 +637,7 @@ function parseRequest(body: unknown): {
   stream: boolean;
   intent?: 'buy' | 'sell';
   previousFilters?: ListingFilters;
+  previousSearchIndex?: number;
   sellerContext?: SellerContext;
 } {
   if (!isRecord(body)) {
@@ -683,11 +687,23 @@ function parseRequest(body: unknown): {
   }
   if (messages.at(-1)?.role !== 'user') throw new RequestError('The final chat message must be from the user');
 
+  const history = messages.slice(-MAX_HISTORY_MESSAGES);
+  let previousSearchIndex: number | undefined;
+  if (body.search_context_after !== undefined) {
+    const index = body.search_context_after;
+    if (!previousFilters || typeof index !== 'number' || !Number.isInteger(index) || index < -1
+      || index >= history.length - 1 || (index >= 0 && history[index].role !== 'assistant')) {
+      throw new RequestError('search_context_after must identify a previous assistant response, or -1 when it is outside history');
+    }
+    previousSearchIndex = index;
+  }
+
   return {
-    messages: messages.slice(-MAX_HISTORY_MESSAGES),
+    messages: history,
     stream: body.stream === true,
     intent: body.intent as 'buy' | 'sell' | undefined,
     previousFilters,
+    previousSearchIndex,
     sellerContext,
   };
 }
@@ -709,7 +725,7 @@ function publicError(error: unknown): { body: Record<string, string>; status: nu
       body: error.status === 404
         ? { error: `The configured AI model is unavailable. Check the chatbot ${provider === 'OpenAI' ? 'OPENAI_MODEL' : 'OPENROUTER_MODEL'} secret.`, code: 'provider_model_unavailable' }
         : error.status === 429
-        ? { error: 'The AI provider has reached its request limit. Simple town, room-type and budget searches still work; complex requests need the provider to recover.', code: 'provider_rate_limited' }
+        ? { error: 'The AI provider has reached its request limit. Please use the listing search while the chat service recovers.', code: 'provider_rate_limited' }
         : { error: 'The AI provider is temporarily unavailable. Please try again shortly.' },
       status,
     };
@@ -734,8 +750,6 @@ export async function handleRequest(req: Request): Promise<Response> {
     try { body = await req.json(); } catch { throw new RequestError('Request body must be valid JSON'); }
     const request = parseRequest(body);
     const latestUserMessage = request.messages.at(-1)?.content ?? '';
-    // Starting a buying journey asks for preferences without querying listings or the model.
-    if (isBareBuyMessage(latestUserMessage)) return textResponse(BUY_REQUIREMENTS_PROMPT, request.stream, { context: null });
     const authContext = await getAuthContext(req);
     // An explicit Buy selection must escape a pending seller address question.
     // Keep that journey active when the next message contains only requirements.
@@ -748,7 +762,8 @@ export async function handleRequest(req: Request): Promise<Response> {
       const sellFlow = await handleSellFlow(req, request.messages, authContext, request.sellerContext, request.intent);
       if (sellFlow.handled) return textResponse(sellFlow.response, request.stream, sellFlow.event);
     }
-    const clearedSellerFlow: SellerFlowEvent | undefined = startingBuy && request.sellerContext ? { context: null } : undefined;
+    const resetBuy = request.intent === 'buy' || isBareBuyMessage(latestUserMessage);
+    const clearedSellerFlow: SellerFlowEvent | undefined = startingBuy && (request.sellerContext || resetBuy) ? { context: null } : undefined;
 
     const { client: openrouter, model } = createChatProvider(name => Deno.env.get(name), req.headers.get('origin') ?? undefined);
 
@@ -756,26 +771,33 @@ export async function handleRequest(req: Request): Promise<Response> {
       ? `Authenticated user: yes. Seller account: ${authContext.isSeller ? 'yes' : 'no'}.`
       : 'Authenticated user: no.';
 
-    const conversation = await prepareBuyConversation({
-      client: openrouter, model,
-      systemPrompt: `${SYSTEM_PROMPT}\n\n${BUY_SYSTEM_PROMPT}\n\nCurrent server-verified session context: ${sessionContext}`,
-      history: request.messages,
-      forceSearch: false,
-      previousFilters: request.previousFilters,
-      search: async (filters) => {
-        const supabaseUrl = Deno.env.get('SUPABASE_URL');
-        const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
-        if (!supabaseUrl || !anonKey) throw new ListingServiceError('Listing search is not configured');
-        return await searchListings(filters, {
-          supabaseUrl, anonKey,
-          // The buy catalog is public; invalid/missing sessions use the anon role.
-          authorization: authContext.userId ? req.headers.get('Authorization') ?? undefined : undefined,
-        });
-      },
-    });
+    const search = async (filters: ListingFilters) => {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL');
+      const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
+      if (!supabaseUrl || !anonKey) throw new ListingServiceError('Listing search is not configured');
+      return await searchListings(filters, {
+        supabaseUrl, anonKey,
+        // The buy catalog is public; invalid/missing sessions use the anon role.
+        authorization: authContext.userId ? req.headers.get('Authorization') ?? undefined : undefined,
+      });
+    };
+    // Selecting Buy can immediately use saved preferences. Advice and later turns
+    // still go through the conversational model's optional search tool.
+    const initialPreferences = resetBuy && isBareBuyMessage(latestUserMessage) ? authContext.buyerPreferences : undefined;
+    const conversation = initialPreferences
+      ? { messages: request.messages, search: await search(initialPreferences), completion: undefined }
+      : await prepareBuyConversation({
+        client: openrouter, model,
+        systemPrompt: `${SYSTEM_PROMPT}\n\n${BUY_SYSTEM_PROMPT}\n\nCurrent server-verified session context: ${sessionContext}`,
+        history: request.messages,
+        previousFilters: resetBuy ? undefined : request.previousFilters,
+        previousSearchIndex: resetBuy ? undefined : request.previousSearchIndex,
+        search,
+      });
     // Generate prose separately from tool execution; cards retain the verified result.
     if (conversation.search) {
-      const response = await generateListingReply({ client: openrouter, model, history: request.messages, search: conversation.search });
+      const response = await generateListingReply({ client: openrouter, model, history: request.messages, search: conversation.search,
+        ...(initialPreferences ? { preferenceSource: 'saved_profile' as const } : {}) });
       if (request.stream) return new Response(createBuyStream(response, conversation.search, clearedSellerFlow), { headers: streamHeaders });
       return jsonResponse({ id: crypto.randomUUID(), object: 'chat.completion', model, created: Math.floor(Date.now() / 1000),
         choices: [{ index: 0, message: { role: 'assistant', content: response }, finish_reason: 'stop' }],

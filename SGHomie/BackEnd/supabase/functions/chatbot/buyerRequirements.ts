@@ -12,11 +12,36 @@ const isMoney = (match: RegExpMatchArray, text: string): boolean => {
 };
 const townPattern = new RegExp(`\\b(?:${TOWNS.map(town => town.replaceAll(' ', '\\s+')).join('|')}|AMK)\\b`, 'gi');
 const canonicalTown = (value: string) => value.toUpperCase() === 'AMK' ? 'ANG MO KIO' : value.toUpperCase().replace(/\s+/g, ' ');
+// Recognize a removal applied to a list ("don't really need Bukit Merah or
+// 3-room"), without treating a later replacement ("but find 4-room") as removed.
+const preferenceList = `(?:${TOWNS.map(town => town.replaceAll(' ', '\\s+')).join('|')}|AMK|[2-5][ -]?room|executives?)`;
+const removalPrefix = new RegExp(`\\b(?:no (?:longer )?need|don['’]t(?: really)? need|do not(?: really)? need|remove|drop|clear|go beyond)\\s*(?:the\\s+)?(?:${preferenceList}(?:\\s+(?:homes?|flats?|listings?))?\\s*(?:(?:and|or|,|/)\\s*)?)*$`, 'i');
+
+// The profile UI saves towns and HDB room types. Income/family size are not
+// explicit search constraints and must not become an inferred budget or flat type.
+export function profileListingFilters(profile: { preferred_locations?: unknown; preferred_property_type?: unknown } | null): ListingFilters | undefined {
+  const filters: Partial<ListingFilters> = {};
+  if (Array.isArray(profile?.preferred_locations)) {
+    const locations = [...new Set(profile.preferred_locations.filter((town): town is string => typeof town === 'string')
+      .map(town => canonicalTown(town.trim())))];
+    if (locations.length && locations.length <= 5 && locations.every(town => (TOWNS as readonly string[]).includes(town))) {
+      filters.locations = locations;
+    }
+  }
+  if (typeof profile?.preferred_property_type === 'string') {
+    try {
+      filters.room_type = parseListingFilters({ room_type: profile.preferred_property_type.trim().toUpperCase() }).room_type;
+    } catch (error) {
+      if (!(error instanceof ListingQueryError)) throw error;
+    }
+  }
+  return filters.locations?.length || filters.room_type ? parseListingFilters(filters) : undefined;
+}
 
 // Protect clear, literal town/budget/room-type requirements independently of model compliance.
 // Other natural-language requirements still use the validated search tool schema.
-export function explicitBuyerRequirements(history: ChatCompletionMessageParam[], previous?: ListingFilters): {
-  filters: ExplicitFilters; retainedBudget: Pick<ListingFilters, 'min_price' | 'max_price'>; excludedTowns: string[]; unrestrictedLocation: boolean; unrestrictedBudget: boolean; unrestrictedRoomType: boolean; searchRequested: boolean;
+export function explicitBuyerRequirements(history: ChatCompletionMessageParam[], previous?: ListingFilters, previousSearchIndex?: number): {
+  filters: ExplicitFilters; retainedBudget: Pick<ListingFilters, 'min_price' | 'max_price'>; excludedTowns: string[]; unrestrictedLocation: boolean; unrestrictedBudget: boolean; unrestrictedRoomType: boolean; explicitFields: (keyof ExplicitFilters)[]; resetFilters: boolean;
 } {
   let filters: ExplicitFilters = {
     ...(previous?.locations ? { locations: previous.locations } : {}),
@@ -29,15 +54,25 @@ export function explicitBuyerRequirements(history: ChatCompletionMessageParam[],
   let unrestrictedBudget = false;
   let unrestrictedRoomType = false;
   let retainedBudget: Pick<ListingFilters, 'min_price' | 'max_price'> = {};
+  const explicitFields = new Set<keyof ExplicitFilters>();
+  let resetFilters = false;
   const users = history.filter(message => message.role === 'user');
   // A successful search already incorporated older turns, including preferences
   // extracted by the model. Replaying them would overwrite the saved snapshot.
-  const pendingUsers = previous ? users.slice(-1) : users;
+  // New clients mark the last search response. Include subsequent advice turns,
+  // so preferences shared while chatting survive until the next actual search.
+  const pendingUsers = previous && previousSearchIndex !== undefined
+    ? history.slice(previousSearchIndex + 1).filter(message => message.role === 'user')
+    : previous ? users.slice(-1) : users;
   for (const { content } of pendingUsers) {
+    // Earlier conversational preferences are defaults too. Only a concrete
+    // constraint restated in the current message resists a contradictory clear.
+    explicitFields.clear();
     const text = content.trim();
     if (/^(?:buy|i (?:want|would like) to buy(?: (?:a |an )?(?:property|hdb|home|house|flat))?)[.!?\s]*$/i.test(text)
       || /\b(?:start over|reset (?:my |the )?(?:search|preferences|requirements)|no preferences?(?=[,!.]|$)|no preferences? at all)/i.test(text)) {
       filters = {}; retainedBudget = {}; excludedTowns = [];
+      explicitFields.clear(); resetFilters = true;
       unrestrictedLocation = !/^buy$|^i .* to buy/i.test(text);
       unrestrictedBudget = unrestrictedLocation;
       unrestrictedRoomType = unrestrictedLocation;
@@ -56,7 +91,7 @@ export function explicitBuyerRequirements(history: ChatCompletionMessageParam[],
     for (const match of text.matchAll(new RegExp(townPattern))) {
       const town = canonicalTown(match[0]);
       const before = text.slice(0, match.index).trimEnd();
-      if (/\b(?:no (?:longer )?need|don['’]t need|do not need|(?:remove|drop|clear)(?: the)?|no need (?:to (?:be|search|look)|for))(?:\s+(?:in|homes? in|flats? in))?\s*$/i.test(before)) removed.push(town);
+      if (removalPrefix.test(before) || /\b(?:no (?:longer )?need|don['’]t need|do not need|(?:remove|drop|clear)(?: the)?|no need (?:to (?:be|search|look)|for))(?:\s+(?:in|homes? in|flats? in))?\s*$/i.test(before)) removed.push(town);
       else if (/\b(?:not|avoid|ignore|except|excluding|instead of|rather than|other than|no longer|no|don't want|do not want|not interested in)(?:\s+(?:in|homes? in|flats? in))?\s*$/i.test(before)) excluded.push(town);
       else included.push(town);
     }
@@ -65,6 +100,7 @@ export function explicitBuyerRequirements(history: ChatCompletionMessageParam[],
       // An explicit replacement removes exclusions from an older search.
       excludedTowns = excluded;
       unrestrictedLocation = false;
+      explicitFields.add('locations');
     } else if (excluded.length) {
       excludedTowns = [...new Set([...excludedTowns, ...excluded])];
       filters.locations = filters.locations?.filter(town => !excludedTowns.includes(town));
@@ -81,10 +117,16 @@ export function explicitBuyerRequirements(history: ChatCompletionMessageParam[],
       delete filters.room_type;
       unrestrictedRoomType = true;
     }
-    const room = text.match(/\b(?:([2-5])[ -]?room|executives?)\b/i);
-    if (room && !/\b(?:not|no|avoid|except|excluding|no need|don['’]t want|do not want)\s*$/i.test(text.slice(0, room.index).trimEnd())) {
-      filters.room_type = room[1] ? `${room[1]} ROOM` as ListingFilters['room_type'] : 'EXECUTIVE';
-      unrestrictedRoomType = false;
+    for (const room of text.matchAll(/\b(?:([2-5])[ -]?room|executives?)\b/gi)) {
+      if (removalPrefix.test(text.slice(0, room.index).trimEnd())) {
+        delete filters.room_type;
+        unrestrictedRoomType = true;
+        explicitFields.delete('room_type');
+      } else if (!/\b(?:not|no|avoid|except|excluding|no need|don['’]t want|do not want)\s*$/i.test(text.slice(0, room.index).trimEnd())) {
+        filters.room_type = room[1] ? `${room[1]} ROOM` as ListingFilters['room_type'] : 'EXECUTIVE';
+        unrestrictedRoomType = false;
+        explicitFields.add('room_type');
+      }
     }
     const max = text.match(new RegExp(`\\b(?:under|below|up to|at most|less than|max(?:imum)?(?:\\s+(?:price|budget))?|budget(?:\\s+(?:is|of|to|up to))?)\\s*[:=]?\\s*${MONEY}`, 'i'));
     const min = text.match(new RegExp(`\\b(?:above|over|at least|more than|min(?:imum)?(?:\\s+(?:price|budget))?)\\s*[:=]?\\s*${MONEY}`, 'i'));
@@ -96,20 +138,14 @@ export function explicitBuyerRequirements(history: ChatCompletionMessageParam[],
       // Old bounds are defaults if omitted, not constraints overriding a new bound.
       retainedBudget = { min_price: filters.min_price, max_price: filters.max_price };
       delete filters.min_price; delete filters.max_price;
+      explicitFields.delete('min_price'); explicitFields.delete('max_price');
       unrestrictedBudget = false;
     }
-    if (max && isMoney(max, text)) { filters.max_price = amount(max); unrestrictedBudget = false; }
-    if (min && isMoney(min, text)) { filters.min_price = amount(min); unrestrictedBudget = false; }
+    if (max && isMoney(max, text)) { filters.max_price = amount(max); unrestrictedBudget = false; explicitFields.add('max_price'); }
+    if (min && isMoney(min, text)) { filters.min_price = amount(min); unrestrictedBudget = false; explicitFields.add('min_price'); }
   }
-  const latest = users.at(-1)?.content ?? '';
-  townPattern.lastIndex = 0;
-  const searchRequested = !/\b(?:condo(?:minium)?|landed)\b|^(?:what|where) is\b/i.test(latest) && (
-    townPattern.test(latest)
-    || /^any(?: is fine)?[.!?\s]*$/i.test(latest.trim())
-    || /\b(?:under|below|budget|at most|up to)\s*[:=]?\s*(?:S\$|SGD\s*|\$)?\s*\d/i.test(latest)
-    || /\b[2-5][ -]?room\b|\bexecutives?\b|\b\d+\s+bedrooms?\b|\bno preferences?\b|\bany\s+(?:homes?|hdbs?|flats?|listings?|town|location|area|room type)\b|\banywhere\b/i.test(latest)
-  );
-  return { filters, retainedBudget, excludedTowns, unrestrictedLocation, unrestrictedBudget, unrestrictedRoomType, searchRequested };
+
+  return { filters, retainedBudget, excludedTowns, unrestrictedLocation, unrestrictedBudget, unrestrictedRoomType, explicitFields: [...explicitFields], resetFilters };
 }
 
 export function applyExplicitRequirements(proposed: ListingFilters, required: ReturnType<typeof explicitBuyerRequirements>): ListingFilters {
@@ -124,68 +160,23 @@ export function applyExplicitRequirements(proposed: ListingFilters, required: Re
   return parseListingFilters(filters);
 }
 
-// These complete commands change only preferences already covered by the literal guard.
-// Do not use partial keyword matching here: "any town with a balcony" needs extraction.
-export function simpleBuyerRefinement(
-  content: string, previous: ListingFilters | undefined, required: ReturnType<typeof explicitBuyerRequirements>,
-): ListingFilters | undefined {
-  if (!previous || !required.searchRequested || !required.unrestrictedLocation || required.excludedTowns.length) return;
-  const text = content.trim().replace(/\s+/g, ' ');
-  const townNames = TOWNS.map(town => town.replaceAll(' ', '\\s+')).join('|');
-  const removal = new RegExp(`^(?:no (?:longer )?need|don['’]t need|do not need|remove|drop|clear)\\s+(?:${townNames}|AMK)(?=[\\s,.!?]|$)[\\s,.!?]*`, 'i');
-  const remainder = text.replace(removal, '').trim();
-  const completeCommand = /^(?:(?:just\s+)?(?:any(?: town| location| area)?|anywhere|(?:any\s+)?executives?)(?:\s+(?:is fine|please))?)[.!?]*$/i.test(remainder);
-  if (!completeCommand && !(remainder === '' && removal.test(text))) return;
-  // Keep every saved filter (beds, baths, area, keywords, sort), not just town/budget.
-  return applyExplicitRequirements(previous, required);
-}
-
-function completeLiteralSearch(text: string): boolean {
-  let remainder = text.trim();
-  let recognized = false;
-  remainder = remainder.replace(new RegExp(townPattern), () => { recognized = true; return ' '; });
-  const rooms = [...remainder.matchAll(/\b(?:[2-5][ -]?room|executives?)\b/gi)];
-  if (rooms.length > 1) return false; // Multiple room types need clarification/extraction.
-  remainder = remainder.replace(/\b(?:[2-5][ -]?room|executives?)\b/gi, () => { recognized = true; return ' '; });
-  for (const prefix of [
-    'under|below|up to|at most|less than|max(?:imum)?(?:\\s+(?:price|budget))?|budget(?:\\s+(?:is|of|to|up to))?',
-    'above|over|at least|more than|min(?:imum)?(?:\\s+(?:price|budget))?',
-  ]) {
-    const matches = [...remainder.matchAll(new RegExp(`\\b(?:${prefix})\\s*[:=]?\\s*${MONEY}`, 'gi'))];
-    if (matches.length > 1) return false;
-    for (const match of matches) {
-      if (!isMoney(match, remainder)) return false;
-      recognized = true;
-      remainder = remainder.replace(match[0], ' ');
+// Tool arguments are an update: omitted fields retain the saved search, whereas
+// null (or an empty array) explicitly clears a constraint. Preserve that intent
+// before normalization, which otherwise turns both cases into an absent field.
+export function resolveListingToolFilters(value: unknown, required: ReturnType<typeof explicitBuyerRequirements>, previous?: ListingFilters): ListingFilters {
+  const proposed = parseListingFilters(value);
+  const input = value as Record<string, unknown>;
+  const filters: ListingFilters = { ...(required.resetFilters ? {} : previous), ...proposed };
+  if (input.sort_by === undefined && previous && !required.resetFilters) filters.sort_by = previous.sort_by;
+  const constraints = { ...required.filters };
+  const retainedBudget = { ...required.retainedBudget };
+  for (const field of Object.keys(input) as (keyof ListingFilters)[]) {
+    if (field === 'sort_by' || !(input[field] === null || Array.isArray(input[field]) && input[field].length === 0)) continue;
+    delete filters[field];
+    if (field in constraints && !required.explicitFields.includes(field as keyof ExplicitFilters)) {
+      delete constraints[field as keyof ExplicitFilters];
     }
+    if (field === 'min_price' || field === 'max_price') delete retainedBudget[field];
   }
-  remainder = remainder.replace(/\b(?:any(?:where| town| location| area)|all towns|no (?:town|location|area) preference|any room type|no (?:room|flat)[ -]?type preference|no budget(?: limit)?|any budget|no price limit|no preferences?(?: at all)?|start over)\b|^any(?: is fine)?[.!?\s]*$/gi,
-    () => { recognized = true; return ' '; });
-  // Allow only conversational glue after consuming all supported requirements.
-  // Unknown words/numbers (balcony, MRT, bedrooms, sqft, negation, sorting...) must
-  // stay with model extraction, never silently become a partial database query.
-  remainder = remainder.replace(/\b(?:i|want|would|like|to|buy|find|search|show|me|please|hdbs?|homes?|houses?|flats?|listings?|a|an|the|only|just|in|at|and|or|with|for|any|is|fine)\b/gi, ' ');
-  return recognized && /^[\s,.!?]*$/.test(remainder);
-}
-
-export function literalBuyerSearch(
-  history: ChatCompletionMessageParam[], previous: ListingFilters | undefined, required: ReturnType<typeof explicitBuyerRequirements>,
-): ListingFilters | undefined {
-  if (!required.searchRequested || required.excludedTowns.length) return;
-  const users = history.filter(message => message.role === 'user');
-  const latest = users.at(-1)?.content ?? '';
-  if (!completeLiteralSearch(latest)) return;
-  if (!previous) {
-    // Without saved query context, ensure every requirement since starting Buy is
-    // understood. A later town must not erase an earlier unsupported must-have.
-    const start = users.map(message => /^(?:buy|i (?:want|would like) to buy(?: (?:a |an )?(?:property|hdb|home|house|flat))?)[.!?\s]*$/i.test(message.content.trim())).lastIndexOf(true);
-    if (users.slice(start + 1).some(message => !completeLiteralSearch(message.content))) return;
-  }
-  const reset = /\b(?:start over|no preferences?(?=[,!.]|$)|no preferences? at all)/i.test(latest);
-  try {
-    return applyExplicitRequirements(reset ? parseListingFilters({}) : previous ?? parseListingFilters({}), required);
-  } catch (error) {
-    if (!(error instanceof ListingQueryError)) throw error;
-    return; // Contradictory literal requirements still need clarification.
-  }
+  return applyExplicitRequirements(filters, { ...required, filters: constraints, retainedBudget });
 }
