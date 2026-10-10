@@ -9,7 +9,8 @@ import json
 import math
 from pathlib import Path
 import re
-from typing import Mapping, Sequence
+from contextlib import nullcontext
+from typing import Any, ContextManager, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -114,12 +115,16 @@ class LoadedValuationBundle:
         self,
         features: Mapping[str, object],
         coverage: float = DEFAULT_COVERAGE_LEVEL,
+        prediction_lock: ContextManager[Any] | None = None,
     ) -> ValuationPrediction:
         _coverage_key(coverage)
         row = _validate_prediction_features(features)
         model_frame = pd.DataFrame([row], columns=BOOSTED_FEATURES)
         prepared = prepare_catboost_features(model_frame)
-        estimated_value = float(np.asarray(self.model.predict(prepared)).reshape(-1)[0])
+        lock_context = prediction_lock if prediction_lock is not None else nullcontext()
+        with lock_context:
+            raw_prediction = self.model.predict(prepared)
+        estimated_value = float(np.asarray(raw_prediction).reshape(-1)[0])
         if not math.isfinite(estimated_value):
             raise ValueError("CatBoost returned a non-finite valuation estimate")
         town = str(row["town"])

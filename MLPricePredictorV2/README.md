@@ -616,8 +616,70 @@ version and compatible loader policy.
 
 This bundle is a research candidate, not an approved or authoritative
 valuation. It is not integrated into SG Homie and does not establish
-production readiness. The next recommended step is a narrow local FastAPI
-inference service that loads this verified artifact without retraining.
+production readiness.
+
+## Local inference API
+
+`src/api/` exposes the persisted bundle through a local FastAPI service. It
+loads and verifies the configured bundle once per application lifespan; it
+does not train, recalibrate, run selection, or read `data/raw/` at startup or
+prediction time. The ignored bundle must already exist. By default, the API
+resolves `artifacts/hdb-catboost-2025-12-v1` relative to the V2 project. Set
+`VALUATION_BUNDLE_PATH` to override it; relative overrides are also resolved
+from the V2 project root. Startup logs the resolved path, integrity status,
+model version, coverage levels, and load time. Invalid or missing bundles stop
+startup.
+
+From `MLPricePredictorV2/`, run locally on loopback:
+
+```powershell
+..\.venv\Scripts\python.exe -m uvicorn src.api.app:app --host 127.0.0.1 --port 8000
+```
+
+Optional PowerShell override:
+
+```powershell
+$env:VALUATION_BUNDLE_PATH = "artifacts/hdb-catboost-2025-12-v1"
+```
+
+The service provides `GET /health`, `GET /v1/valuation/model-info`, and
+`POST /v1/valuation/predict`; local OpenAPI documentation is at `/docs`. The
+model-info response exposes only the model version/family, training cutoff,
+coverage levels, default coverage, and inference uncertainty method. It does
+not expose paths, hashes, or calibration tables.
+
+Prediction requests require `transaction_year`, `transaction_month`,
+`floor_area_sqm`, `storey_mid`, `remaining_lease_months`, `town`, `flat_type`,
+`block`, `street_name`, and `flat_model`. Optional `coverage` defaults to
+`0.90`; accepted values are `0.80`, `0.90`, and `0.95`. The response contains
+`estimated_value`, `lower_bound`, `upper_bound`, `interval_half_width`,
+`interval_full_width`, `coverage_target`, `model_version`,
+`uncertainty_method`, `uncertainty_group`, `uncertainty_support`,
+`used_global_fallback`, and nullable `price_position`. Optional positive finite
+`asking_price` is excluded from the CatBoost feature mapping and only adds
+`price_position`: below, within, or above the estimated market range. Unknown
+towns use the persisted global conformal threshold after trim-and-uppercase
+normalization. Invalid requests return structured 422 responses; prediction
+failures return a generic 500 response, while startup failures prevent serving.
+
+The HTTP layer delegates estimate and interval calculations to
+`LoadedValuationBundle.predict_one`. A per-process lock covers only the shared
+CatBoost prediction call. The local Uvicorn setup uses one process; multiple
+workers would each load a model copy and increase memory use. This service has
+no authentication or CORS configuration and is not suitable for unrestricted
+public exposure. The current interval calibration has subgroup limitations
+described above; estimates and ranges remain research outputs.
+
+On the local Windows environment, measured bundle load time was 0.227 seconds.
+After warm-up, 50 sequential HTTP predictions had 4.53 ms median, 4.80 ms mean,
+and 7.04 ms p95 latency. The server process working set was approximately
+315.8 MiB after loading and request checks; it includes runtime overhead and
+is not equal to the 141.77 MiB model file. These are local diagnostics, not a
+production load test, and can vary by machine and library versions.
+
+The API is not integrated into SG Homie. The next step is evaluating a hosted
+Render deployment and a trusted SG Homie backend integration; neither is part
+of this local-only stage.
 
 The legacy `MLPricePredictor/` experiments contain target leakage, including
 features derived from the transaction price being predicted. Their model
@@ -630,9 +692,10 @@ also research candidates only and do not establish production readiness.
 The eventual purpose is to evaluate an HDB resale price estimate using only
 information available at prediction time, with chronological validation,
 appropriate baseline comparisons, and documented provenance. Historical
-baselines, linear and Ridge models, nonlinear tree benchmarks, a research
-uncertainty evaluation, and a local research bundle are implemented. A narrow
-FastAPI inference interface remains future work.
+baselines, linear and Ridge models, nonlinear tree benchmarks, research
+uncertainty evaluation, a local research bundle, and a local-only FastAPI
+inference service are implemented. Hosted deployment and SG Homie integration
+remain future work.
 
 ## Setup and commands
 
@@ -651,6 +714,8 @@ python scripts/evaluate_uncertainty.py --device gpu
 python scripts/build_valuation_bundle.py --device gpu
 python -m pytest
 ```
+
+To run the local API, use the Uvicorn command in [Local inference API](#local-inference-api).
 
 The profiler, preparation script, and baseline evaluation script load the raw
 CSV without modifying it. Preparation reports partition shapes/date ranges and
