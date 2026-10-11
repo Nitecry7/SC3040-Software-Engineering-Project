@@ -5,6 +5,8 @@ import { setImmediate } from 'node:timers/promises';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from '../FrontEnd/node_modules/typescript/lib/typescript.js';
+import * as amenityHelpers from "../FrontEnd/src/lib/amenities.ts";
+
 
 // Run the component's real effect with isolated hooks, database responses and
 // channels. No browser credentials or external database writes are involved.
@@ -79,30 +81,87 @@ function harness(response = query => query.table === 'properties'
     return null;
   };
   const modules = {
-    react: { ...hooks, default: hooks },
-    'react/jsx-runtime': { jsx, jsxs: jsx },
-    'react-router-dom': { useParams: () => ({ id: routeId }) },
-    '../contexts/AuthContext': { useAuth: () => ({ user: null }) },
-    '../lib/supabase': { supabase: client },
-    'lucide-react': {},
-    'react-leaflet': { Marker: 'Marker' },
-    leaflet: { Icon: class {} },
-    'leaflet/dist/leaflet.css': {},
-    'react-hot-toast': { error: error => errors.push(error) },
+    react: {
+      ...hooks,
+      useCallback: (callback) => callback,
+      default: hooks,
+    },
+    "react/jsx-runtime": { jsx, jsxs: jsx },
+    "react-router-dom": { useParams: () => ({ id: routeId }) },
+    "../contexts/AuthContext": { useAuth: () => ({ user: null }) },
+    "../lib/supabase": { supabase: client },
+
+    "../lib/amenities": amenityHelpers,
+
+    "lucide-react": {},
+    "react-leaflet": {
+      Marker: "Marker",
+      MapContainer: "MapContainer",
+      TileLayer: "TileLayer",
+      Popup: "Popup",
+      useMap: () => ({
+        setView() {},
+        fitBounds() {},
+        on() {},
+        off() {},
+        invalidateSize() {},
+        getContainer() {
+          return {};
+        },
+      }),
+    },
+
+    leaflet: {
+      divIcon: (options) => ({ ...options }),
+    },
+
+    "leaflet/dist/leaflet.css": {},
+    "react-hot-toast": { error: (error) => errors.push(error) },
   };
   runInNewContext(compiled, {
     exports, AbortController, crypto: { randomUUID }, console: { error: (...args) => errors.push(args) },
     require(name) { assert.ok(name in modules, `Unexpected import: ${name}`); return modules[name]; },
   });
   return {
-    writes, errors, queries, channels, removed,
-    mount(id = 'property-a') { routeId = id; hookIndex = 0; exports.default(); return effect(); },
-    renderUnknownAmenity() {
-      stateOverrides.set(0, { id: 'property-a', title: 'Test fixture', photos: [], price: 1 });
-      stateOverrides.set(1, [{ id: 'amenity-1', type: 'Unmapped category', latitude: 1, longitude: 103 }]);
-      stateOverrides.set(2, false);
+    writes,
+    errors,
+    queries,
+    channels,
+    removed,
+    mount(id = "property-a") {
+      routeId = id;
       hookIndex = 0;
       exports.default();
+      return effect();
+    },
+    renderUnknownAmenity() {
+      stateOverrides.set(0, {
+        id: "property-a",
+        title: "Test fixture",
+        photos: [],
+        price: 1,
+      });
+
+      stateOverrides.set(1, [
+        {
+          id: "amenity-1",
+          name: "Unknown place",
+          type: "Unmapped category",
+          distance: 0.5,
+          latitude: 1.3,
+          longitude: 103.8,
+          source: "test",
+        },
+      ]);
+
+      stateOverrides.set(2, false); // amenitiesLoading
+      stateOverrides.set(3, false); // amenitiesError
+      stateOverrides.set(4, "all"); // amenityCategory
+      stateOverrides.set(5, false); // property page loading
+
+      hookIndex = 0;
+      exports.default();
+
       return markers;
     },
   };
