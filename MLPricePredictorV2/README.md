@@ -664,11 +664,14 @@ failures return a generic 500 response, while startup failures prevent serving.
 
 The HTTP layer delegates estimate and interval calculations to
 `LoadedValuationBundle.predict_one`. A per-process lock covers only the shared
-CatBoost prediction call. The local Uvicorn setup uses one process; multiple
-workers would each load a model copy and increase memory use. This service has
-no authentication or CORS configuration and is not suitable for unrestricted
-public exposure. The current interval calibration has subgroup limitations
-described above; estimates and ranges remain research outputs.
+CatBoost prediction call. Authentication is fail-closed by default: hosted
+prediction and model-info endpoints require `Authorization: Bearer
+<VALUATION_SERVICE_TOKEN>`, while health exposes only minimal readiness. For
+local unauthenticated development, explicitly set
+`VALUATION_AUTH_MODE=disabled`. The local Uvicorn setup uses one process;
+multiple workers would each load a model copy and increase memory use. The
+current interval calibration has subgroup limitations described above;
+estimates and ranges remain research outputs.
 
 On the local Windows environment, measured bundle load time was 0.227 seconds.
 After warm-up, 50 sequential HTTP predictions had 4.53 ms median, 4.80 ms mean,
@@ -680,6 +683,70 @@ production load test, and can vary by machine and library versions.
 The API is not integrated into SG Homie. The next step is evaluating a hosted
 Render deployment and a trusted SG Homie backend integration; neither is part
 of this local-only stage.
+
+## Render deployment preparation
+
+The repository-root `render.yaml` describes a manual, single-worker Free
+web-service deployment rooted at `MLPricePredictorV2/`. Render installs the
+existing requirements, fetches the configured immutable bundle during the
+build, then starts Uvicorn on `0.0.0.0:$PORT`. `/health` remains unauthenticated
+for Render's health check, returns only minimal readiness, and succeeds only
+after the bundle has passed integrity validation and loaded. Prediction and
+model-info require a server-to-server bearer token. The service does not enable
+CORS or call the Render endpoint from the browser.
+
+The bundle remains outside ordinary Git under ignored `artifacts/`. For hosted
+delivery, publish a ZIP named
+`hdb-catboost-2025-12-v1.zip` as a release asset with the same tag in a separate
+private, artifact-only GitHub repository. The ZIP must contain exactly
+`model.cbm`, `uncertainty.json`, `metadata.json`, and `manifest.json` at its
+root. The build fetcher uses the GitHub release API and a fine-grained token
+with read-only Contents permission. It checks release metadata, download size,
+the release asset digest when GitHub supplies one, safe archive contents, and
+then the existing bundle loader verifies the bundle manifest and expected
+model version before atomic publication. A valid cached local version is
+reused. It never trains a model or reads the raw CSV. The release token is
+removed from the serving process environment at startup.
+
+The Blueprint pins `VALUATION_MODEL_VERSION=hdb-catboost-2025-12-v1` and
+`VALUATION_AUTH_MODE=required`. Set `VALUATION_ARTIFACT_REPOSITORY` to
+`OWNER/REPOSITORY`; configure `GITHUB_RELEASE_TOKEN` (read-only artifact
+access) and `VALUATION_SERVICE_TOKEN` as Render secrets. The latter must also
+be stored as a Supabase Edge Function secret in a later integration stage; it
+must never reach React, a Vite variable, a response, or a log. Do not place
+real credentials in this README or committed configuration. Hosted startup
+fails closed if authentication is required but its token is missing. For local
+unauthenticated development only, explicitly set
+`VALUATION_AUTH_MODE=disabled`; this is not the hosted setting.
+
+The Render build and start commands are:
+
+```sh
+pip install -r requirements.txt && python scripts/fetch_valuation_bundle.py
+python -m uvicorn src.api.app:app --host 0.0.0.0 --port $PORT --workers 1
+```
+
+Local development remains bound to `127.0.0.1:8000` as documented above.
+For a local unauthenticated session, set `$env:VALUATION_AUTH_MODE = "disabled"`
+before starting Uvicorn; clear it or set it to `required` for authenticated
+local verification.
+Render's Free service has 512 MB RAM, ephemeral runtime storage, and spins down
+after 15 minutes idle; wake-up can take about a minute. The locally measured
+API working set was about 316 MiB with one model loaded, leaving limited memory
+headroom. One worker avoids loading another model copy, but the Free plan is
+only suitable for a deployment smoke test and may still run out of memory.
+The build-time bundle acquisition is separate from process startup and is not
+repeated for each request; a rebuild fetches the selected release again. A
+version rollback consists of pinning an earlier immutable release and
+redeploying. No Render account, artifact repository, release, secret, or hosted
+deployment has been configured or verified by this repository change.
+
+Render references: [Free service limits](https://render.com/docs/free),
+[Blueprint configuration](https://render.com/docs/blueprint-spec),
+[web-service port binding](https://render.com/docs/web-services), and
+[Python runtime version](https://render.com/docs/python-version). GitHub
+private release asset access requires repository Contents read permission;
+see [release asset API](https://docs.github.com/en/rest/releases/assets).
 
 The legacy `MLPricePredictor/` experiments contain target leakage, including
 features derived from the transaction price being predicted. Their model

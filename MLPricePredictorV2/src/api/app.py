@@ -1,8 +1,9 @@
-"""Narrow local FastAPI service for the persisted valuation bundle."""
+"""Narrow FastAPI service for the persisted valuation bundle."""
 
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import hmac
 import logging
 import math
 import os
@@ -17,7 +18,6 @@ from fastapi.responses import JSONResponse
 
 from src.evaluation.uncertainty import classify_asking_price
 from src.inference.bundle import (
-    BUNDLE_FORMAT_VERSION,
     DEFAULT_COVERAGE_LEVEL,
     DEFAULT_MODEL_VERSION,
     LoadedValuationBundle,
@@ -52,12 +52,34 @@ def resolve_bundle_path(bundle_path: str | Path | None = None) -> Path:
     return resolved.resolve()
 
 
-def create_app(bundle_path: str | Path | None = None) -> FastAPI:
+def create_app(
+    bundle_path: str | Path | None = None,
+    auth_mode: str | None = None,
+    expected_model_version: str | None = None,
+) -> FastAPI:
     """Create an app whose lifespan loads one validated bundle per process."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        resolved_path = resolve_bundle_path(bundle_path)
+        configured_auth_mode = auth_mode or os.environ.get("VALUATION_AUTH_MODE", "required")
+        if configured_auth_mode not in {"required", "disabled"}:
+            raise RuntimeError("VALUATION_AUTH_MODE must be 'required' or 'disabled'.")
+        service_token = os.environ.get("VALUATION_SERVICE_TOKEN", "")
+        if configured_auth_mode == "required" and not service_token.strip():
+            raise RuntimeError("VALUATION_SERVICE_TOKEN is required when authentication is enabled.")
+
+        # The release token is needed by the build-time fetcher only. Render can
+        # expose service environment variables to both build and runtime phases.
+        os.environ.pop("GITHUB_RELEASE_TOKEN", None)
+        model_version = expected_model_version or os.environ.get(
+            "VALUATION_MODEL_VERSION", DEFAULT_MODEL_VERSION
+        )
+        if not model_version or Path(model_version).name != model_version:
+            raise RuntimeError("VALUATION_MODEL_VERSION must be a single version identifier.")
+        configured_path = bundle_path
+        if configured_path is None and not os.environ.get("VALUATION_BUNDLE_PATH"):
+            configured_path = V2_ROOT / "artifacts" / model_version
+        resolved_path = resolve_bundle_path(configured_path)
         load_started = perf_counter()
         logger.info("Loading valuation bundle from %s", resolved_path)
         try:
@@ -67,10 +89,16 @@ def create_app(bundle_path: str | Path | None = None) -> FastAPI:
             raise RuntimeError(
                 f"Unable to load valuation bundle from {resolved_path}: {error}"
             ) from error
+        if bundle.model_version != model_version:
+            raise RuntimeError(
+                "Loaded valuation bundle does not match VALUATION_MODEL_VERSION."
+            )
         load_seconds = perf_counter() - load_started
         app.state.valuation_bundle = bundle
         app.state.prediction_lock = Lock()
         app.state.bundle_load_seconds = load_seconds
+        app.state.valuation_auth_mode = configured_auth_mode
+        app.state.valuation_service_token = service_token if configured_auth_mode == "required" else None
         logger.info(
             "Valuation bundle ready model_version=%s training_cutoff=%s "
             "coverage_levels=%s integrity=verified load_seconds=%.3f",
@@ -84,10 +112,11 @@ def create_app(bundle_path: str | Path | None = None) -> FastAPI:
         finally:
             app.state.valuation_bundle = None
             app.state.prediction_lock = None
+            app.state.valuation_service_token = None
 
     app = FastAPI(
         title="SG Homie HDB Valuation Research API",
-        description="Local research inference using a persisted CatBoost bundle.",
+        description="Research inference using a persisted CatBoost bundle.",
         version="1.0.0",
         lifespan=lifespan,
     )
@@ -125,9 +154,27 @@ def create_app(bundle_path: str | Path | None = None) -> FastAPI:
         return HealthResponse(
             status="ok",
             model_loaded=True,
-            model_version=bundle.model_version,
-            bundle_format_version=BUNDLE_FORMAT_VERSION,
         )
+
+    def require_service_token(request: Request) -> None:
+        if request.app.state.valuation_auth_mode == "disabled":
+            return
+        authorization = request.headers.get("authorization", "")
+        scheme, separator, supplied_token = authorization.partition(" ")
+        expected_token = request.app.state.valuation_service_token or ""
+        if (
+            not separator
+            or scheme.lower() != "bearer"
+            or not supplied_token
+            or not hmac.compare_digest(
+                supplied_token.encode("utf-8"), expected_token.encode("utf-8")
+            )
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Unauthorized.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     @app.get(
         "/v1/valuation/model-info",
@@ -135,6 +182,7 @@ def create_app(bundle_path: str | Path | None = None) -> FastAPI:
         tags=["valuation"],
     )
     def model_info(request: Request) -> ModelInfoResponse:
+        require_service_token(request)
         bundle: LoadedValuationBundle = request.app.state.valuation_bundle
         metadata = bundle.metadata
         return ModelInfoResponse(
@@ -152,6 +200,7 @@ def create_app(bundle_path: str | Path | None = None) -> FastAPI:
         tags=["valuation"],
     )
     def predict(payload: PredictionRequest, request: Request) -> PredictionResponse:
+        require_service_token(request)
         bundle: LoadedValuationBundle = request.app.state.valuation_bundle
         ordered_features = {
             feature_name: getattr(payload, feature_name)

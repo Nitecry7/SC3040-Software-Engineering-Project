@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: sghomie-valuation-api
+    runtime: python
+    plan: free
+    branch: faheem
+    rootDir: MLPricePredictorV2
+    buildCommand: pip install -r requirements.txt && python scripts/fetch_valuation_bundle.py
+    startCommand: python -m uvicorn src.api.app:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /health
+    autoDeployTrigger: 'off'
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: VALUATION_MODEL_VERSION
+        value: hdb-catboost-2025-12-v1
+      - key: VALUATION_AUTH_MODE
+        value: required
+      - key: VALUATION_ARTIFACT_REPOSITORY
+        sync: false
+      - key: GITHUB_RELEASE_TOKEN
+        sync: false
+      - key: VALUATION_SERVICE_TOKEN
+        sync: false
