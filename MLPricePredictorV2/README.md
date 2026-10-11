@@ -7,6 +7,91 @@ Ridge, tree, and CatBoost research. It evaluates uncertainty ranges for the
 selected CatBoost point estimator; it does not serve valuations or provide an
 approved production model.
 
+## Model selection summary
+
+### Evaluation design
+
+Validation candidates were fit on transactions from 2017-01 through 2024-12
+and selected using 2025 validation results. The selected learned model was
+then refit through 2025-12 before the later test on 2026-01 through 2026-09;
+partial October 2026 rows are excluded. The test period did not guide model or
+configuration selection. Chronological partitions better reflect prediction
+over time and reduce future-data leakage compared with a random split.
+
+### How to read the metrics
+
+- **MAE:** average absolute difference between predicted and actual price in
+  SGD. An MAE near $29,500 means predictions were about $29,500 away on average.
+- **Median absolute error:** midpoint of the absolute errors; about half are no
+  larger and half are no smaller than this value.
+- **RMSE:** error metric that, like MAE, is in SGD but penalizes large errors
+  more heavily.
+- **MAPE:** average absolute error as a percentage of actual transaction price.
+- **R²:** how much variation in prices is explained by the model; values nearer
+  1 indicate a closer fit on that evaluation set.
+
+| Model | Validation MAE | Validation RMSE | Validation MAPE | Later test MAE | Observation |
+|---|---:|---:|---:|---:|---|
+| Recent comparable baseline | $39,354.92 | $66,935.89 | 5.66% | $40,932.90* | Walk-forward historical-sales reference. |
+| Linear Regression | $50,772.32 | $70,114.17 | 7.44% | $49,861.68 | Underperformed the comparable baseline on validation MAE. |
+| Extra Trees | $43,443.85 | $56,546.91 | 6.55% | $30,056.10 | Strong later test result, but the final estimator was large. |
+| Best XGBoost candidate | $43,261.07 | $56,663.10 | 6.51% | — | No final test result was recorded for this unselected candidate. |
+| Selected CatBoost | $33,524.38 | $45,217.47 | 5.02% | $29,490.56 | Lowest validation MAE among learned models evaluated. |
+
+*The comparable baseline's $40,932.90 test result uses its walk-forward history
+updates. It is not a matched comparison with the frozen learned models. Under
+the matched fixed-history protocol, the 2026 comparable baseline MAE was
+$48,612.05; see [Matched and temporal robustness](#matched-and-temporal-robustness).
+The recorded later-test references are not all from the same update protocol.
+
+### Why CatBoost was selected
+
+The depth-8, learning-rate-0.05 CatBoost candidate had the lowest validation
+MAE among the learned models and beat the recorded comparable-baseline,
+Linear Regression, and Extra Trees validation MAEs. Its validation MAE was
+$33,524.38, compared with $43,261.07 for the best XGBoost candidate. CatBoost
+handled the numeric and high-cardinality categorical features directly. Its
+final model was 143.99 MiB, compared with 1,281 MiB for Extra Trees (about
+1.25 GiB, or 1.28 GB).
+
+Matched fixed-information comparisons also favored CatBoost: its MAE was
+$33,608.96 versus $54,982.31 for the comparable baseline in 2025, a 38.87%
+improvement; in 2026 its MAE was $29,490.56 versus $48,612.05, a 39.33%
+improvement. CatBoost also had lower MAE in all four expanding-window annual
+evaluations. The 2022–2024 results are retrospective robustness checks: the
+configuration had already been selected using 2025, so those years are not
+independent model-selection tests.
+
+### Interpreting the 2026 error and prediction ranges
+
+On 19,641 test transactions, CatBoost's $29,490.56 MAE means its predictions
+differed from registered resale prices by about $29,491 on average. Its median
+absolute error was $21,852.89, and its 4.52% MAPE means absolute errors averaged
+about 4.5% of actual prices. Mean actual price was $663,826.70 and mean predicted
+price was $669,591.22; this mean-level comparison is not the MAE. These test
+results describe this period and do not guarantee an individual future
+property's error.
+
+The point estimate is accompanied by a symmetric conformal range. CatBoost
+produces the point estimate; town-specific calibration uses earlier
+out-of-sample errors to set the range, falling back to a global threshold when
+town calibration support is insufficient. Historical pooled coverage was
+84.71% at the 80% target, 91.83% at 90%, and 95.65% at 95%. At the 90% target,
+yearly historical coverage was 89.61% (2022), 95.17% (2023), 89.82% (2024), and
+92.98% (2025). On the later 2026 test, coverage was 88.46%, 94.24%, and 97.13%
+at the respective targets. The 2026 90% interval had a mean full width of
+$152,558.85 and median full width of $149,045.60. Nominal coverage is an
+empirical target across many cases, not a claim that an individual flat has a
+90% probability of falling inside its range.
+
+Results vary by town and flat type. 2026 90% coverage was lower for Executive
+flats (84.91%) and for the highest actual-price quartile (86.07%); the
+Multi-Generation estimate is based on only six transactions and is unreliable.
+Future market conditions may differ from the historical data. Asking price is
+not a CatBoost feature, and the model predicts from registered resale patterns,
+not future market events. This remains a research/demo valuation aid, not an
+official HDB valuation or a production-ready service.
+
 ## Dataset
 
 - **Dataset:** Resale flat prices based on registration date from Jan-2017 onwards
