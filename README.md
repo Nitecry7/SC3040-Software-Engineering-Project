@@ -1,175 +1,80 @@
-<div align = "center">
-<img width="200" align = "center" alt="SG Homie Logo" src="https://github.com/user-attachments/assets/8e515211-77c0-4630-b725-9e27734192c8" /> 
+<div align="center">
+  <img width="200" alt="SG Homie logo" src="https://github.com/user-attachments/assets/8e515211-77c0-4630-b725-9e27734192c8" />
 
+  <h1>SG Homie</h1>
+  <p>A Singapore HDB housing companion.</p>
 
-Welcome to **SG Homie** – Your Smart Housing Companion in Singapore 🌆
-
-[🖥️ Live Site](https://sg-homie.netlify.app) | [📚 Documentation](https://drive.google.com/file/d/1LzKrfmayua1ZWJQZfrD89voyZggpbCKi/view?usp=sharing) | [🎥 Demo Video](https://youtu.be/0muokFq4Si4)
-
+  <a href="https://sg-homie.netlify.app">Existing deployment URL (availability not verified)</a> ·
+  <a href="https://drive.google.com/file/d/1LzKrfmayua1ZWJQZfrD89voyZggpbCKi/view?usp=sharing">Project documentation</a> ·
+  <a href="https://youtu.be/0muokFq4Si4">Demo video</a>
 </div>
 
----
+## Project status
 
-## 📑 Table of Contents
-- [✨ About](#-about)
-- [🎯 Features](#-features)
-- [🛠️ Tech Stack](#️-tech-stack)
-- [🚀 Getting Started](#-getting-started)
-- [🏗️ Project Structure](#️-project-structure)
-- [🔌 External APIs](#-external-apis)
-- [👥 Contributors](#-contributors)
----
+The active application is under `SGHomie/`. This repository contains implemented workflows as well as demo and research features; code in the repository does not verify that a hosted deployment, migration, secret, or external service is active.
 
-## ✨ About
+**Implemented in the repository:** buyers can search approved HDB listings with filters; sellers can submit and manage listings; the chatbot can perform structured, read-only search of approved HDB listings and support seller draft intake; seller HDB postal-code/address verification uses OneMap and official HDB property information; property pages include a “What’s nearby” view.
 
-SG Homie transforms your housing journey with:
+**Demo:** nearby amenities are deterministic synthetic records marked `source = 'demo'`, with illustrative labels and distances. They are not verified facilities, live OneMap results, or walking routes. The Trends/analytics experience includes generated or hardcoded values and is not verified market analytics.
 
-- 🏘️ **Smart Property Search**: Browse and filter properties effortlessly
-- 📸 **Rich Property Details**: View comprehensive information and images
-- 💬 **Integrated Communication**: Connect directly with sellers
-- 🤖 **AI-Powered Recommendations**: Get personalized property suggestions
+**Research:** `MLPricePredictorV2/` selects CatBoost as its current robust research candidate. It is not an approved production model, persisted inference service, or integrated valuation feature. See the [V2 README](MLPricePredictorV2/README.md) for methods and detailed results; the legacy `MLPricePredictor/` experiments contain target leakage and are not reliable evidence.
 
----
+**Planned:** trusted valuation integration, historical transaction analytics, future market outlook, explainable recommendation ranking, affordability-aware decision support, trusted seller pricing guidance, and real amenity ingestion. Simple filter matching and chatbot search are not recommendation ranking.
 
-## 🎯 Features
+## Technology and external services
 
-- 🎯 **Smart Matching**: AI-powered property recommendations
-- 🗺️ **Interactive Maps**: Location-based property search
-- 📊 **Seller Dashboard**: Manage listings efficiently
-- 👨‍💼 **Admin Controls**: Comprehensive management tools
-- 🔐 **Secure Login**: Email and Google authentication
+- Frontend: React, TypeScript, Vite, Tailwind CSS, React Router, and Supabase JavaScript.
+- Backend: Supabase Auth, PostgreSQL with Row Level Security, and Edge Functions.
+- Chat providers: OpenRouter or OpenAI, selected server-side. Provider credentials belong in Supabase Edge Function secrets, never in frontend environment variables.
+- OneMap and official HDB property information: seller HDB postal-code/address verification only. Nearby amenity rows are synthetic demo data, not live OneMap results.
+- OpenStreetMap raster tiles: map basemap; tile data does not verify synthetic amenity markers.
 
----
+## Local frontend setup
 
-## 🛠️ Tech Stack
+The installed Vite 8 toolchain requires Node.js `^20.19.0` or `>=22.12.0`. No separate npm version is pinned in the frontend package.
 
-### Frontend Development
-- ⚛️ **React**: UI development
-- 🎨 **TailwindCSS**: Styling
-- 🛣️ **React Router**: Navigation
-- ⚡ **Vite**: Build tool
+From the repository root:
 
-### Backend Services
-- 🔥 **Supabase**: Authentication & Database
-
----
-
-## 🚀 Getting Started
-
-### Main Access
-Visit [SG Homie Live Site](https://sg-homie.netlify.app) 🌐
-
-### Local Setup
-
-#### Prerequisites
-- Node.js (v14+)
-- npm (latest stable)
-- Supabase Project (with Edge Functions)
-
-#### Installation Steps
-
-1. **Clone & Navigate**
-   ```bash
-   git clone https://github.com/Nitecry7/SC3040-Software-Engineering-Project
-   cd SGHomie/FrontEnd
-   ```
-
-2. **Install Dependencies**
-   ```bash
-   npm install
-   ```
-
-3. **Configure Environment**
-   Create `.env` file in `SGHomie/FrontEnd`:
-   ```bash
-   cp .env.example .env
-   ```
-   Update environment variables accordingly.
-
-   🔐 Keep `OPENROUTER_API_KEY` in Supabase Edge Function Secrets for deployed functions.
-
-4. **Launch Development Server**
-   ```bash
-   npm run dev
-   ```
-   🚀 Access at `http://localhost:5173`
-
----
-
-## 🏗️ Project Structure
-
-```
-project/
-├── frontend/           # 🖥️ Frontend application
-│   ├── src/            # 📂 Source code
-│   ├── dist/           # 📦 Production build
-│   ├── node_modules/   # 📚 Dependencies
-│   ├── .vite/          # ⚡ Vite cache
-│   ├── package.json    # 📄 Project config
-│   ├── vite.config.ts  # ⚙️ Vite settings
-│   └── .env            # 🔑 Environment variables
-│
-├── backend/           # ⚙️ Backend services
-│   ├── supabase/      # 🔥 Supabase config
-│   ├── node_modules/  # 📚 Dependencies
-│   ├── package.json   # 📄 Backend config
-│   ├── .env          # 🔑 Environment variables
-│   └── README.md     # 📖 Documentation
-│
-├── .gitignore        # 🚫 Git ignore rules
-└── README.md         # 📖 Main documentation
+```bash
+cd SGHomie/FrontEnd
+npm ci
+cp .env.example .env
+npm run dev
 ```
 
----
+In PowerShell, copy the example with `Copy-Item .env.example .env` instead of `cp`. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in the frontend `.env`; `VITE_SUPABASE_FUNCTIONS_URL` is optional when using the functions on the configured Supabase project. Only the publishable/anonymous key belongs in the browser, protected by Row Level Security. Do not put OpenAI, OpenRouter, OneMap, or Supabase service-role secrets in this file.
 
-## 🔌 External APIs
+For backend setup, migrations, local Edge Functions, provider configuration, and safe deployment procedures, see [Supabase setup](SGHomie/BackEnd/supabase/README.md). Backend environment variables are described in [`BackEnd/.env.example`](SGHomie/BackEnd/.env.example).
 
-### Supabase Integration 🔥
-- **Authentication**: User management system
-- **Database**: Data storage and retrieval
-- **Real-time**: Live updates and notifications
+## Repository layout
 
-### OneMap API 🗺️
-- **Geocoding**: Address to coordinates conversion
-- **Location Services**: Nearby amenities search
+```text
+AGENTS.md                         Repository instructions
+PRODUCT.md                        Product intent and capability status
+SGHomie/FrontEnd/                 Active React application
+SGHomie/BackEnd/supabase/         Supabase migrations and Edge Functions
+SGHomie/docs/buy-flow.md          Chatbot buyer-search behavior
+SGHomie/docs/sell-flow.md         Chatbot seller-intake behavior
+MLPricePredictor/                 Legacy, leaky ML experiments
+MLPricePredictorV2/               Leakage-safe HDB resale research
+archived_migrations/              Historical migrations
+```
 
----
+## Useful documentation
 
-## 👥 Contributors
+- [Product direction and status](PRODUCT.md)
+- [Supabase setup and deployment](SGHomie/BackEnd/supabase/README.md)
+- [Chatbot buyer flow](SGHomie/docs/buy-flow.md)
+- [Chatbot seller flow](SGHomie/docs/sell-flow.md)
+- [V2 valuation research and evaluation](MLPricePredictorV2/README.md)
+
+## Contributors
 
 <table>
   <tr>
-    <td align="center">
-      <a href="https://github.com/Nitecry7">
-        <img src="https://github.com/Nitecry7.png" width="100" height="100" style="border-radius: 50%;"><br />
-        <sub><b>Faheem</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/stevennoctavianus">
-        <img src="https://github.com/stevennoctavianus.png" width="100" height="100" style="border-radius: 50%;"><br />
-        <sub><b>Steven</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/Eishani">
-        <img src="https://github.com/Eishani.png" width="100" height="100" style="border-radius: 50%;"><br />
-        <sub><b>Eishani</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/vanillatte11037">
-        <img src="https://github.com/vanillatte11037.png" width="100" height="100" style="border-radius: 50%;"><br />
-        <sub><b>He Haoyu</b></sub>
-      </a>
-    </td>
+    <td align="center"><a href="https://github.com/Nitecry7"><img src="https://github.com/Nitecry7.png" width="100" height="100" alt="Faheem" /><br /><sub><b>Faheem</b></sub></a></td>
+    <td align="center"><a href="https://github.com/stevennoctavianus"><img src="https://github.com/stevennoctavianus.png" width="100" height="100" alt="Steven" /><br /><sub><b>Steven</b></sub></a></td>
+    <td align="center"><a href="https://github.com/Eishani"><img src="https://github.com/Eishani.png" width="100" height="100" alt="Eishani" /><br /><sub><b>Eishani</b></sub></a></td>
+    <td align="center"><a href="https://github.com/vanillatte11037"><img src="https://github.com/vanillatte11037.png" width="100" height="100" alt="He Haoyu" /><br /><sub><b>He Haoyu</b></sub></a></td>
   </tr>
 </table>
-
-<div align="center">
-
----
-
-Made with ❤️ by the SG Homie Team
-
-</div>

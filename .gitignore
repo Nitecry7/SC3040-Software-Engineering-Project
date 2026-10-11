@@ -12,6 +12,7 @@ dist/
 # Raw ML datasets
 MLPricePredictorV2/data/raw/*.csv
 MLPricePredictorV2/data/processed/
+MLPricePredictorV2/artifacts/
 
 # Python environment and caches
 .venv/

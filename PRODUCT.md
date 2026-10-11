@@ -123,7 +123,7 @@ The active Supabase backend is located under:
 
 Supabase currently provides the primary application backend capabilities including authentication, PostgreSQL persistence, Row Level Security, migrations, and Edge Functions.
 
-The chatbot currently uses a Supabase Edge Function to communicate with OpenRouter.
+The chatbot runs through a Supabase Edge Function and supports OpenRouter or OpenAI through server-side provider configuration. Its buyer flow has a structured, read-only search tool for approved HDB listings. This code path does not establish the provider or Edge Function configuration of a hosted environment.
 
 The current machine learning experiments under:
 
@@ -272,9 +272,13 @@ Useful analytics may include:
 
 The interface should clearly identify the data period and data source.
 
-Generated random values must not be presented as market analytics.
+Generated or hardcoded values must not be presented as verified market analytics.
 
 Historical HDB transaction data should be distinguished from SG Homie active marketplace listings.
+
+### Market Outlook
+
+Future market outlook should estimate how a broader HDB segment may move over time. It is distinct from property valuation, which estimates the current value of a particular property. Forecasting and buy-now-or-wait decision support are planned, not implemented. A future LLM may explain trusted forecast evidence, but should not act as the authoritative numerical forecaster.
 
 ### Location and Amenity Insights
 
@@ -292,23 +296,20 @@ Useful information may include:
 
 Approximate town centroids must not be represented as exact property coordinates.
 
-Randomly generated amenities must not be represented as real amenities.
+Current nearby-amenity records are deterministic synthetic demo data with `source = 'demo'`. They must not be presented as verified facilities, real distances, or OneMap results. Real amenity ingestion from OneMap or authoritative public datasets remains planned. OneMap currently supports seller HDB postal-code/address lookup.
 
 ### Conversational Assistant
 
-The chatbot should provide a conversational interface to SG Homie's trusted application capabilities.
+The chatbot should provide a conversational interface to SG Homie's trusted application capabilities. Its current buyer search uses a structured, read-only tool to retrieve approved HDB listings; it does not provide an authoritative recommendation-ranking engine.
 
-The assistant should eventually be able to retrieve or invoke trusted tools for:
+Future assistant tools may retrieve trusted application information for:
 
-1. Property search
-2. Property details
-3. User preferences
-4. Property recommendations
-5. Property valuation
-6. Comparable transactions
-7. Nearby MRT information
-8. Nearby school information
-9. Historical market information
+1. Property details and user preferences
+2. Explainable property recommendations
+3. Property valuation
+4. Comparable transactions
+5. Verified nearby MRT, school, and amenity information
+6. Historical market information and future market outlook
 
 The LLM should explain retrieved facts rather than fabricate application data.
 
@@ -375,27 +376,29 @@ The following reflects the inspected application state and should be verified ag
 
 7. Enquiry flows exist.
 
-8. A chatbot flow exists using a Supabase Edge Function and OpenRouter.
+8. The chatbot runs through a Supabase Edge Function with OpenRouter/OpenAI provider selection. Its buyer flow has structured read-only search for approved HDB listings. It has no trusted historical-market, valuation, or nearby-amenity retrieval tool.
 
-9. The chatbot does not currently retrieve trusted live listing or historical market data through structured tools.
+9. The analytics page currently uses randomly generated chart values and hardcoded summary figures.
 
-10. The analytics page currently uses randomly generated chart values and hardcoded summary figures.
+10. Current analytics must be treated as demonstration content rather than verified market analytics.
 
-11. Current analytics must be treated as demonstration content rather than verified market analytics.
+11. Existing seed listings are development or demonstration content and must not automatically be described as production listings.
 
-12. Existing seed listings are development or demonstration content and must not automatically be described as production listings.
+12. Email and password authentication are implemented. Google authentication is not implemented in the inspected frontend.
 
-13. Google authentication was not verified in the inspected active frontend.
+13. A live external market analytics feed is not implemented in the active frontend.
 
-14. Live external market data integration was not verified in the active frontend.
+14. Seller HDB postal-code/address verification uses server-side OneMap geocoding and official HDB property information, with a short-lived seller-bound verification token enforced by a database trigger. This verifies the lookup path; it does not prove that every existing or synthetic listing is genuine.
 
-15. Repository code alone does not verify the state of the hosted Supabase project, migrations, secrets, Edge Functions, deployment, or production data.
+15. Legacy price prediction experiments under `MLPricePredictor/` are not integrated into the active application.
 
-16. Legacy price prediction experiments under `MLPricePredictor/` are not integrated into the active application.
+16. Legacy ML experiments contain target leakage and their metrics must not be used as evidence of production model quality.
 
-17. Legacy ML experiments contain target leakage and their metrics must not be used as evidence of production model quality.
+17. Nearby amenities are deterministic synthetic demo rows marked `source = 'demo'`; live amenity ingestion is not implemented. The demo trigger and data do not establish a hosted environment's migration state.
 
-18. New valuation work belongs in `MLPricePredictorV2/`.
+18. `MLPricePredictorV2/` is the current valuation research implementation. CatBoost is the selected robust research candidate after chronological, baseline, matched-history, temporal, and GPU-repeatability evaluation. It is not a persisted or approved production model, is not integrated into SG Homie, and has no inference service. Detailed methodology and results belong in `MLPricePredictorV2/README.md`.
+
+19. The repository does not by itself verify the state of hosted migrations, secrets, Edge Functions, deployments, or production data.
 
 ## Brand Commitments
 
@@ -437,7 +440,7 @@ The repository contains:
 
 The local raw dataset is not committed to Git.
 
-Generated analytics, unsupported marketing claims, demonstration testimonials, randomly generated amenities, and legacy model outputs must not be reused as factual evidence without validation.
+Generated analytics, unsupported marketing claims, demonstration testimonials, synthetic amenity records, and legacy model outputs must not be reused as factual evidence without validation.
 
 ## Product Principles
 
@@ -481,14 +484,14 @@ Do not claim that SG Homie currently provides any of the following unless the im
 
 1. Live HDB market analytics.
 2. Real time market data.
-3. AI ranked property recommendations.
-4. Grounded chatbot access to current listings.
+3. Explainable recommendation ranking.
+4. Chatbot retrieval of property valuation or verified nearby-amenity data beyond the current approved-listing search.
 5. Grounded chatbot access to historical market data.
 6. Production machine learning valuation.
 7. Guaranteed fair value.
 8. Official property valuation.
 9. Google authentication.
-10. Accurate live MRT or school distances.
+10. Real amenity ingestion or verified MRT, school, shopping, healthcare, food, park, or community locations and distances.
 11. Automated current commercial marketplace listing ingestion.
 12. Guaranteed time to sell.
 13. Guaranteed future property appreciation.
