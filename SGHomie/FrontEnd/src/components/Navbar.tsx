@@ -59,6 +59,7 @@ const Navbar = () => {
               <div className="relative ml-3 flex items-center space-x-4">
                 <Link 
                   to="/profile" 
+                  aria-label="Your account"
                   className="flex items-center group relative"
                 >
                   <div className="relative">
@@ -85,12 +86,40 @@ const Navbar = () => {
             )}
           </div>
 
-          <div className="md:hidden flex items-center">
+          <div className="md:hidden flex items-center gap-2">
+            {user ? (
+              <Link
+                to="/profile"
+                aria-label="Your account"
+                title="Your account"
+                onClick={() => setIsOpen(false)}
+                className="flex h-10 w-10 items-center justify-center rounded-full text-blue-600 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
+              >
+                <UserCircle className="h-7 w-7" aria-hidden="true" />
+              </Link>
+            ) : (
+              <button
+                type="button"
+                aria-label="Sign In"
+                title="Sign In"
+                onClick={() => {
+                  setIsOpen(false);
+                  window.dispatchEvent(new CustomEvent('toggle-auth-modal'));
+                }}
+                className="flex h-10 w-10 items-center justify-center rounded-full text-blue-600 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600"
+              >
+                <UserCircle className="h-7 w-7" aria-hidden="true" />
+              </button>
+            )}
             <button 
+              type="button"
               onClick={() => setIsOpen(!isOpen)} 
-              className="text-gray-700 hover:text-blue-600 transition-colors duration-300"
+              aria-label={isOpen ? 'Close navigation menu' : 'Open navigation menu'}
+              aria-expanded={isOpen}
+              aria-controls="mobile-navigation"
+              className="flex h-10 w-10 items-center justify-center rounded-full text-gray-700 hover:bg-blue-50 hover:text-blue-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 transition-colors duration-300"
             >
-              {isOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
+              {isOpen ? <X className="h-6 w-6" aria-hidden="true" /> : <Menu className="h-6 w-6" aria-hidden="true" />}
             </button>
           </div>
         </div>
@@ -98,7 +127,7 @@ const Navbar = () => {
 
       {/* Mobile menu */}
       {isOpen && (
-        <div className="md:hidden absolute w-full bg-white/95 backdrop-blur-md shadow-lg">
+        <div id="mobile-navigation" className="md:hidden absolute w-full bg-white/95 backdrop-blur-md shadow-lg">
           <div className="px-4 pt-2 pb-3 space-y-2">
             {navigation.map((item) => (
               <Link

@@ -12,7 +12,7 @@ const address = { postalCode: '560123', blockNumber: '123', streetName: 'TEST AV
   town: 'ANG MO KIO', builtYear: 2000, latitude: 1.3, longitude: 103.8, verificationToken: 'fixture-token' };
 const details = { unit_number: '#08-123', bedrooms: 3, bathrooms: 2, area_sqft: 1076, description: 'Renovated 4-room flat',
   seller_name: 'Fixture Seller', seller_phone: '+6591234567' };
-const completion = content => ({ id: 'fixture-completion', model: 'fixture-model', choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(content) }, finish_reason: 'stop' }] });
+const completion = content => ({ id: 'fixture-completion', model: 'fixture-model', choices: [{ index: 0, message: { role: 'assistant', content: typeof content === 'string' ? content : JSON.stringify(content) }, finish_reason: 'stop' }] });
 const request = body => new Request('https://functions.example/chatbot', { method: 'POST', headers: {
   Authorization: 'Bearer fixture-session', 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
@@ -26,6 +26,7 @@ function service(t, { extracted = details, estimate = 600000, failPrivate = fals
     if (url.pathname.endsWith('/user_profiles')) return Response.json([{ is_seller: true, is_admin: false, ...profile }]);
     if (url.pathname.endsWith('/lookup-hdb-location')) return Response.json({ valid: true, address });
     if (url.hostname === 'openrouter.ai') {
+      if (body.tools?.some(tool => tool.function.name === 'search_listings')) return Response.json(completion('Happy to help with buying. Are you planning to move soon?'));
       if (body.messages[0].content.startsWith('Extract seller')) return Response.json(completion({ details: extracted }));
       if (failEstimate) return Response.json({ error: { message: 'Unavailable' } }, { status: 503 });
       return Response.json(completion({ suggested_price: estimate }));
@@ -150,7 +151,12 @@ test('a seller context cannot bypass auth or validation, and Buy escapes an acti
     body: JSON.stringify({ message: 'okay', seller_context: priced.event.context }) }));
   assert.match((await anonymous.json()).response, /log in/);
   const buy = await handleRequest(request({ message: 'I want to buy a house', seller_context: priced.event.context, intent: 'buy' }));
-  assert.match((await buy.json()).response, /budget/i); assert.equal(db.rows.size, 0);
+  assert.equal(buy.status, 200);
+  const buyerReply = await buy.json();
+  assert.equal(buyerReply.response, 'Happy to help with buying. Are you planning to move soon?');
+  assert.equal(buyerReply.seller_flow.context, null);
+  assert.equal(buyerReply.recommendations, undefined);
+  assert.equal(db.rows.size, 0);
   const cancelled = await turn('cancel', priced.event.context);
   assert.equal(cancelled.event.context, null);
 });

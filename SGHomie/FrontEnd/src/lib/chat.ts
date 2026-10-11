@@ -7,7 +7,7 @@ export type { ListingSearchResult } from '../../../BackEnd/supabase/functions/_s
 export const BUY_MESSAGE = 'I want to buy a house';
 
 export function chatFailureText(status?: number, code?: string): string {
-  if (code === 'provider_rate_limited') return 'The AI service has reached its request limit. Simple searches still work — try “Clementi” or “4-room in Clementi under 600k”. For additional requirements, you can use the [listing search](/search) while the AI service recovers.';
+  if (code === 'provider_rate_limited') return 'The AI service has reached its request limit. You can use the [listing search](/search) to browse homes while the chat service recovers.';
   if (status === 503) return 'The chat service is temporarily unavailable. You can still browse the [listing search](/search), or try again later.';
   return "I'm sorry, I'm having trouble responding right now. Please try again later.";
 }

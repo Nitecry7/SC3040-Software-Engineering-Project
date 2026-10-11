@@ -1,15 +1,16 @@
 // Import React and its hooks for managing state and side effects.
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 // Import routing hooks to extract parameters from URL and create links.
 import { useParams } from 'react-router-dom';
 // Import various icons from lucide-react for UI elements.
 import { MapPin, Phone, Calendar, Home, Maximize, Bath, Heart, ChevronLeft, ChevronRight, Store, Train, Trees as Tree, Mail, School, ShoppingBag, HeartPulse, Utensils, UsersRound, type LucideIcon } from 'lucide-react';
 // Import Leaflet components for displaying maps.
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 // Import the Icon constructor from Leaflet to create custom markers.
 import { divIcon } from 'leaflet';
 // Import the Supabase client for backend operations.
 import { supabase } from '../lib/supabase';
+import type { RealtimeChannel } from '@supabase/supabase-js';
 // Import the custom authentication context to access user data.
 import { useAuth } from '../contexts/AuthContext';
 // Import the Property type definition.
@@ -19,6 +20,49 @@ import { AMENITY_CATEGORIES, filterAndSortAmenities, formatAmenityDistance, getA
 import toast from 'react-hot-toast';
 // Import Leaflet CSS for proper map styling.
 import 'leaflet/dist/leaflet.css';
+
+const hasAmenityCoordinates = (amenity: Amenity) =>
+  Number.isFinite(amenity.latitude) && Math.abs(amenity.latitude) <= 90 &&
+  Number.isFinite(amenity.longitude) && Math.abs(amenity.longitude) <= 180;
+
+const AMENITY_MAP_MAX_ZOOM = 21;
+
+const AmenityMapViewport = ({ latitude, longitude, amenities }: {
+  latitude: number;
+  longitude: number;
+  amenities: Amenity[];
+}) => {
+  const map = useMap();
+  const fitPins = useCallback(() => {
+    const points: [number, number][] = [
+      [latitude, longitude],
+      ...amenities.filter(hasAmenityCoordinates).map(amenity => [amenity.latitude, amenity.longitude] as [number, number]),
+    ];
+    if (points.length === 1) {
+      map.setView(points[0], 17, { animate: false });
+    } else {
+      map.fitBounds(points, { padding: [48, 48], maxZoom: AMENITY_MAP_MAX_ZOOM, animate: false });
+    }
+  }, [map, latitude, longitude, amenities]);
+
+  useEffect(() => {
+    fitPins();
+    map.on('resize', fitPins);
+    const observer = new ResizeObserver(() => map.invalidateSize({ pan: false }));
+    observer.observe(map.getContainer());
+    return () => {
+      observer.disconnect();
+      map.off('resize', fitPins);
+    };
+  }, [map, fitPins]);
+
+  return (
+    <button type="button" onClick={fitPins} className="absolute right-3 top-3 z-[1000] flex items-center gap-1.5 rounded-md bg-white px-3 py-2 text-xs font-medium text-gray-700 shadow-md hover:bg-gray-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600">
+      <Maximize className="h-4 w-4" aria-hidden="true" />
+      Fit all pins
+    </button>
+  );
+};
 
 // Define interface for SellerInfo.
 interface SellerInfo {
@@ -72,6 +116,7 @@ const PropertyDetails = () => {
   const { id } = useParams();
   // Get the currently authenticated user from the custom Auth context.
   const { user } = useAuth();
+  const userId = user?.id;
   // Local state to store the fetched property details.
   const [property, setProperty] = useState<Property | null>(null);
   // State to hold a list of amenities related to the property.
@@ -110,33 +155,52 @@ const PropertyDetails = () => {
 
   // useEffect hook to fetch property details, seller info, amenities, and interest count.
   useEffect(() => {
+    let active = true;
+    let channel: RealtimeChannel | undefined;
+    const controller = new AbortController();
+
     setLoading(true);
     setProperty(null);
+    setSellerInfo(null);
+
     setAmenities([]);
     setAmenitiesLoading(true);
     setAmenitiesError(false);
-    setAmenityCategory('all');
-    let cancelled = false;
+    setAmenityCategory("all");
+
+    setInterestCount(0);
+    setIsInterested(false);
+    setCurrentImageIndex(0);
+
+    if (!id) {
+      setLoading(false);
+      setAmenitiesLoading(false);
+      return;
+    }
 
     const fetchAmenities = async (propertyId: string) => {
       setAmenitiesLoading(true);
       setAmenitiesError(false);
+
       try {
         const { data: amenitiesData, error: amenitiesError } = await supabase
-          .from('property_amenities')
-          .select('*')
-          .eq('property_id', propertyId);
+          .from("property_amenities")
+          .select("*")
+          .eq("property_id", propertyId)
+          .abortSignal(controller.signal);
 
+        if (!active) return;
         if (amenitiesError) throw amenitiesError;
-        if (!cancelled) setAmenities((amenitiesData ?? []) as Amenity[]);
+
+        setAmenities((amenitiesData ?? []) as Amenity[]);
       } catch (error) {
-        console.error('Error fetching property amenities:', error);
-        if (!cancelled) {
-          setAmenities([]);
-          setAmenitiesError(true);
-        }
+        if (!active) return;
+
+        console.error("Error fetching property amenities:", error);
+        setAmenities([]);
+        setAmenitiesError(true);
       } finally {
-        if (!cancelled) setAmenitiesLoading(false);
+        if (active) setAmenitiesLoading(false);
       }
     };
 
@@ -144,15 +208,19 @@ const PropertyDetails = () => {
       try {
         // Fetch property details from the "properties" table using the given id.
         const { data: propertyData, error: propertyError } = await supabase
-          .from('properties')
-          .select('*')
-          .eq('id', id)
+          .from("properties")
+          .select("*")
+          .eq("id", id)
+          .abortSignal(controller.signal)
           .maybeSingle();
 
+        if (!active) return;
         if (propertyError) throw propertyError;
         if (!propertyData) {
           setProperty(null);
-          toast.error('This property is unavailable or has not been approved yet');
+          toast.error(
+            "This property is unavailable or has not been approved yet",
+          );
           return;
         }
 
@@ -163,81 +231,89 @@ const PropertyDetails = () => {
         // user's private profile or Auth email is blocked by RLS and caused
         // PostgREST 406 errors for buyers viewing property details.
         setSellerInfo({
-          name: propertyData.seller_name || 'Unknown',
-          phone: propertyData.seller_phone || 'Not provided',
-          email: 'Not provided',
+          name: propertyData.seller_name || "Unknown",
+          phone: propertyData.seller_phone || "Not provided",
+          email: "Not provided",
         });
 
         void fetchAmenities(propertyData.id);
 
         // Fetch the current count of "interest" records for this property.
         const { count, error: countError } = await supabase
-          .from('property_interests')
-          .select('*', { count: 'exact' })
-          .eq('property_id', id);
+          .from("property_interests")
+          .select("*", { count: "exact", head: true })
+          .eq("property_id", id)
+          .abortSignal(controller.signal);
 
+        if (!active) return;
         if (countError) throw countError;
         // Set the interest count state.
         setInterestCount(count || 0);
 
         // If a user is logged in, check whether the current user has expressed interest in this property.
-        if (user) {
+        if (userId) {
           const { data: interestData, error: interestError } = await supabase
-            .from('property_interests')
-            .select('*')
-            .eq('property_id', id)
-            .eq('user_id', user.id)
+            .from("property_interests")
+            .select("*")
+            .eq("property_id", id)
+            .eq("user_id", userId)
+            .abortSignal(controller.signal)
             .maybeSingle();
 
+          if (!active) return;
           if (interestError) throw interestError;
           // Set isInterested state based on whether the interest record exists.
           setIsInterested(!!interestData);
         }
 
         // Subscribe to real-time updates for the interest count on this property.
-        const channel = supabase
-          .channel('interests')
+        // Removal is asynchronous; each effect must own a fresh channel even
+        // while an earlier route or Strict Mode subscription is leaving.
+        channel = supabase.channel(
+          `property-interests:${id}:${crypto.randomUUID()}`,
+        );
+        channel
           .on(
-            'postgres_changes',
+            "postgres_changes",
             {
-              event: '*',
-              schema: 'public',
-              table: 'property_interests',
-              filter: `property_id=eq.${id}`
+              event: "*",
+              schema: "public",
+              table: "property_interests",
+              filter: `property_id=eq.${id}`,
             },
             async () => {
+              if (!active) return;
               // When any change occurs, re-fetch the interest count.
-              const { count: newCount } = await supabase
-                .from('property_interests')
-                .select('*', { count: 'exact' })
-                .eq('property_id', id);
-              
-              setInterestCount(newCount || 0);
-            }
+              const { count: newCount, error } = await supabase
+                .from("property_interests")
+                .select("*", { count: "exact", head: true })
+                .eq("property_id", id)
+                .abortSignal(controller.signal);
+
+              if (active && !error) setInterestCount(newCount ?? 0);
+            },
           )
           .subscribe();
-
-        // Cleanup function: Unsubscribe from real-time updates when component unmounts.
-        return () => {
-          supabase.removeChannel(channel);
-        };
       } catch (error) {
+        if (!active) return;
         // Log the error and show a notification if fetching fails.
-        console.error('Error fetching property details:', error);
-        toast.error('Failed to load property details');
+        console.error("Error fetching property details:", error);
+        toast.error("Failed to load property details");
       } finally {
         // Turn off the loading spinner once all operations complete.
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
 
     // Invoke the async function to fetch property details.
-    fetchPropertyDetails();
-
+    void fetchPropertyDetails();
+    // React needs this cleanup synchronously, not inside the async fetch.
     return () => {
-      cancelled = true;
+      active = false;
+      controller.abort();
+      if (channel) void supabase.removeChannel(channel);
     };
-  }, [id, user]);
+  }, [id, userId]);
 
   // Function to toggle the interest status for the current user.
   const toggleInterest = async () => {
@@ -339,7 +415,7 @@ const PropertyDetails = () => {
                     <button
                       key={index}
                       onClick={() => setCurrentImageIndex(index)}
-                      className={`w-2 h-2 rounded-full ${index === currentImageIndex ? 'bg-white' : 'bg-white/50'}`}
+                      className={`w-2 h-2 rounded-full ${index === currentImageIndex ? "bg-white" : "bg-white/50"}`}
                     />
                   ))}
                 </div>
@@ -352,7 +428,9 @@ const PropertyDetails = () => {
             <div className="flex justify-between items-start">
               {/* Property Title and Location */}
               <div>
-                <h1 className="text-3xl font-bold text-gray-900">{property.title}</h1>
+                <h1 className="text-3xl font-bold text-gray-900">
+                  {property.title}
+                </h1>
                 <div className="mt-2 flex items-center text-gray-600">
                   <MapPin className="h-5 w-5 mr-2" />
                   <span>{property.detailed_location}</span>
@@ -364,7 +442,11 @@ const PropertyDetails = () => {
                   S${property.price.toLocaleString()}
                 </div>
                 <div className="text-sm text-gray-500 mt-1">
-                  S${Math.round(property.price / property.area_sqft).toLocaleString()} per sqft
+                  S$
+                  {Math.round(
+                    property.price / property.area_sqft,
+                  ).toLocaleString()}{" "}
+                  per sqft
                 </div>
               </div>
             </div>
@@ -375,15 +457,18 @@ const PropertyDetails = () => {
                 onClick={toggleInterest}
                 className={`flex items-center space-x-2 px-6 py-3 rounded-full transition-colors ${
                   isInterested
-                    ? 'bg-red-100 text-red-600 hover:bg-red-200'
-                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    ? "bg-red-100 text-red-600 hover:bg-red-200"
+                    : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                 }`}
               >
-                <Heart className={`h-5 w-5 ${isInterested ? 'fill-current' : ''}`} />
-                <span>{isInterested ? 'Interested' : 'Show Interest'}</span>
+                <Heart
+                  className={`h-5 w-5 ${isInterested ? "fill-current" : ""}`}
+                />
+                <span>{isInterested ? "Interested" : "Show Interest"}</span>
               </button>
               <div className="text-gray-600">
-                <span className="font-semibold">{interestCount}</span> people interested
+                <span className="font-semibold">{interestCount}</span> people
+                interested
               </div>
             </div>
 
@@ -393,14 +478,18 @@ const PropertyDetails = () => {
                 <Home className="h-6 w-6 text-blue-600 mr-3" />
                 <div>
                   <div className="text-sm text-gray-500">Rooms</div>
-                  <div className="font-semibold">{property.bedrooms} Bedrooms</div>
+                  <div className="font-semibold">
+                    {property.bedrooms} Bedrooms
+                  </div>
                 </div>
               </div>
               <div className="flex items-center">
                 <Bath className="h-6 w-6 text-blue-600 mr-3" />
                 <div>
                   <div className="text-sm text-gray-500">Bathrooms</div>
-                  <div className="font-semibold">{property.bathrooms} Bathrooms</div>
+                  <div className="font-semibold">
+                    {property.bathrooms} Bathrooms
+                  </div>
                 </div>
               </div>
               <div className="flex items-center">
@@ -421,19 +510,36 @@ const PropertyDetails = () => {
 
             {/* Description Section */}
             <div className="mt-8">
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">Description</h2>
-              <p className="text-gray-600 leading-relaxed">{property.description}</p>
+              <h2 className="text-xl font-semibold text-gray-900 mb-4">
+                Description
+              </h2>
+              <p className="text-gray-600 leading-relaxed">
+                {property.description}
+              </p>
             </div>
 
             {/* Nearby location context */}
             <section className="mt-10" aria-labelledby="nearby-heading">
               <div className="mb-5">
-                <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">Location context</p>
-                <h2 id="nearby-heading" className="mt-1 text-2xl font-bold text-gray-900">What’s nearby</h2>
-                <p className="mt-1 text-sm text-gray-600">Explore nearby categories and their mapped positions.</p>
+                <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">
+                  Location context
+                </p>
+                <h2
+                  id="nearby-heading"
+                  className="mt-1 text-2xl font-bold text-gray-900"
+                >
+                  What’s nearby
+                </h2>
+                <p className="mt-1 text-sm text-gray-600">
+                  Explore nearby categories and their mapped positions.
+                </p>
               </div>
 
-              <div className="mb-5 flex gap-2 overflow-x-auto pb-2" role="group" aria-label="Filter nearby categories">
+              <div
+                className="mb-5 flex gap-2 overflow-x-auto pb-2"
+                role="group"
+                aria-label="Filter nearby categories"
+              >
                 {AMENITY_CATEGORIES.map((category) => (
                   <button
                     key={category.value}
@@ -443,11 +549,14 @@ const PropertyDetails = () => {
                     data-amenity-tone={category.tone}
                     className={`nearby-category-chip amenity-tone--${category.tone} shrink-0 rounded-full border px-4 py-2 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-700 ${
                       amenityCategory === category.value
-                        ? 'is-selected border-slate-900 bg-slate-900 font-semibold text-white'
-                        : 'border-gray-200 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50'
+                        ? "is-selected border-slate-900 bg-slate-900 font-semibold text-white"
+                        : "border-gray-200 bg-white text-gray-700 hover:border-gray-400 hover:bg-gray-50"
                     }`}
                   >
-                    <span className="nearby-category-chip__dot" aria-hidden="true" />
+                    <span
+                      className="nearby-category-chip__dot"
+                      aria-hidden="true"
+                    />
                     {category.label}
                   </button>
                 ))}
@@ -455,24 +564,40 @@ const PropertyDetails = () => {
 
               {hasDemoAmenities && (
                 <p className="mb-4 rounded-lg bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                  Illustrative demo locations, not verified facilities or walking routes.
+                  Illustrative demo locations, not verified facilities or
+                  walking routes.
                 </p>
               )}
 
               <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(280px,0.8fr)_minmax(0,1.5fr)]">
                 <div className="order-2 rounded-xl border border-gray-200 bg-white p-4 sm:p-5 lg:order-1">
                   <div className="mb-4 flex items-center justify-between">
-                    <h3 className="text-lg font-semibold text-gray-900">Nearby places</h3>
-                    {!amenitiesLoading && !amenitiesError && amenities.length > 0 && (
-                      <span className="text-sm text-gray-500">{visibleAmenities.length} shown</span>
-                    )}
+                    <h3 className="text-lg font-semibold text-gray-900">
+                      Nearby places
+                    </h3>
+                    {!amenitiesLoading &&
+                      !amenitiesError &&
+                      amenities.length > 0 && (
+                        <span className="text-sm text-gray-500">
+                          {visibleAmenities.length} shown
+                        </span>
+                      )}
                   </div>
 
                   {amenitiesLoading ? (
-                    <p className="rounded-lg bg-gray-50 p-5 text-sm text-gray-600" role="status">Loading nearby information…</p>
+                    <p
+                      className="rounded-lg bg-gray-50 p-5 text-sm text-gray-600"
+                      role="status"
+                    >
+                      Loading nearby information…
+                    </p>
                   ) : amenitiesError ? (
-                    <p className="rounded-lg bg-amber-50 p-5 text-sm text-amber-900" role="status">
-                      Nearby amenity information could not be loaded. The property details are still available.
+                    <p
+                      className="rounded-lg bg-amber-50 p-5 text-sm text-amber-900"
+                      role="status"
+                    >
+                      Nearby amenity information could not be loaded. The
+                      property details are still available.
                     </p>
                   ) : amenities.length === 0 ? (
                     <p className="rounded-lg bg-gray-50 p-5 text-sm text-gray-600">
@@ -486,19 +611,37 @@ const PropertyDetails = () => {
                     <ul className="max-h-[420px] divide-y divide-gray-100 overflow-y-auto pr-1">
                       {visibleAmenities.map((amenity) => {
                         const AmenityIcon = getAmenityIcon(amenity.type);
-                        const category = getAmenityCategoryMetadata(amenity.type);
+                        const category = getAmenityCategoryMetadata(
+                          amenity.type,
+                        );
                         return (
-                          <li key={amenity.id} className="flex items-start justify-between gap-3 py-4 first:pt-1 last:pb-1">
+                          <li
+                            key={amenity.id}
+                            className="flex items-start justify-between gap-3 py-4 first:pt-1 last:pb-1"
+                          >
                             <div className="flex min-w-0 items-center gap-3">
-                              <span className={`amenity-list-icon amenity-tone--${category.tone} flex h-10 w-10 shrink-0 items-center justify-center rounded-full`}>
-                                <AmenityIcon className="h-5 w-5" aria-hidden="true" />
+                              <span
+                                className={`amenity-list-icon amenity-tone--${category.tone} flex h-10 w-10 shrink-0 items-center justify-center rounded-full`}
+                              >
+                                <AmenityIcon
+                                  className="h-5 w-5"
+                                  aria-hidden="true"
+                                />
                               </span>
                               <div className="min-w-0 pt-0.5">
-                                <p className="break-words font-medium leading-5 text-gray-900">{amenity.name}</p>
-                                <p className={`amenity-category-label amenity-tone--${category.tone} mt-0.5 text-sm font-medium`}>{category.label}</p>
+                                <p className="break-words font-medium leading-5 text-gray-900">
+                                  {amenity.name}
+                                </p>
+                                <p
+                                  className={`amenity-category-label amenity-tone--${category.tone} mt-0.5 text-sm font-medium`}
+                                >
+                                  {category.label}
+                                </p>
                               </div>
                             </div>
-                            <span className={`amenity-distance-badge amenity-tone--${category.tone} mt-1 shrink-0 rounded-full px-2.5 py-1 text-xs font-medium`}>
+                            <span
+                              className={`amenity-distance-badge amenity-tone--${category.tone} mt-1 shrink-0 rounded-full px-2.5 py-1 text-xs font-medium`}
+                            >
                               {formatAmenityDistance(amenity.distance)}
                             </span>
                           </li>
@@ -513,40 +656,68 @@ const PropertyDetails = () => {
                     key={property.id}
                     center={[coordinates.latitude, coordinates.longitude]}
                     zoom={15}
-                    style={{ height: '100%', width: '100%' }}
+                    maxZoom={AMENITY_MAP_MAX_ZOOM}
+                    style={{ height: "100%", width: "100%" }}
                   >
                     <TileLayer
                       url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                      maxNativeZoom={19}
+                      maxZoom={AMENITY_MAP_MAX_ZOOM}
                       attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                     />
-                    <Marker position={[coordinates.latitude, coordinates.longitude]} icon={PROPERTY_MAP_ICON}>
+                    <Marker
+                      position={[coordinates.latitude, coordinates.longitude]}
+                      icon={PROPERTY_MAP_ICON}
+                    >
                       <Popup>
                         <div className="font-semibold">{property.title}</div>
-                        <div className="text-sm text-gray-600">{property.detailed_location}</div>
+                        <div className="text-sm text-gray-600">
+                          {property.detailed_location}
+                        </div>
                       </Popup>
                     </Marker>
-                    {!amenitiesError && visibleAmenities.map((amenity) => (
-                      <Marker
-                        key={amenity.id}
-                        position={[amenity.latitude, amenity.longitude]}
-                        icon={AMENITY_MAP_ICONS[amenity.type] ?? AMENITY_MAP_ICONS.Other}
-                      >
-                        <Popup>
-                          <div className="font-semibold">{amenity.name}</div>
-                          <div className="text-sm text-gray-600">
-                            {getAmenityCategoryLabel(amenity.type)} · {formatAmenityDistance(amenity.distance)}
-                          </div>
-                          {isDemoAmenity(amenity) && <div className="mt-1 text-xs text-amber-800">Demo location</div>}
-                        </Popup>
-                      </Marker>
-                    ))}
+                    {!amenitiesError &&
+                      visibleAmenities
+                        .filter(hasAmenityCoordinates)
+                        .map((amenity) => (
+                          <Marker
+                            key={amenity.id}
+                            position={[amenity.latitude, amenity.longitude]}
+                            icon={
+                              AMENITY_MAP_ICONS[amenity.type] ??
+                              AMENITY_MAP_ICONS.Other
+                            }
+                          >
+                            <Popup>
+                              <div className="font-semibold">
+                                {amenity.name}
+                              </div>
+                              <div className="text-sm text-gray-600">
+                                {getAmenityCategoryLabel(amenity.type)} ·{" "}
+                                {formatAmenityDistance(amenity.distance)}
+                              </div>
+                              {isDemoAmenity(amenity) && (
+                                <div className="mt-1 text-xs text-amber-800">
+                                  Demo location
+                                </div>
+                              )}
+                            </Popup>
+                          </Marker>
+                        ))}
+                    <AmenityMapViewport
+                      latitude={coordinates.latitude}
+                      longitude={coordinates.longitude}
+                      amenities={visibleAmenities}
+                    />
                   </MapContainer>
                 </div>
               </div>
             </section>
             {/* Seller Contact Information Section */}
             <div className="mt-8 bg-blue-50 rounded-lg p-6">
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">Contact Information</h2>
+              <h2 className="text-xl font-semibold text-gray-900 mb-4">
+                Contact Information
+              </h2>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="flex items-center">
                   <div className="bg-blue-100 p-3 rounded-full">
@@ -554,7 +725,9 @@ const PropertyDetails = () => {
                   </div>
                   <div className="ml-4">
                     <div className="text-sm text-gray-500">Seller Name</div>
-                    <div className="font-semibold">{sellerInfo?.name || property.seller_name}</div>
+                    <div className="font-semibold">
+                      {sellerInfo?.name || property.seller_name}
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center">
@@ -563,7 +736,9 @@ const PropertyDetails = () => {
                   </div>
                   <div className="ml-4">
                     <div className="text-sm text-gray-500">Contact Number</div>
-                    <div className="font-semibold">{sellerInfo?.phone || property.seller_phone}</div>
+                    <div className="font-semibold">
+                      {sellerInfo?.phone || property.seller_phone}
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center">
