@@ -14,6 +14,9 @@ applies incremental migrations for the current application features:
 - `20260917120000_hdb_verification_tokens.sql` for server-enforced HDB writes
 - `20260917130000_remove_chatbot_rate_limits.sql` removes the chatbot counter
 - `20261008120000_deterministic_demo_property_amenities.sql` adds provenance and deterministic demo nearby amenities
+- `20261012120000_property_valuation_inputs.sql` adds nullable, provenance-labelled valuation inputs
+- `20261013140000_property_demo_batch_provenance.sql` adds canonical synthetic demo batch provenance and database-enforced eligibility invariants
+- `20261013150000_require_approved_demo_valuations.sql` replaces the demo completeness check to require approved listings while preserving fixture owner IDs
 
 The initial migration creates the full application schema, policies, views, and
 triggers for a fresh Supabase project. Later migrations must be applied in
@@ -42,6 +45,120 @@ Real amenity ingestion is not implemented. When an authoritative source is
 ready, remove the temporary demo trigger and replace `source = 'demo'` rows using
 the chosen real-source provenance. The migration file documents the full
 generation logic; this README describes its behavior only.
+
+## Local demo valuation integration
+
+`20261012120000_property_valuation_inputs.sql` adds nullable structured inputs
+for `flat_type`, `flat_model`, model-oriented `storey_mid`, and a remaining
+lease value tied to `remaining_lease_as_of_month`. It adds
+`valuation_inputs_source`, defaulting to `legacy`. Existing rows receive no
+fabricated feature values; no property rows are updated by the migration. Basic
+text, numeric, and month checks preserve canonical property facts independently
+of any model version. Rows labelled `demo` must include their valuation inputs
+and explicit town, block, street, and floor area, with canonical batch
+provenance. The demo valuation gate additionally requires a valid
+`storey_range` whose midpoint matches `storey_mid`; seller eligibility does not
+require the training-style range string.
+
+`20261013120000_property_storey_range.sql` adds nullable `storey_range` for
+auditable demo source ranges and checks the training-style midpoint when both
+storey fields are present. The canonical local inventory in `seed.sql` is the
+union of two synthetic test batches: 20 rows from
+`sghomie-test-2026-10-07-2e3e55` and 30 from
+`sghomie-test-2026-10-07-extra30-12f05f`. Their exported UUIDs and listing
+facts are stored directly in the seed. It has no reset-time dependency on the
+ignored export CSV or HDB training CSV. The CSV was used only as temporary
+construction input.
+
+The canonical fixtures set `valuation_inputs_source='demo'`, their explicit
+`demo_batch_id`, and `hdb_verified=false`; they omit nullable seller/account identifiers and
+contacts. `flat_type` comes from each fictional title. Flat-model and storey
+range categories and lease reference values were chosen deterministically from
+HDB development data dated 2017-01 through 2025-12, with explicit town/type
+grouping and tie rules. Lease values are aged to `2026-10-01`; the Edge
+Function subtracts whole calendar months through the current Singapore
+valuation month. Block and training-style street fields are stored explicitly.
+All these valuation attributes remain synthetic, not seller- or HDB-verified.
+This fixture-only construction does not alter CatBoost model selection,
+training, uncertainty calibration, or the untouched 2026 evaluation results.
+
+The seed removes the nine superseded standalone fixtures only when their exact
+title, detailed address, and `Demo Seller` signature matches. It upserts only
+the 50 canonical IDs and clears nullable seller/account fields on those rows;
+it does not delete properties based on demo provenance. The legacy location
+trigger previously substituted a town centroid on insert even when a complete
+coordinate pair was supplied. `20261013130000_preserve_explicit_property_coordinates.sql`
+keeps explicit pairs and retains the centroid only as a missing-coordinate or
+location-only-edit fallback, allowing the amenity trigger to see the fixture's
+stored coordinates.
+
+For demo valuation, `storey_range` must match `storey_mid`. This range is
+fixture metadata only, not a permanent seller-facing input. The real seller
+capture contract remains incomplete: a future stage must capture the actual
+floor/storey fact and derive model-oriented range/midpoint values. Seller
+eligibility remains complete `seller_supplied` valuation inputs plus
+`hdb_verified = true`; it does not require sellers to enter a training-style
+range string.
+
+The `valuation` Edge Function accepts only a property UUID and reads the row
+with the caller's Supabase session, so the existing property RLS policies govern
+visibility. It requires an authenticated user and calls the configured Render
+valuation API with a server-held bearer token. Seller eligibility requires
+complete `seller_supplied` inputs, `hdb_verified = true`, and a null
+`demo_batch_id`. HDB verification is an address/location check; it does not
+establish that synthetic listing facts are genuine. Local demos require
+`VALUATION_ALLOW_DEMO_INPUTS=true` and a local Supabase URL. Hosted demos use a
+separate `VALUATION_ALLOW_HOSTED_DEMO_INPUTS=true` gate, a non-local Supabase
+URL, an approved row in one of the two canonical batches, and complete,
+internally consistent valuation inputs. Synthetic seller/account IDs on these
+fixtures are preserved and do not affect demo eligibility. Neither gate reads
+listing descriptions, and the hosted path accepts either value of
+`hdb_verified`.
+Legacy, incomplete, or unverified seller rows return
+`409 VALUATION_UNAVAILABLE`. No `detailed_location`, `built_year`, bedroom
+count, or asking price is used to infer model inputs. Asking price is sent only
+as the optional comparison field; transaction month/year come from the current
+Singapore calendar month.
+
+The Edge Function protects the route with Supabase JWT verification and also
+validates the user in its handler. Configure these Edge Function secrets in the
+local `.env` used by `supabase functions serve valuation --env-file .env`, and
+as Supabase Function secrets only when a hosted deployment is separately
+approved:
+
+- `VALUATION_API_URL`: the trusted Render `POST /v1/valuation/predict` URL.
+- `VALUATION_SERVICE_TOKEN`: the server-to-server bearer token shared with the
+  Render service. Never put it in frontend environment files or responses.
+- `VALUATION_ALLOW_DEMO_INPUTS`: set to `true` only for local development; the
+  function still verifies that `SUPABASE_URL` is local.
+- `VALUATION_ALLOW_HOSTED_DEMO_INPUTS`: set to `true` only when hosted demo
+  valuation is explicitly intended. The function still requires a non-local
+  Supabase URL, canonical `demo_batch_id`, approved status, and complete valid
+  metadata. Synthetic fixture owner IDs are allowed. This flag does not enable
+  local demos and does not change seller eligibility.
+
+The migration does not assign provenance or update the existing hosted demo
+listings. Hosted rows remain unchanged by this repository change and will not
+pass the hosted demo gate until a separately approved data operation assigns
+their canonical batch IDs and demo source. No hosted data update is included
+here.
+
+Run local function tests from the repository root:
+
+```bash
+node --experimental-strip-types --import ./SGHomie/tests/register-deno-imports.mjs --test SGHomie/tests/valuation.test.mjs
+```
+
+The hosted database has already received
+`20261013140000_property_demo_batch_provenance.sql` (as reported for this
+project). The corrective `20261013150000_require_approved_demo_valuations.sql`
+and current function changes remain unapplied and undeployed. No migration here
+assigns batch provenance to or otherwise updates the hosted 50 rows. Do not infer
+other remote schema, secrets, or function state from these files. Before any
+later hosted rollout, inspect pending migrations and deploy the function
+separately using the documented preview-first procedure below. Structured real seller capture is not yet
+implemented, so ordinary production listings will remain valuation-unavailable
+until their owner can provide these fields legitimately.
 
 ## Extensions
 
@@ -84,9 +201,15 @@ supabase db push --dry-run --linked
 supabase db push --linked
 ```
 
-`seed.sql` is used by local `supabase db reset` to load nine approved demo
-properties; it is not applied by `supabase db push`, so demo data cannot enter
-production accidentally. For a new hosted project, link the intended project,
+`seed.sql` is used by local `supabase db reset` to load the 50 canonical
+synthetic batch fixtures; it is not applied by `supabase db push`, so demo data
+cannot enter production accidentally. To update an existing local database
+without resetting it, apply pending migrations locally and then run
+`supabase db seed --local`; the seed upserts the exact batch IDs and removes
+only the nine obsolete seed signatures. A fresh `supabase db reset` also
+recreates the canonical set but resets all local database contents. Neither
+procedure has been run as part of this repository change. For a new hosted
+project, link the intended project,
 review pending migrations, and preview before applying them. For an existing
 hosted project, compare local and remote migration history and reconcile any
 drift before pushing; do not reset or recreate a hosted database to work around

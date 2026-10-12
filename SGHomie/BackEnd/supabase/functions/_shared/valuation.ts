@@ -1,0 +1,353 @@
+export const VALUATION_FEATURE_ORDER = [
+  'transaction_year',
+  'transaction_month',
+  'floor_area_sqm',
+  'storey_mid',
+  'remaining_lease_months',
+  'town',
+  'flat_type',
+  'block',
+  'street_name',
+  'flat_model',
+] as const;
+
+export const SUPPORTED_COVERAGE = [0.8, 0.9, 0.95] as const;
+export const VALUATION_UNAVAILABLE = 'VALUATION_UNAVAILABLE';
+export const CANONICAL_DEMO_BATCH_IDS = [
+  'sghomie-test-2026-10-07-2e3e55',
+  'sghomie-test-2026-10-07-extra30-12f05f',
+] as const;
+
+type PropertyRecord = {
+  id?: unknown;
+  area_sqft?: unknown;
+  price?: unknown;
+  town?: unknown;
+  block_number?: unknown;
+  street_name?: unknown;
+  flat_type?: unknown;
+  flat_model?: unknown;
+  storey_range?: unknown;
+  storey_mid?: unknown;
+  remaining_lease_months?: unknown;
+  remaining_lease_as_of_month?: unknown;
+  valuation_inputs_source?: unknown;
+  hdb_verified?: unknown;
+  demo_batch_id?: unknown;
+  status?: unknown;
+};
+
+type UserClient = {
+  auth: { getUser: () => Promise<{ data: { user: unknown | null }; error: unknown | null }> };
+  from: (table: string) => {
+    select: (columns: string) => {
+      eq: (column: string, value: string) => {
+        maybeSingle: () => Promise<{ data: PropertyRecord | null; error: unknown | null }>;
+      };
+    };
+  };
+};
+
+export type ValuationDependencies = {
+  supabaseUrl: string | undefined;
+  supabaseAnonKey: string | undefined;
+  renderApiUrl: string | undefined;
+  renderServiceToken: string | undefined;
+  allowDemoInputs: string | undefined;
+  allowHostedDemoInputs: string | undefined;
+  createUserClient: (url: string, anonKey: string, authorization: string) => UserClient;
+  fetcher?: typeof fetch;
+  now?: () => Date;
+  timeoutMs?: number;
+};
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Cache-Control': 'no-store',
+};
+
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+  });
+}
+
+function fail(status: number, code: string, message: string): Response {
+  return jsonResponse({ error: { code, message } }, status);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function finiteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+function nonBlank(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+export function currentSingaporeMonth(now = new Date()): { year: number; month: number } {
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: 'Asia/Singapore',
+    year: 'numeric',
+    month: '2-digit',
+  }).formatToParts(now);
+  return {
+    year: Number(parts.find((part) => part.type === 'year')?.value),
+    month: Number(parts.find((part) => part.type === 'month')?.value),
+  };
+}
+
+export function parseAsOfMonth(value: unknown): { year: number; month: number } | null {
+  if (typeof value !== 'string') return null;
+  const match = /^(\d{4})-(\d{2})-01$/.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (year < 1900 || month < 1 || month > 12) return null;
+  return { year, month };
+}
+
+export function effectiveRemainingLeaseMonths(
+  storedMonths: unknown,
+  asOfMonth: unknown,
+  valuationMonth: { year: number; month: number },
+): number {
+  if (!Number.isInteger(storedMonths) || (storedMonths as number) < 1 || (storedMonths as number) > 1200) {
+    throw new Error('invalid stored lease');
+  }
+  const asOf = parseAsOfMonth(asOfMonth);
+  if (!asOf || !Number.isInteger(valuationMonth.year) || !Number.isInteger(valuationMonth.month)
+      || valuationMonth.month < 1 || valuationMonth.month > 12) {
+    throw new Error('invalid lease month');
+  }
+  const elapsed = (valuationMonth.year - asOf.year) * 12 + valuationMonth.month - asOf.month;
+  if (elapsed < 0) throw new Error('lease as-of month is in the future');
+  const effective = (storedMonths as number) - elapsed;
+  if (effective <= 0) throw new Error('lease is exhausted');
+  return effective;
+}
+
+export function isLocalSupabaseUrl(value: string | undefined): boolean {
+  if (!value) return false;
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return ['localhost', '127.0.0.1', '::1', '[::1]', 'kong'].includes(host);
+  } catch {
+    return false;
+  }
+}
+
+export function storeyRangeMidpoint(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const match = /^(\d{2}) TO (\d{2})$/.exec(value);
+  if (!match) return null;
+  const low = Number(match[1]);
+  const high = Number(match[2]);
+  if (low < 1 || high < low || high > 99) return null;
+  return (low + high) / 2;
+}
+
+export function buildValuationRequest(
+  property: PropertyRecord,
+  valuationMonth: { year: number; month: number },
+): { features: Record<(typeof VALUATION_FEATURE_ORDER)[number], string | number>; asking_price?: number } {
+  const floorArea = finiteNumber(property.area_sqft) ? property.area_sqft / 10.7639 : NaN;
+  const remainingLease = effectiveRemainingLeaseMonths(
+    property.remaining_lease_months,
+    property.remaining_lease_as_of_month,
+    valuationMonth,
+  );
+  const requiredCategories = {
+    town: property.town,
+    flat_type: property.flat_type,
+    block: property.block_number,
+    street_name: property.street_name,
+    flat_model: property.flat_model,
+  };
+  const categoryLimits: Record<string, number> = {
+    town: 100,
+    flat_type: 40,
+    block: 20,
+    street_name: 120,
+    flat_model: 100,
+  };
+  for (const [name, value] of Object.entries(requiredCategories)) {
+    if (!nonBlank(value) || value.trim().length > categoryLimits[name]) throw new Error(`invalid ${name}`);
+  }
+  if (!Number.isFinite(floorArea) || floorArea <= 0 || !finiteNumber(property.storey_mid)
+      || property.storey_mid <= 0 || property.storey_mid > 100) {
+    throw new Error('invalid numeric valuation input');
+  }
+  const features = {
+    transaction_year: valuationMonth.year,
+    transaction_month: valuationMonth.month,
+    floor_area_sqm: floorArea,
+    storey_mid: property.storey_mid,
+    remaining_lease_months: remainingLease,
+    town: (property.town as string).trim(),
+    flat_type: (property.flat_type as string).trim(),
+    block: (property.block_number as string).trim(),
+    street_name: (property.street_name as string).trim(),
+    flat_model: (property.flat_model as string).trim(),
+  };
+  const result: { features: typeof features; asking_price?: number } = { features };
+  if (finiteNumber(property.price) && property.price > 0) result.asking_price = property.price;
+  return result;
+}
+
+export function validateValuationResponse(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
+  const numericKeys = [
+    'estimated_value', 'lower_bound', 'upper_bound', 'interval_half_width',
+    'interval_full_width', 'coverage_target',
+  ];
+  if (!numericKeys.every((key) => finiteNumber(value[key]))) return null;
+  const estimate = value.estimated_value as number;
+  const lower = value.lower_bound as number;
+  const upper = value.upper_bound as number;
+  const half = value.interval_half_width as number;
+  const full = value.interval_full_width as number;
+  if (estimate <= 0 || lower < 0 || lower > estimate || estimate > upper || half < 0 || full < 0
+      || Math.abs(full - (upper - lower)) > 0.01
+      || Math.abs(half - (upper - lower) / 2) > 0.01
+      || !SUPPORTED_COVERAGE.includes(value.coverage_target as (typeof SUPPORTED_COVERAGE)[number])) return null;
+  if (!nonBlank(value.model_version) || !nonBlank(value.uncertainty_method)
+      || !nonBlank(value.uncertainty_group) || !Number.isInteger(value.uncertainty_support)
+      || (value.uncertainty_support as number) < 0 || typeof value.used_global_fallback !== 'boolean') return null;
+  const positions = [null, 'below_estimated_market_range', 'within_estimated_market_range', 'above_estimated_market_range'];
+  if (!positions.includes(value.price_position as null | string)) return null;
+  return {
+    estimated_value: estimate,
+    lower_bound: lower,
+    upper_bound: upper,
+    interval_half_width: half,
+    interval_full_width: full,
+    coverage_target: value.coverage_target,
+    model_version: value.model_version,
+    uncertainty_method: value.uncertainty_method,
+    uncertainty_group: value.uncertainty_group,
+    uncertainty_support: value.uncertainty_support,
+    used_global_fallback: value.used_global_fallback,
+    price_position: value.price_position,
+  };
+}
+
+export function createValuationHandler(dependencies: ValuationDependencies) {
+  return async (request: Request): Promise<Response> => {
+    if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
+    if (request.method !== 'POST') return fail(405, 'METHOD_NOT_ALLOWED', 'Use POST for valuation.');
+    const requestId = crypto.randomUUID();
+    const authorization = request.headers.get('Authorization') ?? '';
+    if (!/^Bearer\s+\S+$/i.test(authorization)) return fail(401, 'UNAUTHORIZED', 'Authentication required.');
+    if (!dependencies.supabaseUrl || !dependencies.supabaseAnonKey) {
+      console.error(JSON.stringify({ requestId, stage: 'configuration', message: 'Supabase auth configuration missing' }));
+      return fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.');
+    }
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return fail(400, 'INVALID_REQUEST', 'A JSON request body is required.');
+    }
+    if (!isRecord(body) || Object.keys(body).length !== 1 || typeof body.property_id !== 'string'
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.property_id)) {
+      return fail(400, 'INVALID_REQUEST', 'Provide a valid property_id.');
+    }
+    let client: UserClient;
+    try {
+      client = dependencies.createUserClient(dependencies.supabaseUrl, dependencies.supabaseAnonKey, authorization);
+      const { data: authData, error: authError } = await client.auth.getUser();
+      if (authError || !authData.user) return fail(401, 'UNAUTHORIZED', 'Authentication required.');
+    } catch {
+      return fail(401, 'UNAUTHORIZED', 'Authentication required.');
+    }
+    let property: PropertyRecord | null;
+    try {
+      const query = await client.from('properties').select(
+        'id,area_sqft,price,town,block_number,street_name,flat_type,flat_model,storey_range,storey_mid,remaining_lease_months,remaining_lease_as_of_month,valuation_inputs_source,hdb_verified,demo_batch_id,status',
+      ).eq('id', body.property_id).maybeSingle();
+      if (query.error) return fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.');
+      property = query.data;
+    } catch {
+      return fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.');
+    }
+    if (!property) return fail(404, 'PROPERTY_NOT_FOUND', 'Property not found.');
+
+    const localSupabase = isLocalSupabaseUrl(dependencies.supabaseUrl);
+    const demoMidpoint = storeyRangeMidpoint(property.storey_range);
+    const hasCanonicalDemoProvenance = CANONICAL_DEMO_BATCH_IDS.includes(
+      property.demo_batch_id as (typeof CANONICAL_DEMO_BATCH_IDS)[number],
+    );
+    const hasConsistentDemoStorey = demoMidpoint !== null
+      && finiteNumber(property.storey_mid)
+      && demoMidpoint === property.storey_mid;
+    const isLocalDemo = property.valuation_inputs_source === 'demo'
+      && dependencies.allowDemoInputs === 'true'
+      && localSupabase
+      && hasCanonicalDemoProvenance
+      && property.status === 'approved'
+      && hasConsistentDemoStorey;
+    const isHostedDemo = property.valuation_inputs_source === 'demo'
+      && dependencies.allowHostedDemoInputs === 'true'
+      && !localSupabase
+      && hasCanonicalDemoProvenance
+      && property.status === 'approved'
+      && hasConsistentDemoStorey;
+    const isSellerSupplied = property.valuation_inputs_source === 'seller_supplied'
+      && property.hdb_verified === true
+      && property.demo_batch_id == null;
+    if (!isLocalDemo && !isHostedDemo && !isSellerSupplied) {
+      return fail(409, VALUATION_UNAVAILABLE, 'This property does not have verified, complete valuation inputs.');
+    }
+    const singaporeMonth = currentSingaporeMonth(dependencies.now?.() ?? new Date());
+    let valuationRequest: ReturnType<typeof buildValuationRequest>;
+    try {
+      valuationRequest = buildValuationRequest(property, singaporeMonth);
+    } catch {
+      return fail(409, VALUATION_UNAVAILABLE, 'This property does not have complete valid valuation inputs.');
+    }
+    if (!dependencies.renderApiUrl || !dependencies.renderServiceToken) {
+      console.error(JSON.stringify({ requestId, stage: 'configuration', message: 'Valuation upstream configuration missing' }));
+      return fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.');
+    }
+    const fetcher = dependencies.fetcher ?? fetch;
+    let upstream: Response;
+    try {
+      upstream = await fetcher(dependencies.renderApiUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${dependencies.renderServiceToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...valuationRequest.features,
+          coverage: 0.9,
+          ...(valuationRequest.asking_price === undefined ? {} : { asking_price: valuationRequest.asking_price }),
+        }),
+        signal: AbortSignal.timeout(dependencies.timeoutMs ?? 120_000),
+      });
+    } catch {
+      console.error(JSON.stringify({ requestId, stage: 'upstream', message: 'Valuation request failed' }));
+      return fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.');
+    }
+    if (!upstream.ok) {
+      console.error(JSON.stringify({ requestId, stage: 'upstream', status: upstream.status }));
+      return fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.');
+    }
+    let upstreamBody: unknown;
+    try {
+      upstreamBody = await upstream.json();
+    } catch {
+      return fail(502, 'INVALID_VALUATION_RESPONSE', 'The valuation service returned an invalid response.');
+    }
+    const safeResult = validateValuationResponse(upstreamBody);
+    if (!safeResult) return fail(502, 'INVALID_VALUATION_RESPONSE', 'The valuation service returned an invalid response.');
+    return jsonResponse({ data: safeResult, request_id: requestId });
+  };
+}
