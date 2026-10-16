@@ -1,5 +1,5 @@
 // Import React and its hooks for managing state and side effects.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 // Import routing hooks to extract parameters from URL and create links.
 import { useParams } from 'react-router-dom';
 // Import various icons from lucide-react for UI elements.
@@ -10,6 +10,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import { divIcon } from 'leaflet';
 // Import the Supabase client for backend operations.
 import { supabase } from '../lib/supabase';
+import { getPricePositionLabel, getPropertyValuation, getValuationErrorMessage, PropertyValuationError, type PropertyValuation, type PropertyValuationErrorCategory } from '../lib/valuation';
 import type { RealtimeChannel } from '@supabase/supabase-js';
 // Import the custom authentication context to access user data.
 import { useAuth } from '../contexts/AuthContext';
@@ -110,6 +111,23 @@ const AMENITY_LIST_ICONS: Record<string, LucideIcon> = {
 
 const getAmenityIcon = (type: string): LucideIcon => AMENITY_LIST_ICONS[type] ?? MapPin;
 
+const singaporeDollar = new Intl.NumberFormat('en-SG', {
+  style: 'currency',
+  currency: 'SGD',
+  currencyDisplay: 'narrowSymbol',
+  maximumFractionDigits: 0,
+});
+const formatSingaporeDollars = (value: number) => singaporeDollar
+  .formatToParts(value)
+  .map((part) => part.type === 'currency' ? 'S$' : part.value)
+  .join('');
+
+const pricePositionStyles = {
+  below_estimated_market_range: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+  within_estimated_market_range: 'border-blue-200 bg-blue-50 text-blue-800',
+  above_estimated_market_range: 'border-amber-200 bg-amber-50 text-amber-900',
+} as const;
+
 // Main functional component for displaying the property details page.
 const PropertyDetails = () => {
   // Extract the property ID from the URL parameters.
@@ -134,6 +152,11 @@ const PropertyDetails = () => {
   const [isInterested, setIsInterested] = useState(false);
   // State to store the seller's information.
   const [sellerInfo, setSellerInfo] = useState<SellerInfo | null>(null);
+  const [valuation, setValuation] = useState<{ propertyId: string; result: PropertyValuation } | null>(null);
+  const [valuationLoading, setValuationLoading] = useState(false);
+  const [valuationError, setValuationError] = useState<{ propertyId: string; category: PropertyValuationErrorCategory } | null>(null);
+  const valuationRequestSequence = useRef(0);
+  const valuationRequestPending = useRef(false);
 
   // Function to navigate to the previous image in the gallery.
   const prevImage = () => {
@@ -158,6 +181,12 @@ const PropertyDetails = () => {
     let active = true;
     let channel: RealtimeChannel | undefined;
     const controller = new AbortController();
+    valuationRequestSequence.current += 1;
+    valuationRequestPending.current = false;
+
+    setValuation(null);
+    setValuationLoading(false);
+    setValuationError(null);
 
     setLoading(true);
     setProperty(null);
@@ -311,9 +340,43 @@ const PropertyDetails = () => {
     return () => {
       active = false;
       controller.abort();
+      valuationRequestSequence.current += 1;
+      valuationRequestPending.current = false;
       if (channel) void supabase.removeChannel(channel);
     };
   }, [id, userId]);
+
+  const requestPropertyValuation = async () => {
+    if (!user || valuationError?.category === 'authentication') {
+      window.dispatchEvent(new CustomEvent('toggle-auth-modal'));
+      return;
+    }
+    if (!property || property.id !== id || valuationRequestPending.current) return;
+
+    const propertyId = property.id;
+    const requestSequence = ++valuationRequestSequence.current;
+    valuationRequestPending.current = true;
+    setValuation(null);
+    setValuationError(null);
+    setValuationLoading(true);
+
+    try {
+      const result = await getPropertyValuation(propertyId);
+      if (requestSequence !== valuationRequestSequence.current) return;
+      setValuation({ propertyId, result });
+    } catch (error) {
+      if (requestSequence !== valuationRequestSequence.current) return;
+      setValuationError({
+        propertyId,
+        category: error instanceof PropertyValuationError ? error.category : 'function_error',
+      });
+    } finally {
+      if (requestSequence === valuationRequestSequence.current) {
+        valuationRequestPending.current = false;
+        setValuationLoading(false);
+      }
+    }
+  };
 
   // Function to toggle the interest status for the current user.
   const toggleInterest = async () => {
@@ -357,7 +420,7 @@ const PropertyDetails = () => {
   };
 
   // Display a loading screen while property details are being fetched.
-  if (loading) {
+  if (loading || (property && property.id !== id)) {
     return (
       <div className="pt-16 min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-gray-600">Loading property details...</div>
@@ -381,6 +444,10 @@ const PropertyDetails = () => {
   };
   const visibleAmenities = filterAndSortAmenities(amenities, amenityCategory);
   const hasDemoAmenities = visibleAmenities.some(isDemoAmenity);
+  const currentValuation = valuation?.propertyId === property.id && property.id === id ? valuation : null;
+  const currentValuationError = valuationError?.propertyId === property.id && property.id === id
+    ? valuationError.category
+    : null;
 
   // Main rendered output for the PropertyDetails page.
   return (
@@ -507,6 +574,74 @@ const PropertyDetails = () => {
                 </div>
               </div>
             </div>
+
+            {/* On-demand Supabase model estimate */}
+            <section className="mt-8 rounded-xl border border-slate-200 bg-slate-50 p-5 sm:p-6" aria-labelledby="valuation-heading">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 id="valuation-heading" className="text-xl font-semibold text-gray-900">SG Homie Valuation</h2>
+                  <p className="mt-1 text-sm font-medium text-gray-700">Research model estimate</p>
+                  {!currentValuation && !currentValuationError && (
+                    <p className="mt-2 max-w-2xl text-sm leading-relaxed text-gray-600">
+                      {user
+                        ? 'Request a model-based estimate for this listing.'
+                        : 'Sign in to request a model-based estimate.'}
+                    </p>
+                  )}
+                </div>
+                {!currentValuation && (
+                  <button
+                    type="button"
+                    onClick={requestPropertyValuation}
+                    disabled={valuationLoading}
+                    className="inline-flex shrink-0 items-center justify-center rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700 disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {valuationLoading
+                      ? 'Calculating valuation...'
+                      : currentValuationError === 'authentication'
+                        ? 'Sign in for valuation'
+                        : currentValuationError
+                          ? 'Try valuation again'
+                          : user
+                            ? 'Get property valuation'
+                            : 'Sign in for valuation'}
+                  </button>
+                )}
+              </div>
+
+              {currentValuationError && (
+                <p role="status" className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-gray-700">
+                  {getValuationErrorMessage(currentValuationError)}
+                </p>
+              )}
+
+              {currentValuation && (
+                <div className="mt-5 rounded-lg border border-slate-200 bg-white p-4 sm:p-5">
+                  <div className="grid gap-5 sm:grid-cols-3">
+                    <div>
+                      <p className="text-sm text-gray-500">Estimated market value</p>
+                      <p className="mt-1 text-2xl font-bold tracking-tight text-gray-900">{formatSingaporeDollars(currentValuation.result.estimated_value)}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">{Math.round(currentValuation.result.coverage_target * 100)}% estimated range</p>
+                      <p className="mt-1 text-lg font-semibold text-gray-900">
+                        {formatSingaporeDollars(currentValuation.result.lower_bound)} – {formatSingaporeDollars(currentValuation.result.upper_bound)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-500">Asking price</p>
+                      <p className="mt-1 text-lg font-semibold text-gray-900">{formatSingaporeDollars(property.price)}</p>
+                    </div>
+                  </div>
+                  <p className={`mt-5 rounded-lg border px-4 py-3 text-sm font-medium ${pricePositionStyles[currentValuation.result.price_position]}`}>
+                    {getPricePositionLabel(currentValuation.result.price_position)}
+                  </p>
+                  <p className="mt-3 text-xs leading-relaxed text-gray-500">
+                    Research model estimate using historical HDB resale data, not a professional property valuation. Some demo listing inputs are synthetic; HDB address verification alone does not verify listing details.
+                  </p>
+                </div>
+              )}
+            </section>
 
             {/* Description Section */}
             <div className="mt-8">

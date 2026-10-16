@@ -23,7 +23,7 @@ function deferred() {
 
 function harness(response = query => query.table === 'properties'
   ? { data: { id: query.filters.id }, error: null }
-  : { data: [], count: 3, error: null }) {
+  : { data: [], count: 3, error: null }, { user = null, requestValuation = async () => ({}) } = {}) {
   const writes = [];
   const errors = [];
   const queries = [];
@@ -31,13 +31,21 @@ function harness(response = query => query.table === 'properties'
   const removed = [];
   const markers = [];
   const stateOverrides = new Map();
+  const refs = [];
+  const dispatchedEvents = [];
   let hookIndex = 0;
   let routeId;
   let effect;
+  let lastTree;
   const hooks = {
     useState(initial) {
       const index = hookIndex++;
-      return [stateOverrides.has(index) ? stateOverrides.get(index) : initial, value => writes.push(value)];
+      return [stateOverrides.has(index) ? stateOverrides.get(index) : initial, value => writes.push({ index, value })];
+    },
+    useRef(initial) {
+      const index = hookIndex++;
+      if (!refs[index]) refs[index] = { current: initial };
+      return refs[index];
     },
     useEffect(callback) { effect = callback; },
   };
@@ -78,7 +86,7 @@ function harness(response = query => query.table === 'properties'
   const exports = {};
   const jsx = (type, props, key) => {
     if (type === 'Marker') markers.push({ props, key });
-    return null;
+    return { type, props, key };
   };
   const modules = {
     react: {
@@ -88,8 +96,16 @@ function harness(response = query => query.table === 'properties'
     },
     "react/jsx-runtime": { jsx, jsxs: jsx },
     "react-router-dom": { useParams: () => ({ id: routeId }) },
-    "../contexts/AuthContext": { useAuth: () => ({ user: null }) },
+    "../contexts/AuthContext": { useAuth: () => ({ user }) },
     "../lib/supabase": { supabase: client },
+    "../lib/valuation": {
+      getPropertyValuation: requestValuation,
+      getPricePositionLabel: position => position,
+      getValuationErrorMessage: category => category,
+      PropertyValuationError: class PropertyValuationError extends Error {
+        constructor(category) { super(category); this.category = category; }
+      },
+    },
 
     "../lib/amenities": amenityHelpers,
 
@@ -120,21 +136,45 @@ function harness(response = query => query.table === 'properties'
   };
   runInNewContext(compiled, {
     exports, AbortController, crypto: { randomUUID }, console: { error: (...args) => errors.push(args) },
+    window: { dispatchEvent: event => dispatchedEvents.push(event.type) },
+    CustomEvent: class CustomEvent { constructor(type) { this.type = type; } },
     require(name) { assert.ok(name in modules, `Unexpected import: ${name}`); return modules[name]; },
   });
   return {
     writes,
     errors,
+    dispatchedEvents,
     queries,
     channels,
     removed,
     mount(id = "property-a") {
       routeId = id;
       hookIndex = 0;
-      exports.default();
+      lastTree = exports.default();
       return effect();
     },
+    render(id = routeId) {
+      routeId = id;
+      hookIndex = 0;
+      lastTree = exports.default();
+      return lastTree;
+    },
+    getButton(label) {
+      const pending = [lastTree];
+      while (pending.length) {
+        const node = pending.pop();
+        if (!node || typeof node !== 'object') continue;
+        const children = node.props?.children;
+        const text = Array.isArray(children) ? children.join('') : children;
+        if (node.type === 'button' && text === label) return node;
+        if (Array.isArray(children)) pending.push(...children);
+        else pending.push(children);
+      }
+      return null;
+    },
+    setStateOverride(index, value) { stateOverrides.set(index, value); },
     renderUnknownAmenity() {
+      routeId = 'property-a';
       stateOverrides.set(0, {
         id: "property-a",
         title: "Test fixture",
@@ -245,4 +285,54 @@ test('navigation ignores a realtime count response arriving after the old page c
   assert.equal(app.queries.length, queryCount);
   assert.deepEqual(app.errors, []);
   cleanupNext();
+});
+
+test('a valuation response from the previous property route is ignored', async () => {
+  const pendingValuation = deferred();
+  const app = harness(undefined, {
+    user: { id: 'buyer-1' },
+    requestValuation: () => pendingValuation.promise,
+  });
+  const property = {
+    id: 'property-a', title: 'Fixture listing', price: 750000, location: 'SERANGOON',
+    type: 'HDB', image_url: 'image.png', bedrooms: 3, bathrooms: 2, area_sqft: 900,
+    description: 'Fixture', detailed_location: '123 Example Street', seller_name: null,
+    seller_phone: null, photos: [], latitude: 1.35, longitude: 103.87, built_year: 2000,
+  };
+  app.setStateOverride(0, property);
+  app.setStateOverride(5, false);
+
+  const cleanupOld = app.mount('property-a');
+  await setImmediate();
+  app.render('property-a');
+  const button = app.getButton('Get property valuation');
+  assert.ok(button, 'signed-in users can explicitly request a valuation');
+  const request = button.props.onClick();
+
+  cleanupOld();
+  app.setStateOverride(0, { ...property, id: 'property-b' });
+  const cleanupNew = app.mount('property-b');
+  await setImmediate();
+  const valuationWritesBeforeResolve = app.writes.filter(write => write.index === 10).length;
+  pendingValuation.resolve({ estimated_value: 700000 });
+  await request;
+
+  assert.equal(app.writes.filter(write => write.index === 10).length, valuationWritesBeforeResolve);
+  cleanupNew();
+});
+
+test('logged-out valuation requests open the existing auth modal without invoking the service', async () => {
+  let serviceCalls = 0;
+  const app = harness(undefined, { requestValuation: async () => { serviceCalls += 1; return {}; } });
+  app.setStateOverride(0, {
+    id: 'property-a', title: 'Fixture listing', price: 750000, photos: [],
+  });
+  app.setStateOverride(5, false);
+  app.render('property-a');
+
+  const button = app.getButton('Sign in for valuation');
+  assert.ok(button);
+  await button.props.onClick();
+  assert.deepEqual(app.dispatchedEvents, ['toggle-auth-modal']);
+  assert.equal(serviceCalls, 0);
 });
