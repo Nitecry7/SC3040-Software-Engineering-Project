@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 
@@ -270,15 +271,51 @@ def test_known_town_normalizes_case_and_whitespace_and_unknown_falls_back(client
     assert unknown["uncertainty_support"] == 60
 
 
+def test_timing_log_reuses_the_private_correlation_id_without_logging_features_or_secrets(client, caplog):
+    request_id = "a2c30b6f-631b-4d9e-8383-8968707546b1"
+    private_token = "private-render-token-test-value"
+    private_feature = "private-feature-test-value"
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+
+    response = client.post(
+        "/v1/valuation/predict",
+        json=valid_request(block=private_feature, asking_price=500_000),
+        headers={
+            "X-Valuation-Request-ID": request_id,
+            "Authorization": f"Bearer {private_token}",
+        },
+    )
+    assert response.status_code == 200
+
+    timing_logs = [record.getMessage() for record in caplog.records if "valuation_timing {" in record.getMessage()]
+    assert len(timing_logs) == 1
+    event = json.loads(timing_logs[0].split("valuation_timing ", 1)[1])
+    assert event["event"] == "valuation_timing"
+    assert event["request_id"] == request_id
+    assert event["status_code"] == 200
+    for stage in [
+        "request_feature_order_ms",
+        "feature_preparation_ms",
+        "catboost_prediction_ms",
+        "conformal_calculation_ms",
+        "asking_price_classification_ms",
+        "total_request_ms",
+    ]:
+        assert isinstance(event["timings_ms"][stage], (int, float))
+        assert event["timings_ms"][stage] >= 0
+    assert private_token not in timing_logs[0]
+    assert private_feature not in timing_logs[0]
+
+
 def test_asking_price_is_context_only_and_uses_existing_classifier(
     client, monkeypatch
 ):
     captured = {}
     original = LoadedValuationBundle.predict_one
 
-    def spy(self, features, coverage=DEFAULT_COVERAGE_LEVEL, prediction_lock=None):
+    def spy(self, features, coverage=DEFAULT_COVERAGE_LEVEL, prediction_lock=None, timing_callback=None):
         captured["features"] = dict(features)
-        return original(self, features, coverage, prediction_lock)
+        return original(self, features, coverage, prediction_lock, timing_callback)
 
     monkeypatch.setattr(LoadedValuationBundle, "predict_one", spy)
     baseline = client.post("/v1/valuation/predict", json=valid_request()).json()
@@ -444,7 +481,11 @@ def test_hosted_auth_protects_prediction_and_model_info_but_not_health(
             "status": "ok",
             "model_loaded": True,
         }
-        for headers in ({}, {"Authorization": "Bearer wrong-token"}):
+        for headers in (
+            {},
+            {"Authorization": "Bearer wrong-token"},
+            {"X-Valuation-Request-ID": "a2c30b6f-631b-4d9e-8383-8968707546b1"},
+        ):
             prediction = hosted.post(
                 "/v1/valuation/predict", json=valid_request(), headers=headers
             )

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 // Import routing hooks to extract parameters from URL and create links.
 import { useParams } from 'react-router-dom';
 // Import various icons from lucide-react for UI elements.
-import { MapPin, Phone, Calendar, Home, Maximize, Bath, Heart, ChevronLeft, ChevronRight, Store, Train, Trees as Tree, Mail, School, ShoppingBag, HeartPulse, Utensils, UsersRound, type LucideIcon } from 'lucide-react';
+import { MapPin, Phone, Calendar, Home, Maximize, Bath, Heart, ChevronLeft, ChevronRight, Store, Train, Trees as Tree, Mail, School, ShoppingBag, HeartPulse, Utensils, UsersRound, Sparkles, type LucideIcon } from 'lucide-react';
 // Import Leaflet components for displaying maps.
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 // Import the Icon constructor from Leaflet to create custom markers.
@@ -17,6 +17,8 @@ import { useAuth } from '../contexts/AuthContext';
 // Import the Property type definition.
 import type { Property } from '../types/supabase';
 import { AMENITY_CATEGORIES, filterAndSortAmenities, formatAmenityDistance, getAmenityCategoryLabel, getAmenityCategoryMetadata, isDemoAmenity, type Amenity, type AmenityCategory } from '../lib/amenities';
+import { formatSingaporeDollars } from '../lib/valuationRange';
+import { ValuationRangeGauge } from '../components/ValuationRangeGauge';
 // Import toast for displaying notifications.
 import toast from 'react-hot-toast';
 // Import Leaflet CSS for proper map styling.
@@ -72,6 +74,14 @@ interface SellerInfo {
   phone: string;
 }
 
+type PropertyDetailsRecord = Pick<Property,
+  'id' | 'title' | 'price' | 'image_url' | 'bedrooms' | 'bathrooms' | 'area_sqft' |
+  'description' | 'detailed_location' | 'seller_name' | 'seller_phone' | 'built_year' |
+  'photos' | 'latitude' | 'longitude'
+>;
+
+const PROPERTY_DETAILS_SELECT = 'id,title,price,image_url,bedrooms,bathrooms,area_sqft,description,detailed_location,seller_name,seller_phone,built_year,photos,latitude,longitude';
+
 // Default coordinates for Singapore to fallback to if property coordinates are missing.
 const DEFAULT_COORDINATES = {
   latitude: 1.3521,
@@ -111,17 +121,6 @@ const AMENITY_LIST_ICONS: Record<string, LucideIcon> = {
 
 const getAmenityIcon = (type: string): LucideIcon => AMENITY_LIST_ICONS[type] ?? MapPin;
 
-const singaporeDollar = new Intl.NumberFormat('en-SG', {
-  style: 'currency',
-  currency: 'SGD',
-  currencyDisplay: 'narrowSymbol',
-  maximumFractionDigits: 0,
-});
-const formatSingaporeDollars = (value: number) => singaporeDollar
-  .formatToParts(value)
-  .map((part) => part.type === 'currency' ? 'S$' : part.value)
-  .join('');
-
 const pricePositionStyles = {
   below_estimated_market_range: 'border-emerald-200 bg-emerald-50 text-emerald-800',
   within_estimated_market_range: 'border-blue-200 bg-blue-50 text-blue-800',
@@ -136,7 +135,7 @@ const PropertyDetails = () => {
   const { user } = useAuth();
   const userId = user?.id;
   // Local state to store the fetched property details.
-  const [property, setProperty] = useState<Property | null>(null);
+  const [property, setProperty] = useState<PropertyDetailsRecord | null>(null);
   // State to hold a list of amenities related to the property.
   const [amenities, setAmenities] = useState<Amenity[]>([]);
   const [amenitiesLoading, setAmenitiesLoading] = useState(true);
@@ -147,16 +146,23 @@ const PropertyDetails = () => {
   // State to track the currently displayed image index in the gallery.
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   // State to store the number of users who showed interest in this property.
-  const [interestCount, setInterestCount] = useState(0);
+  const [interestCount, setInterestCount] = useState<number | null>(null);
+  const [interestCountLoading, setInterestCountLoading] = useState(true);
+  const [interestCountError, setInterestCountError] = useState(false);
+  const [interestLookupLoading, setInterestLookupLoading] = useState(false);
+  const [interestLookupError, setInterestLookupError] = useState(false);
   // Boolean state that indicates if the current user has expressed interest in the property.
   const [isInterested, setIsInterested] = useState(false);
   // State to store the seller's information.
   const [sellerInfo, setSellerInfo] = useState<SellerInfo | null>(null);
   const [valuation, setValuation] = useState<{ propertyId: string; result: PropertyValuation } | null>(null);
   const [valuationLoading, setValuationLoading] = useState(false);
+  const [valuationLoadingStage, setValuationLoadingStage] = useState<0 | 1 | 2>(0);
   const [valuationError, setValuationError] = useState<{ propertyId: string; category: PropertyValuationErrorCategory } | null>(null);
   const valuationRequestSequence = useRef(0);
   const valuationRequestPending = useRef(false);
+  const mapViewportRef = useRef<HTMLDivElement | null>(null);
+  const [mapVisibleFor, setMapVisibleFor] = useState<string | null>(null);
 
   // Function to navigate to the previous image in the gallery.
   const prevImage = () => {
@@ -197,8 +203,13 @@ const PropertyDetails = () => {
     setAmenitiesError(false);
     setAmenityCategory("all");
 
-    setInterestCount(0);
+    setInterestCount(null);
+    setInterestCountLoading(true);
+    setInterestCountError(false);
     setIsInterested(false);
+    setInterestLookupLoading(!!userId);
+    setInterestLookupError(false);
+    setMapVisibleFor(null);
     setCurrentImageIndex(0);
 
     if (!id) {
@@ -233,12 +244,78 @@ const PropertyDetails = () => {
       }
     };
 
+    const fetchInterestCount = async () => {
+      setInterestCountLoading(true);
+      setInterestCountError(false);
+      try {
+        const { count, error } = await supabase
+          .from("property_interests")
+          .select("id", { count: "exact", head: true })
+          .eq("property_id", id)
+          .abortSignal(controller.signal);
+        if (!active) return;
+        if (error) throw error;
+        setInterestCount(count ?? 0);
+      } catch {
+        if (active) setInterestCountError(true);
+      } finally {
+        if (active) setInterestCountLoading(false);
+      }
+    };
+
+    const fetchCurrentUserInterest = async () => {
+      if (!userId) return;
+      setInterestLookupLoading(true);
+      setInterestLookupError(false);
+      try {
+        const { data, error } = await supabase
+          .from("property_interests")
+          .select("id")
+          .eq("property_id", id)
+          .eq("user_id", userId)
+          .abortSignal(controller.signal)
+          .maybeSingle();
+        if (!active) return;
+        if (error) throw error;
+        setIsInterested(!!data);
+      } catch (error) {
+        if (active) {
+          console.error("Error fetching current user interest:", error);
+          setInterestLookupError(true);
+        }
+      } finally {
+        if (active) setInterestLookupLoading(false);
+      }
+    };
+
+    const subscribeToInterestCount = () => {
+      channel = supabase.channel(`property-interests:${id}:${crypto.randomUUID()}`);
+      channel.on("postgres_changes", {
+        event: "*",
+        schema: "public",
+        table: "property_interests",
+        filter: `property_id=eq.${id}`,
+      }, async () => {
+        if (!active) return;
+        const { count, error } = await supabase
+          .from("property_interests")
+          .select("id", { count: "exact", head: true })
+          .eq("property_id", id)
+          .abortSignal(controller.signal);
+        if (active && !error) {
+          setInterestCount(count ?? 0);
+          setInterestCountError(false);
+          setInterestCountLoading(false);
+        }
+      }).subscribe();
+    };
+
     const fetchPropertyDetails = async () => {
       try {
         // Fetch property details from the "properties" table using the given id.
         const { data: propertyData, error: propertyError } = await supabase
           .from("properties")
-          .select("*")
+          .select(PROPERTY_DETAILS_SELECT)
           .eq("id", id)
           .abortSignal(controller.signal)
           .maybeSingle();
@@ -254,7 +331,8 @@ const PropertyDetails = () => {
         }
 
         // Set the fetched property data.
-        setProperty(propertyData);
+        setProperty(propertyData as PropertyDetailsRecord);
+        setLoading(false);
 
         // Use the public seller details stored on the property. Reading another
         // user's private profile or Auth email is blocked by RLS and caused
@@ -267,62 +345,10 @@ const PropertyDetails = () => {
 
         void fetchAmenities(propertyData.id);
 
-        // Fetch the current count of "interest" records for this property.
-        const { count, error: countError } = await supabase
-          .from("property_interests")
-          .select("*", { count: "exact", head: true })
-          .eq("property_id", id)
-          .abortSignal(controller.signal);
+        void fetchInterestCount();
+        void fetchCurrentUserInterest();
 
-        if (!active) return;
-        if (countError) throw countError;
-        // Set the interest count state.
-        setInterestCount(count || 0);
-
-        // If a user is logged in, check whether the current user has expressed interest in this property.
-        if (userId) {
-          const { data: interestData, error: interestError } = await supabase
-            .from("property_interests")
-            .select("*")
-            .eq("property_id", id)
-            .eq("user_id", userId)
-            .abortSignal(controller.signal)
-            .maybeSingle();
-
-          if (!active) return;
-          if (interestError) throw interestError;
-          // Set isInterested state based on whether the interest record exists.
-          setIsInterested(!!interestData);
-        }
-
-        // Subscribe to real-time updates for the interest count on this property.
-        // Removal is asynchronous; each effect must own a fresh channel even
-        // while an earlier route or Strict Mode subscription is leaving.
-        channel = supabase.channel(
-          `property-interests:${id}:${crypto.randomUUID()}`,
-        );
-        channel
-          .on(
-            "postgres_changes",
-            {
-              event: "*",
-              schema: "public",
-              table: "property_interests",
-              filter: `property_id=eq.${id}`,
-            },
-            async () => {
-              if (!active) return;
-              // When any change occurs, re-fetch the interest count.
-              const { count: newCount, error } = await supabase
-                .from("property_interests")
-                .select("*", { count: "exact", head: true })
-                .eq("property_id", id)
-                .abortSignal(controller.signal);
-
-              if (active && !error) setInterestCount(newCount ?? 0);
-            },
-          )
-          .subscribe();
+        subscribeToInterestCount();
       } catch (error) {
         if (!active) return;
         // Log the error and show a notification if fetching fails.
@@ -345,6 +371,42 @@ const PropertyDetails = () => {
       if (channel) void supabase.removeChannel(channel);
     };
   }, [id, userId]);
+
+  useEffect(() => {
+    if (!valuationLoading) {
+      setValuationLoadingStage(0);
+      return;
+    }
+
+    setValuationLoadingStage(0);
+    const analysisTimer = window.setTimeout(() => setValuationLoadingStage(1), 4000);
+    const wakeTimer = window.setTimeout(() => setValuationLoadingStage(2), 15000);
+    return () => {
+      window.clearTimeout(analysisTimer);
+      window.clearTimeout(wakeTimer);
+    };
+  }, [valuationLoading, id]);
+
+  useEffect(() => {
+    const propertyId = property?.id;
+    const viewport = mapViewportRef.current;
+    if (!propertyId || !viewport) return;
+
+    setMapVisibleFor(null);
+    if (typeof IntersectionObserver === 'undefined') {
+      setMapVisibleFor(propertyId);
+      return;
+    }
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setMapVisibleFor(propertyId);
+        observer.disconnect();
+      }
+    }, { rootMargin: '200px' });
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [property?.id]);
 
   const requestPropertyValuation = async () => {
     if (!user || valuationError?.category === 'authentication') {
@@ -398,7 +460,7 @@ const PropertyDetails = () => {
         if (error) throw error;
         // Update local state to reflect removal of interest.
         setIsInterested(false);
-        setInterestCount(prev => prev - 1);
+        setInterestCount(prev => Math.max(0, (prev ?? 0) - 1));
         toast.success('Removed from interests');
       } else {
         // Otherwise, add a new interest record.
@@ -409,7 +471,7 @@ const PropertyDetails = () => {
         if (error) throw error;
         // Update state indicating the user is now interested.
         setIsInterested(true);
-        setInterestCount(prev => prev + 1);
+        setInterestCount(prev => (prev ?? 0) + 1);
         toast.success('Added to interests');
       }
     } catch (error) {
@@ -533,9 +595,16 @@ const PropertyDetails = () => {
                 />
                 <span>{isInterested ? "Interested" : "Show Interest"}</span>
               </button>
-              <div className="text-gray-600">
-                <span className="font-semibold">{interestCount}</span> people
-                interested
+              <div className="text-sm text-gray-600" aria-live="polite">
+                {interestCountLoading ? (
+                  <span role="status">Loading interest count…</span>
+                ) : interestCountError ? (
+                  <span role="status">Interest count is currently unavailable.</span>
+                ) : (
+                  <><span className="font-semibold">{interestCount ?? 0}</span> people interested</>
+                )}
+                {user && interestLookupLoading && <span className="ml-3 text-gray-500">Checking your interest…</span>}
+                {user && interestLookupError && <span className="ml-3 text-amber-800" role="status">Your interest status could not be loaded.</span>}
               </div>
             </div>
 
@@ -576,16 +645,16 @@ const PropertyDetails = () => {
             </div>
 
             {/* On-demand Supabase model estimate */}
-            <section className="mt-8 rounded-xl border border-slate-200 bg-slate-50 p-5 sm:p-6" aria-labelledby="valuation-heading">
+            <section className="mt-8 rounded-xl border border-slate-200 bg-slate-50 p-5 sm:p-6" aria-labelledby="valuation-heading" aria-busy={valuationLoading}>
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <h2 id="valuation-heading" className="text-xl font-semibold text-gray-900">SG Homie Valuation</h2>
-                  <p className="mt-1 text-sm font-medium text-gray-700">Research model estimate</p>
+                  <p className="mt-1 text-sm font-medium text-gray-700">Model-based HDB resale estimate</p>
                   {!currentValuation && !currentValuationError && (
                     <p className="mt-2 max-w-2xl text-sm leading-relaxed text-gray-600">
                       {user
-                        ? 'Request a model-based estimate for this listing.'
-                        : 'Sign in to request a model-based estimate.'}
+                        ? 'Request an estimate and likely market range for this listing.'
+                        : 'Sign in to request an estimate and likely market range.'}
                     </p>
                   )}
                 </div>
@@ -594,8 +663,9 @@ const PropertyDetails = () => {
                     type="button"
                     onClick={requestPropertyValuation}
                     disabled={valuationLoading}
-                    className="inline-flex shrink-0 items-center justify-center rounded-lg bg-blue-700 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700 disabled:cursor-wait disabled:opacity-60"
+                    className="valuation-cta inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-blue-700 via-indigo-700 to-blue-800 px-5 py-3 text-sm font-semibold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-indigo-950 disabled:cursor-wait disabled:opacity-80"
                   >
+                    <Sparkles className={`valuation-sparkles h-4 w-4 shrink-0 ${valuationLoading ? 'valuation-loading-icon' : ''}`} aria-hidden="true" />
                     {valuationLoading
                       ? 'Calculating valuation...'
                       : currentValuationError === 'authentication'
@@ -603,11 +673,29 @@ const PropertyDetails = () => {
                         : currentValuationError
                           ? 'Try valuation again'
                           : user
-                            ? 'Get property valuation'
+                            ? 'Get property valuation.'
                             : 'Sign in for valuation'}
                   </button>
                 )}
               </div>
+
+              {valuationLoading && (
+                <div className="mt-5" aria-live="polite" aria-atomic="true">
+                  <div className="valuation-progress-track" role="progressbar" aria-label="Property valuation in progress" />
+                  <p className="mt-3 text-sm font-medium text-blue-900">
+                    {valuationLoadingStage === 0
+                      ? 'Preparing property valuation…'
+                      : valuationLoadingStage === 1
+                        ? 'Analysing historical HDB resale patterns…'
+                        : 'Waking the demo valuation service; this may take a little longer.'}
+                  </p>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-3" aria-hidden="true">
+                      <div className="valuation-result-skeleton h-16 rounded-lg" />
+                      <div className="valuation-result-skeleton h-16 rounded-lg" />
+                      <div className="valuation-result-skeleton h-16 rounded-lg" />
+                    </div>
+                </div>
+              )}
 
               {currentValuationError && (
                 <p role="status" className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-gray-700">
@@ -616,17 +704,18 @@ const PropertyDetails = () => {
               )}
 
               {currentValuation && (
-                <div className="mt-5 rounded-lg border border-slate-200 bg-white p-4 sm:p-5">
+                  <div className="valuation-result-enter mt-5 rounded-lg border border-slate-200 bg-white p-4 sm:p-5">
                   <div className="grid gap-5 sm:grid-cols-3">
                     <div>
                       <p className="text-sm text-gray-500">Estimated market value</p>
                       <p className="mt-1 text-2xl font-bold tracking-tight text-gray-900">{formatSingaporeDollars(currentValuation.result.estimated_value)}</p>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-500">{Math.round(currentValuation.result.coverage_target * 100)}% estimated range</p>
+                      <p className="text-sm text-gray-500">Likely market range</p>
                       <p className="mt-1 text-lg font-semibold text-gray-900">
                         {formatSingaporeDollars(currentValuation.result.lower_bound)} – {formatSingaporeDollars(currentValuation.result.upper_bound)}
                       </p>
+                      <p className="mt-1 text-xs text-gray-500">{Math.round(currentValuation.result.coverage_target * 100)}% calibration target</p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-500">Asking price</p>
@@ -636,8 +725,13 @@ const PropertyDetails = () => {
                   <p className={`mt-5 rounded-lg border px-4 py-3 text-sm font-medium ${pricePositionStyles[currentValuation.result.price_position]}`}>
                     {getPricePositionLabel(currentValuation.result.price_position)}
                   </p>
+                  <ValuationRangeGauge
+                    valuation={currentValuation.result}
+                    askingPrice={property.price}
+                    pricePosition={currentValuation.result.price_position}
+                  />
                   <p className="mt-3 text-xs leading-relaxed text-gray-500">
-                    Research model estimate using historical HDB resale data, not a professional property valuation. Some demo listing inputs are synthetic; HDB address verification alone does not verify listing details.
+                    The range is calibrated to a target coverage level across evaluation data; it is not a property-specific probability. This research estimate uses historical HDB resale data and is not a professional property valuation. Demo listing details may be synthetic. HDB address verification confirms location details and does not confirm that a listing is genuine.
                   </p>
                 </div>
               )}
@@ -786,8 +880,8 @@ const PropertyDetails = () => {
                   )}
                 </div>
 
-                <div className="order-1 h-[360px] overflow-hidden rounded-xl border border-gray-200 bg-gray-100 sm:h-[420px] lg:order-2 lg:h-[500px]">
-                  <MapContainer
+                <div ref={mapViewportRef} className="order-1 h-[360px] overflow-hidden rounded-xl border border-gray-200 bg-gray-100 sm:h-[420px] lg:order-2 lg:h-[500px]">
+                  {mapVisibleFor === property.id ? <MapContainer
                     key={property.id}
                     center={[coordinates.latitude, coordinates.longitude]}
                     zoom={15}
@@ -844,7 +938,11 @@ const PropertyDetails = () => {
                       longitude={coordinates.longitude}
                       amenities={visibleAmenities}
                     />
-                  </MapContainer>
+                  </MapContainer> : (
+                    <div className="flex h-full items-center justify-center bg-gradient-to-br from-slate-100 to-blue-50 px-6 text-center text-sm text-gray-600" aria-label="Map preview">
+                      The nearby map will load as you explore this section.
+                    </div>
+                  )}
                 </div>
               </div>
             </section>

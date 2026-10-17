@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 import hmac
+import json
 import logging
 import math
 import os
 from pathlib import Path
+import re
 from threading import Lock
 from time import perf_counter
 from typing import AsyncIterator
@@ -121,6 +123,39 @@ def create_app(
         lifespan=lifespan,
     )
 
+    @app.middleware("http")
+    async def valuation_timing_middleware(request: Request, call_next):
+        if request.url.path != "/v1/valuation/predict":
+            return await call_next(request)
+
+        # This header is only a correlation hint. Service authentication remains
+        # exclusively in require_service_token and never consults this value.
+        supplied_request_id = request.headers.get("x-valuation-request-id", "")
+        request_id = supplied_request_id if re.fullmatch(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}",
+            supplied_request_id,
+        ) else None
+        request.state.valuation_stage_timings_ms = {}
+        request_started_at = perf_counter()
+        response_status = 500
+        try:
+            response = await call_next(request)
+            response_status = response.status_code
+            return response
+        finally:
+            logger.info(
+                "valuation_timing %s",
+                json.dumps({
+                    "event": "valuation_timing",
+                    "request_id": request_id,
+                    "status_code": response_status,
+                    "timings_ms": {
+                        **request.state.valuation_stage_timings_ms,
+                        "total_request_ms": round((perf_counter() - request_started_at) * 1000, 2),
+                    },
+                }, separators=(",", ":")),
+            )
+
     @app.exception_handler(RequestValidationError)
     async def validation_error_response(
         request: Request, error: RequestValidationError
@@ -202,37 +237,48 @@ def create_app(
     def predict(payload: PredictionRequest, request: Request) -> PredictionResponse:
         require_service_token(request)
         bundle: LoadedValuationBundle = request.app.state.valuation_bundle
+        stage_timings = request.state.valuation_stage_timings_ms
+
+        def record_timing(name: str, seconds: float) -> None:
+            stage_timings[name] = round(seconds * 1000, 2)
+
+        feature_started_at = perf_counter()
         ordered_features = {
             feature_name: getattr(payload, feature_name)
             for feature_name in BOOSTED_FEATURES
         }
+        record_timing("request_feature_order_ms", perf_counter() - feature_started_at)
         try:
             prediction = bundle.predict_one(
                 ordered_features,
                 coverage=payload.coverage,
                 prediction_lock=request.app.state.prediction_lock,
+                timing_callback=record_timing,
             )
-        except Exception as error:
-            logger.exception("Valuation inference failed")
+        except Exception:
+            logger.error("Valuation inference failed")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Valuation prediction failed.",
-            ) from error
+            ) from None
 
         price_position = None
         if payload.asking_price is not None:
+            classification_started_at = perf_counter()
             try:
                 price_position = classify_asking_price(
                     payload.asking_price,
                     prediction.lower_bound,
                     prediction.upper_bound,
                 )
-            except Exception as error:
-                logger.exception("Asking-price range classification failed")
+            except Exception:
+                logger.error("Asking-price range classification failed")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Valuation prediction failed.",
-                ) from error
+                ) from None
+            finally:
+                record_timing("asking_price_classification_ms", perf_counter() - classification_started_at)
         return PredictionResponse(
             estimated_value=prediction.estimated_value,
             lower_bound=prediction.lower_bound,

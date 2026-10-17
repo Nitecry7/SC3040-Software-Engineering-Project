@@ -4,7 +4,7 @@ import { Bath, BedDouble, MapPin, Ruler, Search as SearchIcon } from 'lucide-rea
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import MarketplaceMap from '../components/MarketplaceMap';
-import type { Property } from '../types/supabase';
+import type { SearchProperty } from '../types/supabase';
 
 const LOCATIONS = [
   'ALL', 'ANG MO KIO', 'BEDOK', 'BISHAN', 'BUKIT BATOK', 'BUKIT MERAH',
@@ -31,10 +31,12 @@ const DEFAULT_FILTERS: SearchFilters = {
   maxPrice: '',
 };
 
-const fetchProperties = async (filters: SearchFilters): Promise<Property[]> => {
+const SEARCH_PROPERTY_COLUMNS = 'id,title,price,location,image_url,bedrooms,bathrooms,area_sqft,latitude,longitude';
+
+const fetchProperties = async (filters: SearchFilters): Promise<SearchProperty[]> => {
   let query = supabase
     .from('properties')
-    .select('*')
+    .select(SEARCH_PROPERTY_COLUMNS)
     .eq('type', 'HDB')
     .eq('status', 'approved');
 
@@ -45,14 +47,14 @@ const fetchProperties = async (filters: SearchFilters): Promise<Property[]> => {
 
   const { data, error } = await query.order('created_at', { ascending: false });
   if (error) throw error;
-  return data || [];
+  return (data || []) as SearchProperty[];
 };
 
 const formatPrice = (price: number) => `S$${price.toLocaleString('en-SG')}`;
 
 const Search = () => {
   const { user } = useAuth();
-  const [properties, setProperties] = useState<Property[]>([]);
+  const [properties, setProperties] = useState<SearchProperty[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchError, setSearchError] = useState('');
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
@@ -219,10 +221,17 @@ const Search = () => {
             )}
 
             <div className="space-y-3 lg:max-h-[min(68vh,760px)] lg:overflow-y-auto lg:pr-2">
-              {properties.map((property) => (
+              {properties.map((property, index) => (
                 <article key={property.id} className={`overflow-hidden rounded-2xl border bg-white shadow-sm ${selectedPropertyId === property.id ? 'border-blue-500 ring-2 ring-blue-100' : 'border-slate-200'}`}>
                   <button type="button" onClick={() => setSelectedPropertyId(property.id)} aria-pressed={selectedPropertyId === property.id} className="flex w-full gap-4 p-3 text-left hover:bg-slate-50 sm:p-4">
-                    <img src={property.image_url || 'https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=640&q=80'} alt="" className="h-28 w-32 shrink-0 rounded-xl object-cover sm:h-32 sm:w-40" />
+                    <img
+                      src={property.image_url || 'https://images.unsplash.com/photo-1564013799919-ab600027ffc6?auto=format&fit=crop&w=640&q=80'}
+                      alt=""
+                      loading={index < 2 ? 'eager' : 'lazy'}
+                      decoding="async"
+                      fetchPriority={index < 2 ? 'high' : 'auto'}
+                      className="h-28 w-32 shrink-0 rounded-xl object-cover sm:h-32 sm:w-40"
+                    />
                     <div className="min-w-0 flex-1 py-1">
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <p className="line-clamp-2 font-semibold leading-snug text-slate-900">{property.title}</p>

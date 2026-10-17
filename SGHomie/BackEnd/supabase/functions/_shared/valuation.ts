@@ -55,6 +55,7 @@ export type ValuationDependencies = {
   renderServiceToken: string | undefined;
   allowDemoInputs: string | undefined;
   allowHostedDemoInputs: string | undefined;
+  edgeRegion?: string;
   createUserClient: (url: string, anonKey: string, authorization: string) => UserClient;
   fetcher?: typeof fetch;
   now?: () => Date;
@@ -242,43 +243,76 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
   return async (request: Request): Promise<Response> => {
     if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
     if (request.method !== 'POST') return fail(405, 'METHOD_NOT_ALLOWED', 'Use POST for valuation.');
+    const requestStartedAt = performance.now();
     const requestId = crypto.randomUUID();
+    const timings: Record<string, number> = {};
+    const elapsedMs = (startedAt: number) => Math.round((performance.now() - startedAt) * 100) / 100;
+    const finish = (response: Response, outcome: string) => {
+      console.info(JSON.stringify({
+        event: 'valuation_timing',
+        request_id: requestId,
+        edge_region: dependencies.edgeRegion ?? null,
+        outcome,
+        timings_ms: timings,
+        total_ms: elapsedMs(requestStartedAt),
+      }));
+      return response;
+    };
     const authorization = request.headers.get('Authorization') ?? '';
-    if (!/^Bearer\s+\S+$/i.test(authorization)) return fail(401, 'UNAUTHORIZED', 'Authentication required.');
+    const authorizationHeaderStartedAt = performance.now();
+    if (!/^Bearer\s+\S+$/i.test(authorization)) {
+      timings.authentication_ms = elapsedMs(authorizationHeaderStartedAt);
+      return finish(fail(401, 'UNAUTHORIZED', 'Authentication required.'), 'unauthorized');
+    }
     if (!dependencies.supabaseUrl || !dependencies.supabaseAnonKey) {
       console.error(JSON.stringify({ requestId, stage: 'configuration', message: 'Supabase auth configuration missing' }));
-      return fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.');
+      timings.authentication_ms = elapsedMs(authorizationHeaderStartedAt);
+      return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'configuration_error');
     }
     let body: unknown;
+    const requestValidationStartedAt = performance.now();
     try {
       body = await request.json();
     } catch {
-      return fail(400, 'INVALID_REQUEST', 'A JSON request body is required.');
+      timings.request_validation_ms = elapsedMs(requestValidationStartedAt);
+      return finish(fail(400, 'INVALID_REQUEST', 'A JSON request body is required.'), 'invalid_request');
     }
     if (!isRecord(body) || Object.keys(body).length !== 1 || typeof body.property_id !== 'string'
         || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.property_id)) {
-      return fail(400, 'INVALID_REQUEST', 'Provide a valid property_id.');
+      timings.request_validation_ms = elapsedMs(requestValidationStartedAt);
+      return finish(fail(400, 'INVALID_REQUEST', 'Provide a valid property_id.'), 'invalid_request');
     }
+    timings.request_validation_ms = elapsedMs(requestValidationStartedAt);
     let client: UserClient;
+    const authenticationStartedAt = performance.now();
     try {
       client = dependencies.createUserClient(dependencies.supabaseUrl, dependencies.supabaseAnonKey, authorization);
       const { data: authData, error: authError } = await client.auth.getUser();
-      if (authError || !authData.user) return fail(401, 'UNAUTHORIZED', 'Authentication required.');
+      if (authError || !authData.user) {
+        timings.authentication_ms = elapsedMs(authenticationStartedAt);
+        return finish(fail(401, 'UNAUTHORIZED', 'Authentication required.'), 'unauthorized');
+      }
     } catch {
-      return fail(401, 'UNAUTHORIZED', 'Authentication required.');
+      timings.authentication_ms = elapsedMs(authenticationStartedAt);
+      return finish(fail(401, 'UNAUTHORIZED', 'Authentication required.'), 'unauthorized');
     }
+    timings.authentication_ms = elapsedMs(authenticationStartedAt);
     let property: PropertyRecord | null;
+    const databaseStartedAt = performance.now();
     try {
       const query = await client.from('properties').select(
         'id,area_sqft,price,town,block_number,street_name,flat_type,flat_model,storey_range,storey_mid,remaining_lease_months,remaining_lease_as_of_month,valuation_inputs_source,hdb_verified,demo_batch_id,status',
       ).eq('id', body.property_id).maybeSingle();
-      if (query.error) return fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.');
+      timings.database_lookup_ms = elapsedMs(databaseStartedAt);
+      if (query.error) return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'database_error');
       property = query.data;
     } catch {
-      return fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.');
+      timings.database_lookup_ms = elapsedMs(databaseStartedAt);
+      return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'database_error');
     }
-    if (!property) return fail(404, 'PROPERTY_NOT_FOUND', 'Property not found.');
+    if (!property) return finish(fail(404, 'PROPERTY_NOT_FOUND', 'Property not found.'), 'property_not_found');
 
+    const requestConstructionStartedAt = performance.now();
     const localSupabase = isLocalSupabaseUrl(dependencies.supabaseUrl);
     const demoMidpoint = storeyRangeMidpoint(property.storey_range);
     const hasCanonicalDemoProvenance = CANONICAL_DEMO_BATCH_IDS.includes(
@@ -303,27 +337,32 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
       && property.hdb_verified === true
       && property.demo_batch_id == null;
     if (!isLocalDemo && !isHostedDemo && !isSellerSupplied) {
-      return fail(409, VALUATION_UNAVAILABLE, 'This property does not have verified, complete valuation inputs.');
+      timings.request_construction_ms = elapsedMs(requestConstructionStartedAt);
+      return finish(fail(409, VALUATION_UNAVAILABLE, 'This property does not have verified, complete valuation inputs.'), 'valuation_unavailable');
     }
     const singaporeMonth = currentSingaporeMonth(dependencies.now?.() ?? new Date());
     let valuationRequest: ReturnType<typeof buildValuationRequest>;
     try {
       valuationRequest = buildValuationRequest(property, singaporeMonth);
     } catch {
-      return fail(409, VALUATION_UNAVAILABLE, 'This property does not have complete valid valuation inputs.');
+      timings.request_construction_ms = elapsedMs(requestConstructionStartedAt);
+      return finish(fail(409, VALUATION_UNAVAILABLE, 'This property does not have complete valid valuation inputs.'), 'valuation_unavailable');
     }
+    timings.request_construction_ms = elapsedMs(requestConstructionStartedAt);
     if (!dependencies.renderApiUrl || !dependencies.renderServiceToken) {
       console.error(JSON.stringify({ requestId, stage: 'configuration', message: 'Valuation upstream configuration missing' }));
-      return fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.');
+      return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'configuration_error');
     }
     const fetcher = dependencies.fetcher ?? fetch;
     let upstream: Response;
     try {
+      const renderFetchStartedAt = performance.now();
       upstream = await fetcher(dependencies.renderApiUrl, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${dependencies.renderServiceToken}`,
           'Content-Type': 'application/json',
+          'X-Valuation-Request-ID': requestId,
         },
         body: JSON.stringify({
           ...valuationRequest.features,
@@ -332,22 +371,26 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
         }),
         signal: AbortSignal.timeout(dependencies.timeoutMs ?? 120_000),
       });
+      timings.render_fetch_ms = elapsedMs(renderFetchStartedAt);
     } catch {
       console.error(JSON.stringify({ requestId, stage: 'upstream', message: 'Valuation request failed' }));
-      return fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.');
+      return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'upstream_error');
     }
     if (!upstream.ok) {
       console.error(JSON.stringify({ requestId, stage: 'upstream', status: upstream.status }));
-      return fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.');
+      return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'upstream_error');
     }
     let upstreamBody: unknown;
+    const responseParseStartedAt = performance.now();
     try {
       upstreamBody = await upstream.json();
     } catch {
-      return fail(502, 'INVALID_VALUATION_RESPONSE', 'The valuation service returned an invalid response.');
+      timings.render_response_parse_ms = elapsedMs(responseParseStartedAt);
+      return finish(fail(502, 'INVALID_VALUATION_RESPONSE', 'The valuation service returned an invalid response.'), 'invalid_upstream_response');
     }
+    timings.render_response_parse_ms = elapsedMs(responseParseStartedAt);
     const safeResult = validateValuationResponse(upstreamBody);
-    if (!safeResult) return fail(502, 'INVALID_VALUATION_RESPONSE', 'The valuation service returned an invalid response.');
-    return jsonResponse({ data: safeResult, request_id: requestId });
+    if (!safeResult) return finish(fail(502, 'INVALID_VALUATION_RESPONSE', 'The valuation service returned an invalid response.'), 'invalid_upstream_response');
+    return finish(jsonResponse({ data: safeResult, request_id: requestId }), 'success');
   };
 }

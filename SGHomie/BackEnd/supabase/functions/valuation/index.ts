@@ -8,6 +8,7 @@ Deno.serve(createValuationHandler({
   renderServiceToken: Deno.env.get('VALUATION_SERVICE_TOKEN'),
   allowDemoInputs: Deno.env.get('VALUATION_ALLOW_DEMO_INPUTS'),
   allowHostedDemoInputs: Deno.env.get('VALUATION_ALLOW_HOSTED_DEMO_INPUTS'),
+  edgeRegion: Deno.env.get('SB_REGION'),
   createUserClient: (url, anonKey, authorization) => createClient(url, anonKey, {
     global: { headers: { Authorization: authorization } },
     auth: { persistSession: false, autoRefreshToken: false },

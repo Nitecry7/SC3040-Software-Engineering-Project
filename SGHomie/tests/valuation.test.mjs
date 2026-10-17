@@ -155,6 +155,37 @@ test('local demo fixtures are eligible only with both explicit local gates', asy
   }
 });
 
+test('Edge timing logs correlate to the returned request ID without logging request secrets or features', async () => {
+  const { deps, state } = dependencies({ edgeRegion: 'ap-southeast-1' });
+  const logLines = [];
+  const originalInfo = console.info;
+  console.info = (...args) => logLines.push(args.join(' '));
+  try {
+    const publicRequest = makeRequest();
+    assert.deepEqual(await publicRequest.clone().json(), { property_id: property.id });
+    const response = await createValuationHandler(deps)(publicRequest);
+    assert.equal(response.status, 200);
+    const responseBody = await response.json();
+    const upstreamHeaders = state.fetchCalls[0].options.headers;
+    assert.equal(upstreamHeaders['X-Valuation-Request-ID'], responseBody.request_id);
+    assert.equal(logLines.length, 1);
+    const event = JSON.parse(logLines[0]);
+    assert.equal(event.event, 'valuation_timing');
+    assert.equal(event.request_id, responseBody.request_id);
+    assert.equal(event.edge_region, 'ap-southeast-1');
+    assert.equal(event.outcome, 'success');
+    for (const stage of ['request_validation_ms', 'authentication_ms', 'database_lookup_ms', 'request_construction_ms', 'render_fetch_ms']) {
+      assert.equal(typeof event.timings_ms[stage], 'number', `missing ${stage}`);
+    }
+    assert.equal(typeof event.total_ms, 'number', 'missing total_ms');
+    for (const sensitiveValue of ['server-secret-value', 'user-jwt', property.id, property.town, property.block_number]) {
+      assert.equal(logLines[0].includes(sensitiveValue), false);
+    }
+  } finally {
+    console.info = originalInfo;
+  }
+});
+
 test('hosted demos require the independent hosted flag, canonical provenance and approved status', async () => {
   for (const hostedFlag of [undefined, 'false']) {
     const rejected = dependencies({ supabaseUrl: 'https://project.supabase.co', allowHostedDemoInputs: hostedFlag });

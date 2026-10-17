@@ -27,3 +27,8 @@ export type Property = {
   hdb_verified: boolean;
   location_verified_at: string | null;
 };
+
+export type SearchProperty = Pick<Property,
+  'id' | 'title' | 'price' | 'location' | 'image_url' | 'bedrooms' |
+  'bathrooms' | 'area_sqft' | 'latitude' | 'longitude'
+>;
