@@ -46,7 +46,7 @@ ready, remove the temporary demo trigger and replace `source = 'demo'` rows usin
 the chosen real-source provenance. The migration file documents the full
 generation logic; this README describes its behavior only.
 
-## Local demo valuation integration
+## Valuation integration and demo provenance
 
 `20261012120000_property_valuation_inputs.sql` adds nullable structured inputs
 for `flat_type`, `flat_model`, model-oriented `storey_mid`, and a remaining
@@ -120,11 +120,15 @@ count, or asking price is used to infer model inputs. Asking price is sent only
 as the optional comparison field; transaction month/year come from the current
 Singapore calendar month.
 
-The Edge Function protects the route with Supabase JWT verification and also
-validates the user in its handler. Configure these Edge Function secrets in the
-local `.env` used by `supabase functions serve valuation --env-file .env`, and
-as Supabase Function secrets only when a hosted deployment is separately
-approved:
+The Edge Function route requires a Supabase JWT and validates the caller in its
+handler. The browser sends only the property UUID; the function uses the
+caller's session for the property lookup, preserving the existing RLS boundary.
+It sends the request to Render with a server-held bearer credential. The
+browser never receives the Render credential. For local serving, configure the
+following values in the `.env` passed to
+`supabase functions serve valuation --env-file .env`. Hosted secret values are
+managed in Supabase Function Secrets and must never be copied into frontend
+configuration or documentation:
 
 - `VALUATION_API_URL`: the trusted Render `POST /v1/valuation/predict` URL.
 - `VALUATION_SERVICE_TOKEN`: the server-to-server bearer token shared with the
@@ -137,11 +141,53 @@ approved:
   metadata. Synthetic fixture owner IDs are allowed. This flag does not enable
   local demos and does not change seller eligibility.
 
-The migration does not assign provenance or update the existing hosted demo
-listings. Hosted rows remain unchanged by this repository change and will not
-pass the hosted demo gate until a separately approved data operation assigns
-their canonical batch IDs and demo source. No hosted data update is included
-here.
+### Hosted serving observation and log correlation
+
+The buyer valuation path has been live-verified by the user with an
+authenticated request to the hosted function. The function response wraps the
+estimate and interval in `data`; it also returns a request ID. The Edge Function
+reuses that ID in the private `X-Valuation-Request-ID` header to correlate its
+outbound FastAPI request. FastAPI reuses the supplied ID in its structured
+timing log. This header is for correlation only; it is not an authentication
+or authorization mechanism. The public request and response contracts do not
+expose internal stage timings.
+
+For a request, search the `request_id` in Supabase Dashboard under **Edge
+Functions → valuation → Logs/Invocations** and in the Render service's **Logs**.
+The Edge log records stage durations and outcome/region metadata; the Render
+log records FastAPI stage durations. Do not copy authorization headers,
+credentials, property features, or raw private request headers into logs or
+shared incident notes. See [Supabase Function logs](https://supabase.com/docs/guides/functions/logging)
+and [Render service logs](https://render.com/docs/logging) for the respective
+log views.
+
+The following is one user-provided, live-verified request from 2026-10-18, not
+an independently rechecked deployment or a benchmark:
+
+| Stage | Observed duration |
+| --- | ---: |
+| Edge authentication | 233.56 ms |
+| Edge property database lookup | 576.22 ms |
+| Edge request construction | 0.77 ms |
+| Edge outbound Render fetch | 92,319.72 ms |
+| Edge total | 93,131.94 ms |
+| FastAPI total | 39.64 ms |
+| CatBoost prediction | 16.84 ms |
+| Conformal calculation | 0.03 ms |
+
+Request ID: `b2d301b3-3a95-47cc-b175-cdb409b950af`. The observed Edge region
+was `ap-southeast-1`; the Render Dashboard region was reported as Oregon, US
+West. Most of this single request's duration was in the outbound Render fetch.
+The cold-start observation is not a benchmark, SLA, or proof that any one
+factor caused the latency. In particular, the region difference is not by
+itself evidence of causality. Warm latency requires separate measurements.
+
+The supplied live check verifies serving behavior, not the current remote
+migration history or the status of any particular provenance/data operation.
+Check the linked project's migration history in Supabase Dashboard before
+relying on remote schema state. A migration file in this repository does not
+establish that it was applied. No hosted data update is part of this
+documentation change.
 
 Run local function tests from the repository root:
 
@@ -149,16 +195,13 @@ Run local function tests from the repository root:
 node --experimental-strip-types --import ./SGHomie/tests/register-deno-imports.mjs --test SGHomie/tests/valuation.test.mjs
 ```
 
-The hosted database has already received
-`20261013140000_property_demo_batch_provenance.sql` (as reported for this
-project). The corrective `20261013150000_require_approved_demo_valuations.sql`
-and current function changes remain unapplied and undeployed. No migration here
-assigns batch provenance to or otherwise updates the hosted 50 rows. Do not infer
-other remote schema, secrets, or function state from these files. Before any
-later hosted rollout, inspect pending migrations and deploy the function
-separately using the documented preview-first procedure below. Structured real seller capture is not yet
-implemented, so ordinary production listings will remain valuation-unavailable
-until their owner can provide these fields legitimately.
+Hosted function serving was verified by the user as described above. The
+current remote migration history, schema, secrets, and data state have not been
+independently checked here. Use the documented preview-first procedure below
+for any future migration or function rollout; do not infer remote state from
+the checked-in files. Structured real seller capture is not yet implemented,
+so ordinary production listings will remain valuation-unavailable until their
+owner can provide these fields legitimately.
 
 ## Extensions
 

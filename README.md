@@ -17,9 +17,13 @@ The active application is under `SGHomie/`. This repository contains implemented
 
 **Demo:** nearby amenities are deterministic synthetic records marked `source = 'demo'`, with illustrative labels and distances. They are not verified facilities, live OneMap results, or walking routes. The Trends/analytics experience includes generated or hardcoded values and is not verified market analytics.
 
-**Research:** `MLPricePredictorV2/` selects CatBoost as its current robust research candidate. It is not an approved production model, persisted inference service, or integrated valuation feature. See the [V2 README](MLPricePredictorV2/README.md) for methods and detailed results; the legacy `MLPricePredictor/` experiments contain target leakage and are not reliable evidence.
+**Research and valuation demo:** `MLPricePredictorV2/` selects CatBoost as its current robust research candidate. A versioned research bundle is served by FastAPI and is connected to the buyer-facing Property Details page through an authenticated Supabase Edge Function. This is a live-verified demo serving path, not an approved production valuation model. See [V2 research and serving](MLPricePredictorV2/README.md) for methods, evaluation, and a dated serving observation; see [Supabase valuation serving](SGHomie/BackEnd/supabase/README.md) for the trusted request path and operational details. The legacy `MLPricePredictor/` experiments contain target leakage and are not reliable evidence.
 
-**Planned:** trusted valuation integration, historical transaction analytics, future market outlook, explainable recommendation ranking, affordability-aware decision support, trusted seller pricing guidance, and real amenity ingestion. Simple filter matching and chatbot search are not recommendation ranking.
+**Planned:** historical transaction analytics, future market outlook, explainable recommendation ranking, affordability-aware decision support, trusted seller pricing guidance, and real amenity ingestion. Simple filter matching and chatbot search are not recommendation ranking.
+
+### Valuation serving status
+
+The buyer page sends an authenticated property ID to the Supabase `valuation` Edge Function. That function reads eligible valuation inputs under the caller's database access, constructs model features server-side, and calls the Render FastAPI service using a server-held credential. A single user-reported live request on 2026-10-18 confirms the hosted path returned an estimate; its cold-start latency is documented separately and is not a benchmark or service guarantee. The model and its interval remain research/demo outputs, not an official valuation or financial advice. Repository files alone do not establish current hosted migrations, secrets, or deployment state.
 
 ## Technology and external services
 

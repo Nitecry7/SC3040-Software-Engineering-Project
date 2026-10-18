@@ -700,8 +700,9 @@ already exists. Version changes require an explicitly reviewed new semantic
 version and compatible loader policy.
 
 This bundle is a research candidate, not an approved or authoritative
-valuation. It is not integrated into SG Homie and does not establish
-production readiness.
+valuation. It is served for the SG Homie buyer-facing valuation demo through a
+Supabase Edge Function and hosted FastAPI service. Serving the candidate does
+not establish production readiness or approval.
 
 ## Local inference API
 
@@ -765,9 +766,34 @@ and 7.04 ms p95 latency. The server process working set was approximately
 is not equal to the 141.77 MiB model file. These are local diagnostics, not a
 production load test, and can vary by machine and library versions.
 
-The API is not integrated into SG Homie. The next step is evaluating a hosted
-Render deployment and a trusted SG Homie backend integration; neither is part
-of this local-only stage.
+### Hosted SG Homie demo serving and observed latency
+
+The Property Details page makes an explicit authenticated request to the
+Supabase `valuation` Edge Function, which constructs trusted features and calls
+the hosted FastAPI service. The browser sends only the property ID; the Render
+service credential remains server-side. The Edge Function forwards its
+existing request ID in a private correlation header, and FastAPI reuses that
+ID for structured timing logs. Timings are not included in the public response.
+See the [Supabase serving and observability notes](../SGHomie/BackEnd/supabase/README.md#hosted-serving-observation-and-log-correlation).
+
+The user reported this live observation from 2026-10-18 for one cold request:
+
+| Stage | Observed duration |
+| --- | ---: |
+| Edge outbound Render fetch | 92,319.72 ms |
+| Edge total | 93,131.94 ms |
+| FastAPI total | 39.64 ms |
+| Feature preparation | 19.80 ms |
+| CatBoost prediction | 16.84 ms |
+| Conformal calculation | 0.03 ms |
+
+Request ID: `b2d301b3-3a95-47cc-b175-cdb409b950af`. The associated Edge region
+was reported as `ap-southeast-1`, and the Render Dashboard region as Oregon,
+US West. These values describe one cold-start request; they are not a
+benchmark, SLA, model-quality metric, or proof that the region difference
+caused the delay. The measurements suggest that this request spent most of its
+time waiting on the outbound service call, while the measured FastAPI stages
+were much shorter. Warm latency needs separate measurement.
 
 ## Render deployment preparation
 
@@ -796,8 +822,8 @@ removed from the serving process environment at startup.
 The Blueprint pins `VALUATION_MODEL_VERSION=hdb-catboost-2025-12-v1` and
 `VALUATION_AUTH_MODE=required`. Set `VALUATION_ARTIFACT_REPOSITORY` to
 `OWNER/REPOSITORY`; configure `GITHUB_RELEASE_TOKEN` (read-only artifact
-access) and `VALUATION_SERVICE_TOKEN` as Render secrets. The latter must also
-be stored as a Supabase Edge Function secret in a later integration stage; it
+access) and `VALUATION_SERVICE_TOKEN` as Render secrets. The latter is also
+stored as a Supabase Edge Function secret for the hosted SG Homie integration; it
 must never reach React, a Vite variable, a response, or a log. Do not place
 real credentials in this README or committed configuration. Hosted startup
 fails closed if authentication is required but its token is missing. For local
@@ -823,8 +849,11 @@ only suitable for a deployment smoke test and may still run out of memory.
 The build-time bundle acquisition is separate from process startup and is not
 repeated for each request; a rebuild fetches the selected release again. A
 version rollback consists of pinning an earlier immutable release and
-redeploying. No Render account, artifact repository, release, secret, or hosted
-deployment has been configured or verified by this repository change.
+redeploying. The user reports that the hosted Render service is live and its
+Dashboard region is Oregon, US West; that observation is separate from this
+repository's blueprint and has not been independently rechecked here. The
+deployment serves a research/demo candidate, not an approved production
+valuation model.
 
 Render references: [Free service limits](https://render.com/docs/free),
 [Blueprint configuration](https://render.com/docs/blueprint-spec),
@@ -839,15 +868,16 @@ metrics and generated outputs therefore must not be trusted as evidence of
 future performance or used as production evidence. The V2 linear models are
 also research candidates only and do not establish production readiness.
 
-## Intended future purpose
+## Research purpose and status
 
-The eventual purpose is to evaluate an HDB resale price estimate using only
+The research purpose is to evaluate an HDB resale price estimate using only
 information available at prediction time, with chronological validation,
 appropriate baseline comparisons, and documented provenance. Historical
 baselines, linear and Ridge models, nonlinear tree benchmarks, research
-uncertainty evaluation, a local research bundle, and a local-only FastAPI
-inference service are implemented. Hosted deployment and SG Homie integration
-remain future work.
+uncertainty evaluation, a versioned research bundle, and a FastAPI inference
+service are implemented. The bundle and service are used by the hosted SG Homie
+research/demo serving path; they remain research infrastructure rather than an
+approved production valuation model.
 
 ## Setup and commands
 
