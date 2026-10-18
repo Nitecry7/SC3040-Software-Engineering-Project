@@ -89,8 +89,6 @@ class PredictionResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     model_loaded: Literal[True]
-    model_version: str
-    bundle_format_version: int
 
 
 class ModelInfoResponse(BaseModel):

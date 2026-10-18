@@ -10,7 +10,8 @@ import math
 from pathlib import Path
 import re
 from contextlib import nullcontext
-from typing import Any, ContextManager, Mapping, Sequence
+from time import perf_counter
+from typing import Any, Callable, ContextManager, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -116,25 +117,45 @@ class LoadedValuationBundle:
         features: Mapping[str, object],
         coverage: float = DEFAULT_COVERAGE_LEVEL,
         prediction_lock: ContextManager[Any] | None = None,
+        timing_callback: Callable[[str, float], None] | None = None,
     ) -> ValuationPrediction:
-        _coverage_key(coverage)
-        row = _validate_prediction_features(features)
-        model_frame = pd.DataFrame([row], columns=BOOSTED_FEATURES)
-        prepared = prepare_catboost_features(model_frame)
+        feature_started_at = perf_counter()
+        try:
+            _coverage_key(coverage)
+            row = _validate_prediction_features(features)
+            model_frame = pd.DataFrame([row], columns=BOOSTED_FEATURES)
+            prepared = prepare_catboost_features(model_frame)
+        finally:
+            if timing_callback is not None:
+                timing_callback("feature_preparation_ms", perf_counter() - feature_started_at)
         lock_context = prediction_lock if prediction_lock is not None else nullcontext()
-        with lock_context:
-            raw_prediction = self.model.predict(prepared)
+        prediction_started_at = perf_counter()
+        try:
+            with lock_context:
+                raw_prediction = self.model.predict(prepared)
+        finally:
+            if timing_callback is not None:
+                timing_callback("catboost_prediction_ms", perf_counter() - prediction_started_at)
         estimated_value = float(np.asarray(raw_prediction).reshape(-1)[0])
         if not math.isfinite(estimated_value):
             raise ValueError("CatBoost returned a non-finite valuation estimate")
-        town = str(row["town"])
-        threshold = self.get_uncertainty_threshold(town, coverage)
+        conformal_started_at = perf_counter()
+        try:
+            town = str(row["town"])
+            threshold = self.get_uncertainty_threshold(town, coverage)
+            lower_bound = estimated_value - threshold.q_sgd
+            upper_bound = estimated_value + threshold.q_sgd
+            interval_half_width = threshold.q_sgd
+            interval_full_width = threshold.full_width_sgd
+        finally:
+            if timing_callback is not None:
+                timing_callback("conformal_calculation_ms", perf_counter() - conformal_started_at)
         return ValuationPrediction(
             estimated_value=estimated_value,
-            lower_bound=estimated_value - threshold.q_sgd,
-            upper_bound=estimated_value + threshold.q_sgd,
-            interval_half_width=threshold.q_sgd,
-            interval_full_width=threshold.full_width_sgd,
+            lower_bound=lower_bound,
+            upper_bound=upper_bound,
+            interval_half_width=interval_half_width,
+            interval_full_width=interval_full_width,
             coverage_target=float(coverage),
             model_version=self.model_version,
             uncertainty_method=INFERENCE_UNCERTAINTY_METHOD,

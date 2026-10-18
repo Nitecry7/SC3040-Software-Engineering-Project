@@ -7,6 +7,91 @@ Ridge, tree, and CatBoost research. It evaluates uncertainty ranges for the
 selected CatBoost point estimator; it does not serve valuations or provide an
 approved production model.
 
+## Model selection summary
+
+### Evaluation design
+
+Validation candidates were fit on transactions from 2017-01 through 2024-12
+and selected using 2025 validation results. The selected learned model was
+then refit through 2025-12 before the later test on 2026-01 through 2026-09;
+partial October 2026 rows are excluded. The test period did not guide model or
+configuration selection. Chronological partitions better reflect prediction
+over time and reduce future-data leakage compared with a random split.
+
+### How to read the metrics
+
+- **MAE:** average absolute difference between predicted and actual price in
+  SGD. An MAE near $29,500 means predictions were about $29,500 away on average.
+- **Median absolute error:** midpoint of the absolute errors; about half are no
+  larger and half are no smaller than this value.
+- **RMSE:** error metric that, like MAE, is in SGD but penalizes large errors
+  more heavily.
+- **MAPE:** average absolute error as a percentage of actual transaction price.
+- **R²:** how much variation in prices is explained by the model; values nearer
+  1 indicate a closer fit on that evaluation set.
+
+| Model | Validation MAE | Validation RMSE | Validation MAPE | Later test MAE | Observation |
+|---|---:|---:|---:|---:|---|
+| Recent comparable baseline | $39,354.92 | $66,935.89 | 5.66% | $40,932.90* | Walk-forward historical-sales reference. |
+| Linear Regression | $50,772.32 | $70,114.17 | 7.44% | $49,861.68 | Underperformed the comparable baseline on validation MAE. |
+| Extra Trees | $43,443.85 | $56,546.91 | 6.55% | $30,056.10 | Strong later test result, but the final estimator was large. |
+| Best XGBoost candidate | $43,261.07 | $56,663.10 | 6.51% | — | No final test result was recorded for this unselected candidate. |
+| Selected CatBoost | $33,524.38 | $45,217.47 | 5.02% | $29,490.56 | Lowest validation MAE among learned models evaluated. |
+
+*The comparable baseline's $40,932.90 test result uses its walk-forward history
+updates. It is not a matched comparison with the frozen learned models. Under
+the matched fixed-history protocol, the 2026 comparable baseline MAE was
+$48,612.05; see [Matched and temporal robustness](#matched-and-temporal-robustness).
+The recorded later-test references are not all from the same update protocol.
+
+### Why CatBoost was selected
+
+The depth-8, learning-rate-0.05 CatBoost candidate had the lowest validation
+MAE among the learned models and beat the recorded comparable-baseline,
+Linear Regression, and Extra Trees validation MAEs. Its validation MAE was
+$33,524.38, compared with $43,261.07 for the best XGBoost candidate. CatBoost
+handled the numeric and high-cardinality categorical features directly. Its
+final model was 143.99 MiB, compared with 1,281 MiB for Extra Trees (about
+1.25 GiB, or 1.28 GB).
+
+Matched fixed-information comparisons also favored CatBoost: its MAE was
+$33,608.96 versus $54,982.31 for the comparable baseline in 2025, a 38.87%
+improvement; in 2026 its MAE was $29,490.56 versus $48,612.05, a 39.33%
+improvement. CatBoost also had lower MAE in all four expanding-window annual
+evaluations. The 2022–2024 results are retrospective robustness checks: the
+configuration had already been selected using 2025, so those years are not
+independent model-selection tests.
+
+### Interpreting the 2026 error and prediction ranges
+
+On 19,641 test transactions, CatBoost's $29,490.56 MAE means its predictions
+differed from registered resale prices by about $29,491 on average. Its median
+absolute error was $21,852.89, and its 4.52% MAPE means absolute errors averaged
+about 4.5% of actual prices. Mean actual price was $663,826.70 and mean predicted
+price was $669,591.22; this mean-level comparison is not the MAE. These test
+results describe this period and do not guarantee an individual future
+property's error.
+
+The point estimate is accompanied by a symmetric conformal range. CatBoost
+produces the point estimate; town-specific calibration uses earlier
+out-of-sample errors to set the range, falling back to a global threshold when
+town calibration support is insufficient. Historical pooled coverage was
+84.71% at the 80% target, 91.83% at 90%, and 95.65% at 95%. At the 90% target,
+yearly historical coverage was 89.61% (2022), 95.17% (2023), 89.82% (2024), and
+92.98% (2025). On the later 2026 test, coverage was 88.46%, 94.24%, and 97.13%
+at the respective targets. The 2026 90% interval had a mean full width of
+$152,558.85 and median full width of $149,045.60. Nominal coverage is an
+empirical target across many cases, not a claim that an individual flat has a
+90% probability of falling inside its range.
+
+Results vary by town and flat type. 2026 90% coverage was lower for Executive
+flats (84.91%) and for the highest actual-price quartile (86.07%); the
+Multi-Generation estimate is based on only six transactions and is unreliable.
+Future market conditions may differ from the historical data. Asking price is
+not a CatBoost feature, and the model predicts from registered resale patterns,
+not future market events. This remains a research/demo valuation aid, not an
+official HDB valuation or a production-ready service.
+
 ## Dataset
 
 - **Dataset:** Resale flat prices based on registration date from Jan-2017 onwards
@@ -615,8 +700,9 @@ already exists. Version changes require an explicitly reviewed new semantic
 version and compatible loader policy.
 
 This bundle is a research candidate, not an approved or authoritative
-valuation. It is not integrated into SG Homie and does not establish
-production readiness.
+valuation. It is served for the SG Homie buyer-facing valuation demo through a
+Supabase Edge Function and hosted FastAPI service. Serving the candidate does
+not establish production readiness or approval.
 
 ## Local inference API
 
@@ -664,11 +750,14 @@ failures return a generic 500 response, while startup failures prevent serving.
 
 The HTTP layer delegates estimate and interval calculations to
 `LoadedValuationBundle.predict_one`. A per-process lock covers only the shared
-CatBoost prediction call. The local Uvicorn setup uses one process; multiple
-workers would each load a model copy and increase memory use. This service has
-no authentication or CORS configuration and is not suitable for unrestricted
-public exposure. The current interval calibration has subgroup limitations
-described above; estimates and ranges remain research outputs.
+CatBoost prediction call. Authentication is fail-closed by default: hosted
+prediction and model-info endpoints require `Authorization: Bearer
+<VALUATION_SERVICE_TOKEN>`, while health exposes only minimal readiness. For
+local unauthenticated development, explicitly set
+`VALUATION_AUTH_MODE=disabled`. The local Uvicorn setup uses one process;
+multiple workers would each load a model copy and increase memory use. The
+current interval calibration has subgroup limitations described above;
+estimates and ranges remain research outputs.
 
 On the local Windows environment, measured bundle load time was 0.227 seconds.
 After warm-up, 50 sequential HTTP predictions had 4.53 ms median, 4.80 ms mean,
@@ -677,9 +766,101 @@ and 7.04 ms p95 latency. The server process working set was approximately
 is not equal to the 141.77 MiB model file. These are local diagnostics, not a
 production load test, and can vary by machine and library versions.
 
-The API is not integrated into SG Homie. The next step is evaluating a hosted
-Render deployment and a trusted SG Homie backend integration; neither is part
-of this local-only stage.
+### Hosted SG Homie demo serving and observed latency
+
+The Property Details page makes an explicit authenticated request to the
+Supabase `valuation` Edge Function, which constructs trusted features and calls
+the hosted FastAPI service. The browser sends only the property ID; the Render
+service credential remains server-side. The Edge Function forwards its
+existing request ID in a private correlation header, and FastAPI reuses that
+ID for structured timing logs. Timings are not included in the public response.
+See the [Supabase serving and observability notes](../SGHomie/BackEnd/supabase/README.md#hosted-serving-observation-and-log-correlation).
+
+The user reported this live observation from 2026-10-18 for one cold request:
+
+| Stage | Observed duration |
+| --- | ---: |
+| Edge outbound Render fetch | 92,319.72 ms |
+| Edge total | 93,131.94 ms |
+| FastAPI total | 39.64 ms |
+| Feature preparation | 19.80 ms |
+| CatBoost prediction | 16.84 ms |
+| Conformal calculation | 0.03 ms |
+
+Request ID: `b2d301b3-3a95-47cc-b175-cdb409b950af`. The associated Edge region
+was reported as `ap-southeast-1`, and the Render Dashboard region as Oregon,
+US West. These values describe one cold-start request; they are not a
+benchmark, SLA, model-quality metric, or proof that the region difference
+caused the delay. The measurements suggest that this request spent most of its
+time waiting on the outbound service call, while the measured FastAPI stages
+were much shorter. Warm latency needs separate measurement.
+
+## Render deployment preparation
+
+The repository-root `render.yaml` describes a manual, single-worker Free
+web-service deployment rooted at `MLPricePredictorV2/`. Render installs the
+existing requirements, fetches the configured immutable bundle during the
+build, then starts Uvicorn on `0.0.0.0:$PORT`. `/health` remains unauthenticated
+for Render's health check, returns only minimal readiness, and succeeds only
+after the bundle has passed integrity validation and loaded. Prediction and
+model-info require a server-to-server bearer token. The service does not enable
+CORS or call the Render endpoint from the browser.
+
+The bundle remains outside ordinary Git under ignored `artifacts/`. For hosted
+delivery, publish a ZIP named
+`hdb-catboost-2025-12-v1.zip` as a release asset with the same tag in a separate
+private, artifact-only GitHub repository. The ZIP must contain exactly
+`model.cbm`, `uncertainty.json`, `metadata.json`, and `manifest.json` at its
+root. The build fetcher uses the GitHub release API and a fine-grained token
+with read-only Contents permission. It checks release metadata, download size,
+the release asset digest when GitHub supplies one, safe archive contents, and
+then the existing bundle loader verifies the bundle manifest and expected
+model version before atomic publication. A valid cached local version is
+reused. It never trains a model or reads the raw CSV. The release token is
+removed from the serving process environment at startup.
+
+The Blueprint pins `VALUATION_MODEL_VERSION=hdb-catboost-2025-12-v1` and
+`VALUATION_AUTH_MODE=required`. Set `VALUATION_ARTIFACT_REPOSITORY` to
+`OWNER/REPOSITORY`; configure `GITHUB_RELEASE_TOKEN` (read-only artifact
+access) and `VALUATION_SERVICE_TOKEN` as Render secrets. The latter is also
+stored as a Supabase Edge Function secret for the hosted SG Homie integration; it
+must never reach React, a Vite variable, a response, or a log. Do not place
+real credentials in this README or committed configuration. Hosted startup
+fails closed if authentication is required but its token is missing. For local
+unauthenticated development only, explicitly set
+`VALUATION_AUTH_MODE=disabled`; this is not the hosted setting.
+
+The Render build and start commands are:
+
+```sh
+pip install -r requirements.txt && python scripts/fetch_valuation_bundle.py
+python -m uvicorn src.api.app:app --host 0.0.0.0 --port $PORT --workers 1
+```
+
+Local development remains bound to `127.0.0.1:8000` as documented above.
+For a local unauthenticated session, set `$env:VALUATION_AUTH_MODE = "disabled"`
+before starting Uvicorn; clear it or set it to `required` for authenticated
+local verification.
+Render's Free service has 512 MB RAM, ephemeral runtime storage, and spins down
+after 15 minutes idle; wake-up can take about a minute. The locally measured
+API working set was about 316 MiB with one model loaded, leaving limited memory
+headroom. One worker avoids loading another model copy, but the Free plan is
+only suitable for a deployment smoke test and may still run out of memory.
+The build-time bundle acquisition is separate from process startup and is not
+repeated for each request; a rebuild fetches the selected release again. A
+version rollback consists of pinning an earlier immutable release and
+redeploying. The user reports that the hosted Render service is live and its
+Dashboard region is Oregon, US West; that observation is separate from this
+repository's blueprint and has not been independently rechecked here. The
+deployment serves a research/demo candidate, not an approved production
+valuation model.
+
+Render references: [Free service limits](https://render.com/docs/free),
+[Blueprint configuration](https://render.com/docs/blueprint-spec),
+[web-service port binding](https://render.com/docs/web-services), and
+[Python runtime version](https://render.com/docs/python-version). GitHub
+private release asset access requires repository Contents read permission;
+see [release asset API](https://docs.github.com/en/rest/releases/assets).
 
 The legacy `MLPricePredictor/` experiments contain target leakage, including
 features derived from the transaction price being predicted. Their model
@@ -687,15 +868,16 @@ metrics and generated outputs therefore must not be trusted as evidence of
 future performance or used as production evidence. The V2 linear models are
 also research candidates only and do not establish production readiness.
 
-## Intended future purpose
+## Research purpose and status
 
-The eventual purpose is to evaluate an HDB resale price estimate using only
+The research purpose is to evaluate an HDB resale price estimate using only
 information available at prediction time, with chronological validation,
 appropriate baseline comparisons, and documented provenance. Historical
 baselines, linear and Ridge models, nonlinear tree benchmarks, research
-uncertainty evaluation, a local research bundle, and a local-only FastAPI
-inference service are implemented. Hosted deployment and SG Homie integration
-remain future work.
+uncertainty evaluation, a versioned research bundle, and a FastAPI inference
+service are implemented. The bundle and service are used by the hosted SG Homie
+research/demo serving path; they remain research infrastructure rather than an
+approved production valuation model.
 
 ## Setup and commands
 

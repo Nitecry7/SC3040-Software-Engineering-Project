@@ -3,14 +3,14 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { divIcon, latLngBounds, type Point } from 'leaflet';
 import { MapContainer, Marker, Popup, TileLayer, useMap, useMapEvents } from 'react-leaflet';
-import type { Property } from '../types/supabase';
+import type { SearchProperty } from '../types/supabase';
 import 'leaflet/dist/leaflet.css';
 
 const SINGAPORE_CENTER: [number, number] = [1.3521, 103.8198];
 
-type MappableProperty = Property & { latitude: number; longitude: number };
+type MappableProperty = SearchProperty & { latitude: number; longitude: number };
 
-const hasCoordinates = (property: Property): property is MappableProperty =>
+const hasCoordinates = (property: SearchProperty): property is MappableProperty =>
   property.latitude !== null &&
   property.longitude !== null &&
   Number.isFinite(Number(property.latitude)) &&
@@ -88,7 +88,7 @@ const clusterProperties = (
 
 type MapViewportProps = {
   properties: MappableProperty[];
-  selectedProperty: Property | null;
+  selectedProperty: SearchProperty | null;
   onZoomChange: (zoom: number) => void;
   onClearSelection: () => void;
 };
@@ -121,9 +121,9 @@ const MapViewport = ({ properties, selectedProperty, onZoomChange, onClearSelect
 
 type PropertyMarkersProps = {
   properties: MappableProperty[];
-  selectedProperty: Property | null;
+  selectedProperty: SearchProperty | null;
   zoom: number;
-  onSelectProperty: (property: Property | null) => void;
+  onSelectProperty: (property: SearchProperty | null) => void;
 };
 
 const PropertyMarkers = ({ properties, selectedProperty, zoom, onSelectProperty }: PropertyMarkersProps) => {
@@ -185,9 +185,9 @@ const PropertyMarkers = ({ properties, selectedProperty, zoom, onSelectProperty 
 };
 
 type MarketplaceMapProps = {
-  properties: Property[];
-  selectedProperty: Property | null;
-  onSelectProperty: (property: Property | null) => void;
+  properties: SearchProperty[];
+  selectedProperty: SearchProperty | null;
+  onSelectProperty: (property: SearchProperty | null) => void;
 };
 
 const MarketplaceMap = ({ properties, selectedProperty, onSelectProperty }: MarketplaceMapProps) => {

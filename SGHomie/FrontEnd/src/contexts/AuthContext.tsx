@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import InitialProfileSetup from '../components/InitialProfileSetup';
@@ -29,6 +29,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isAdmin, setIsAdmin] = useState(false);
   const [isSeller, setIsSeller] = useState(false);
   const [loading, setLoading] = useState(true);
+  const profileChecks = useRef(new Map<string, Promise<void>>());
 
   useEffect(() => {
     // Get initial session
@@ -64,39 +65,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   }, []);
 
-  const checkProfile = async (userId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select('name, income_range, preferred_property_type, preferred_locations, family_members, is_admin, is_seller')
-        .eq('id', userId)
-        .single();
+  const checkProfile = (userId: string): Promise<void> => {
+    const existingCheck = profileChecks.current.get(userId);
+    if (existingCheck) return existingCheck;
 
-      if (error) throw error;
+    const profileCheck = (async () => {
+      try {
+        const { data, error } = await supabase
+          .from('user_profiles')
+          .select('name, income_range, preferred_property_type, preferred_locations, family_members, is_admin, is_seller')
+          .eq('id', userId)
+          .single();
 
-      const admin = data?.is_admin === true;
-      const seller = data?.is_seller === true;
-      setIsAdmin(admin);
-      setIsSeller(seller);
+        if (error) throw error;
 
-      // Administrators do not need to complete the normal buyer profile and
-      // should go directly to admin functionality.
-      if (admin) {
-        setNeedsProfileSetup(false);
-        return;
+        const admin = data?.is_admin === true;
+        const seller = data?.is_seller === true;
+        setIsAdmin(admin);
+        setIsSeller(seller);
+
+        // Administrators do not need to complete the normal buyer profile and
+        // should go directly to admin functionality.
+        if (admin) {
+          setNeedsProfileSetup(false);
+          return;
+        }
+
+        const needsSetup = !data || !data.name || !data.income_range ||
+                          !data.preferred_property_type || !data.preferred_locations ||
+                          !data.family_members;
+
+        setNeedsProfileSetup(needsSetup);
+      } catch (error) {
+        console.error('Error checking profile:', error);
+        setIsAdmin(false);
+        setIsSeller(false);
+        setNeedsProfileSetup(true);
       }
+    })();
 
-      const needsSetup = !data || !data.name || !data.income_range || 
-                        !data.preferred_property_type || !data.preferred_locations || 
-                        !data.family_members;
-
-      setNeedsProfileSetup(needsSetup);
-    } catch (error) {
-      console.error('Error checking profile:', error);
-      setIsAdmin(false);
-      setIsSeller(false);
-      setNeedsProfileSetup(true);
-    }
+    profileChecks.current.set(userId, profileCheck);
+    void profileCheck.then(() => {
+      if (profileChecks.current.get(userId) === profileCheck) {
+        profileChecks.current.delete(userId);
+      }
+    });
+    return profileCheck;
   };
 
   const signOut = async () => {
