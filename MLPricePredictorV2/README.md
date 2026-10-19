@@ -4,8 +4,54 @@ V2 is the clean research pipeline for HDB resale price evaluation. It supports
 raw data profiling, deterministic row-wise feature preparation, chronological
 partitions, historical transaction-price baselines, and leakage-safe Linear,
 Ridge, tree, and CatBoost research. It evaluates uncertainty ranges for the
-selected CatBoost point estimator; it does not serve valuations or provide an
-approved production model.
+selected CatBoost point estimator and includes local inference plus a
+research/demo serving path. The model is not approved for production valuation;
+serving details appear later in this report.
+
+```mermaid
+flowchart LR
+    subgraph OFFLINE["Offline research and release"]
+        HDB["HDB resale transactions"] --> PREP["Deterministic preparation and leakage-safe features"]
+        PREP --> SPLIT["Chronological train, validation, and test"]
+        SPLIT --> EVAL["Select on validation; evaluate later test"]
+        EVAL --> CAL["Refit selected model and calibrate conformal ranges"]
+        CAL --> BUNDLE["Versioned bundle: hdb-catboost-2025-12-v1"]
+    end
+    subgraph ONLINE["Online research/demo inference"]
+        FETCH["Render build fetches released bundle"] --> START["FastAPI lifespan verifies and loads bundle"]
+        START --> INPUT["Validated property features from Supabase Edge Function"]
+        INPUT --> PRED["CatBoost point estimate"]
+        PRED --> RANGE["Conformal range"]
+        INPUT --> ASK["Optional asking_price comparison input; excluded from model features"]
+        PRED --> POSITION["Asking-price position comparison"]
+        ASK --> POSITION
+        RANGE --> RESPONSE["Estimate and range response"]
+        POSITION --> RESPONSE
+    end
+    BUNDLE -->|"Versioned artifact; no request-time training"| FETCH
+```
+
+*Chronological evaluation and conformal calibration happen offline. The online service loads the released bundle; it does not train during requests or retrain automatically.*
+
+| Research snapshot | Current record |
+| --- | --- |
+| Selected model | CatBoost, chosen using 2025 validation data |
+| Later test period | 2026-01 through 2026-09; partial October excluded |
+| Later test MAE | $29,490.56 across 19,641 transactions |
+| Status | Research/demo artifact, not an approved production valuation |
+
+The results below include baselines, model comparisons, chronological robustness checks, uncertainty evaluation, bundle format, and local API details. Test metrics describe this historical period and do not guarantee an individual future estimate.
+
+## Guide to this report
+
+- [Model selection and evaluation design](#model-selection-summary)
+- [Dataset and data handling](#dataset)
+- [Baselines and model benchmarks](#historical-baselines)
+- [Matched and temporal robustness](#matched-and-temporal-robustness)
+- [Uncertainty ranges](#catboost-uncertainty-ranges)
+- [Persisted bundle and local inference API](#persisted-local-valuation-bundle)
+- [Hosted demo serving observations](#hosted-sg-homie-demo-serving-and-observed-latency)
+- [Render preparation, status, and setup](#render-deployment-preparation)
 
 ## Model selection summary
 

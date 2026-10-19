@@ -24,6 +24,16 @@ const markerTone = (position: ValuationRangeGaugeProps['pricePosition']) => {
 };
 
 const tooltipClass = 'pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 w-max max-w-56 -translate-x-1/2 rounded-lg bg-slate-950 px-3 py-2 text-left text-xs font-medium leading-relaxed text-white opacity-0 shadow-lg transition duration-150 group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100';
+const anchorAlignmentClass = {
+  start: 'valuation-gauge-anchor--start',
+  center: 'valuation-gauge-anchor--center',
+  end: 'valuation-gauge-anchor--end',
+};
+const tooltipAlignmentClass = {
+  start: 'valuation-tooltip-align-start',
+  center: '',
+  end: 'valuation-tooltip-align-end',
+};
 
 export const ValuationRangeGauge = ({ valuation, askingPrice, pricePosition }: ValuationRangeGaugeProps) => {
   const layout = getValuationRangeLayout({
@@ -40,9 +50,26 @@ export const ValuationRangeGauge = ({ valuation, askingPrice, pricePosition }: V
   const rangeWidth = layout.upperPosition - layout.lowerPosition;
   const coverageLabel = `${Math.round(valuation.coverage_target * 100)}% calibration target`;
   const positionLabel = askingMarkerLabel(pricePosition);
+  const beyondScaleLabel = layout.askingBeyondScale === 'below'
+    ? 'Below displayed scale'
+    : layout.askingBeyondScale === 'above'
+      ? 'Above displayed scale'
+      : null;
 
   return (
     <figure className="mt-5" aria-labelledby="valuation-range-caption">
+      <div className="valuation-gauge-asking-track" aria-hidden="true">
+        <span
+          className={`valuation-gauge-asking-label ${anchorAlignmentClass[layout.askingLabelAlignment]}`}
+          style={{ left: `${layout.askingPosition}%` }}
+        >
+          Asking: {formatSingaporeDollars(layout.askingPrice)}
+          {beyondScaleLabel && <span className={`valuation-gauge-asking-continuation valuation-gauge-asking-continuation--${layout.askingBeyondScale}`}>
+            {layout.askingBeyondScale === 'below' ? '← ' : '→ '}{beyondScaleLabel}
+          </span>}
+        </span>
+      </div>
+
       <div className="relative h-12 overflow-visible" role="group" aria-label="Interactive likely market range gauge">
         <div aria-hidden="true" className="absolute inset-0 overflow-hidden rounded-full bg-gray-100 ring-1 ring-inset ring-gray-200">
           <div className="absolute inset-y-0 left-0 bg-amber-100" style={{ width: `${layout.lowerPosition}%` }} />
@@ -58,9 +85,9 @@ export const ValuationRangeGauge = ({ valuation, askingPrice, pricePosition }: V
           aria-label={`Likely market range ${formatSingaporeDollars(layout.lowerBound)} to ${formatSingaporeDollars(layout.upperBound)}. ${coverageLabel}.`}
           aria-describedby="valuation-range-band-tooltip"
         >
-          <span id="valuation-range-band-tooltip" role="tooltip" className={`${tooltipClass} valuation-tooltip-y`}>
+          <span id="valuation-range-band-tooltip" role="tooltip" className={`${tooltipClass} valuation-tooltip-y ${tooltipAlignmentClass[layout.lowerAnchorAlignment]}`}>
             <span className="block font-semibold">Likely market range</span>
-            <span>{formatSingaporeDollars(layout.lowerBound)} – {formatSingaporeDollars(layout.upperBound)}</span>
+            <span>{formatSingaporeDollars(layout.lowerBound)} to {formatSingaporeDollars(layout.upperBound)}</span>
             <span className="block text-slate-300">{coverageLabel}</span>
           </span>
         </div>
@@ -70,11 +97,11 @@ export const ValuationRangeGauge = ({ valuation, askingPrice, pricePosition }: V
           role="img"
           className="group absolute inset-y-0 z-20 w-8 -translate-x-1/2 rounded-full bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-amber-800 focus-visible:ring-offset-2"
           style={{ left: `${layout.lowerPosition}%` }}
-          aria-label={`Lower likely-market bound ${formatSingaporeDollars(layout.lowerBound)}`}
+          aria-label={`Lower bound ${formatSingaporeDollars(layout.lowerBound)}`}
           aria-describedby="valuation-lower-bound-tooltip"
         >
-          <span id="valuation-lower-bound-tooltip" role="tooltip" className={`${tooltipClass} valuation-tooltip-y`}>
-            <span className="block font-semibold">Lower likely-market bound</span>
+          <span id="valuation-lower-bound-tooltip" role="tooltip" className={`${tooltipClass} valuation-tooltip-y ${tooltipAlignmentClass[layout.lowerAnchorAlignment]}`}>
+            <span className="block font-semibold">Lower bound</span>
             {formatSingaporeDollars(layout.lowerBound)}
           </span>
         </div>
@@ -84,11 +111,11 @@ export const ValuationRangeGauge = ({ valuation, askingPrice, pricePosition }: V
           role="img"
           className="group absolute inset-y-0 z-20 w-8 -translate-x-1/2 rounded-full bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-rose-800 focus-visible:ring-offset-2"
           style={{ left: `${layout.upperPosition}%` }}
-          aria-label={`Upper likely-market bound ${formatSingaporeDollars(layout.upperBound)}`}
+          aria-label={`Upper bound ${formatSingaporeDollars(layout.upperBound)}`}
           aria-describedby="valuation-upper-bound-tooltip"
         >
-          <span id="valuation-upper-bound-tooltip" role="tooltip" className={`${tooltipClass} valuation-tooltip-y`}>
-            <span className="block font-semibold">Upper likely-market bound</span>
+          <span id="valuation-upper-bound-tooltip" role="tooltip" className={`${tooltipClass} valuation-tooltip-y ${tooltipAlignmentClass[layout.upperAnchorAlignment]}`}>
+            <span className="block font-semibold">Upper bound</span>
             {formatSingaporeDollars(layout.upperBound)}
           </span>
         </div>
@@ -102,7 +129,7 @@ export const ValuationRangeGauge = ({ valuation, askingPrice, pricePosition }: V
           aria-describedby="valuation-estimate-tooltip"
         >
           <span aria-hidden="true" className="valuation-estimate-marker absolute left-1/2 top-2 h-8 w-[3px] -translate-x-1/2 rounded-full bg-blue-800 shadow-sm" />
-          <span id="valuation-estimate-tooltip" role="tooltip" className={`${tooltipClass} valuation-tooltip-y`}>
+          <span id="valuation-estimate-tooltip" role="tooltip" className={`${tooltipClass} valuation-tooltip-y ${tooltipAlignmentClass[layout.estimateAnchorAlignment]}`}>
             <span className="block font-semibold">Estimated market value</span>
             {formatSingaporeDollars(layout.estimatedValue)}
           </span>
@@ -113,27 +140,50 @@ export const ValuationRangeGauge = ({ valuation, askingPrice, pricePosition }: V
           role="img"
           className="group absolute inset-y-0 z-40 w-8 -translate-x-1/2 rounded-full bg-transparent outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
           style={{ left: `${layout.askingPosition}%` }}
-          aria-label={`Asking price ${formatSingaporeDollars(layout.askingPrice)}. ${positionLabel}.`}
+          aria-label={`Asking price ${formatSingaporeDollars(layout.askingPrice)}. ${positionLabel}.${beyondScaleLabel ? ` ${beyondScaleLabel}; the exact asking price is shown.` : ''}`}
           aria-describedby="valuation-asking-price-tooltip"
         >
           <span aria-hidden="true" className={`valuation-asking-marker absolute left-1/2 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 shadow-sm ${markerTone(pricePosition)}`} />
-          <span id="valuation-asking-price-tooltip" role="tooltip" className={`${tooltipClass} valuation-tooltip-y`}>
+          <span id="valuation-asking-price-tooltip" role="tooltip" className={`${tooltipClass} valuation-tooltip-y ${tooltipAlignmentClass[layout.askingLabelAlignment]}`}>
             <span className="block font-semibold">Asking price</span>
             <span>{formatSingaporeDollars(layout.askingPrice)}</span>
             <span className="block text-slate-300">{positionLabel}</span>
+            {beyondScaleLabel && <span className="block text-slate-300">{beyondScaleLabel}; exact value shown in the label.</span>}
           </span>
         </div>
       </div>
 
-      <figcaption id="valuation-range-caption" className="mt-3 grid gap-2 text-xs text-gray-700 sm:grid-cols-3">
-        <span><span className="block font-semibold text-slate-800">Lower bound</span>{formatSingaporeDollars(layout.lowerBound)}</span>
-        <span><span className="block font-semibold text-emerald-900">Likely market range</span>{formatSingaporeDollars(layout.lowerBound)} – {formatSingaporeDollars(layout.upperBound)}<span className="mt-0.5 block text-gray-500">{coverageLabel}</span></span>
-        <span><span className="block font-semibold text-slate-800">Upper bound</span>{formatSingaporeDollars(layout.upperBound)}</span>
-        <span className="sm:col-span-3">
-          <span className="font-semibold text-blue-900">Estimated market value:</span> {formatSingaporeDollars(layout.estimatedValue)}.
-          {' '}<span className="font-semibold text-slate-900">Asking price:</span> {formatSingaporeDollars(layout.askingPrice)} — {positionLabel.toLowerCase()}.
+      <figcaption id="valuation-range-caption" className="valuation-gauge-anchor-track text-xs text-gray-700">
+        <span
+          className={`valuation-gauge-anchor valuation-gauge-anchor--lower valuation-gauge-anchor--lane-${layout.lowerAnchorLane} ${anchorAlignmentClass[layout.lowerAnchorAlignment]}`}
+          style={{ left: `${layout.lowerPosition}%` }}
+        >
+          <span className="block font-semibold text-slate-800">Lower bound</span>
+          {formatSingaporeDollars(layout.lowerBound)}
+        </span>
+        <span
+          className={`valuation-gauge-anchor valuation-gauge-anchor--estimate valuation-gauge-anchor--lane-${layout.estimateAnchorLane} ${anchorAlignmentClass[layout.estimateAnchorAlignment]}`}
+          style={{ left: `${layout.estimatePosition}%` }}
+        >
+          <span className="block font-semibold text-blue-900">Est. market value</span>
+          {formatSingaporeDollars(layout.estimatedValue)}
+        </span>
+        <span
+          className={`valuation-gauge-anchor valuation-gauge-anchor--upper valuation-gauge-anchor--lane-${layout.upperAnchorLane} ${anchorAlignmentClass[layout.upperAnchorAlignment]}`}
+          style={{ left: `${layout.upperPosition}%` }}
+        >
+          <span className="block font-semibold text-slate-800">Upper bound</span>
+          {formatSingaporeDollars(layout.upperBound)}
+        </span>
+        <span className="sr-only">
+          Likely market range: {formatSingaporeDollars(layout.lowerBound)} to {formatSingaporeDollars(layout.upperBound)}. {coverageLabel} across evaluation data. Asking price: {formatSingaporeDollars(layout.askingPrice)}; {positionLabel.toLowerCase()}.
         </span>
       </figcaption>
+      {layout.scaleMode === 'compressed' && (
+        <p className="valuation-gauge-scale-note" role="note">
+          Outlier distances are compressed to keep the likely range readable. Marker positions are nonlinear.
+        </p>
+      )}
     </figure>
   );
 };
