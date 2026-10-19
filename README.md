@@ -1,65 +1,105 @@
 <div align="center">
+
   <img width="144" alt="SG Homie logo" src="https://github.com/user-attachments/assets/8e515211-77c0-4630-b725-9e27734192c8" />
 
-  <h1>SG Homie</h1>
-  <p><strong>Welcome to SG Homie 🏠 Your Smart Housing Companion in Singapore 🌆</strong><br />Helping you find your dream home✨</p>
+  <h1>SG Homie 🫂</h1>
+
+  <p>
+    <strong>Welcome to SG Homie 🏠 Your Smart Housing Companion in Singapore 🌆</strong>
+    <br />
+    Let's help you find your dream home✨
+  </p>
+
 </div>
 
-<table>
+<table align="center">
   <tr>
-    <td align="center"><a href="#buyer-search"><strong>🔎 Search</strong><br />Browse approved HDB listings</a></td>
-    <td align="center"><a href="#property-valuation"><strong>📊 Valuation</strong><br />Explore a research estimate</a></td>
-    <td align="center"><a href="#conversational-assistant"><strong>💬 Chatbot</strong><br />Ask about listings and seller drafts</a></td>
+    <td align="center" width="230">
+      <a href="#buyer-search">
+        <strong>🔎 Search</strong><br />
+        Browse approved HDB listings
+      </a>
+    </td>
+    <td align="center" width="230">
+      <a href="#property-valuation">
+        <strong>📊 Valuation</strong><br />
+        Explore a research estimate
+      </a>
+    </td>
+    <td align="center" width="230">
+      <a href="#conversational-assistant">
+        <strong>💬 Chatbot</strong><br />
+        Ask about listings and seller drafts
+      </a>
+    </td>
   </tr>
 </table>
 
 <p align="center">
   <img alt="React frontend" src="https://img.shields.io/badge/React-UI-61DAFB?logo=react&logoColor=20232A" />
   <img alt="TypeScript frontend" src="https://img.shields.io/badge/TypeScript-Frontend-3178C6?logo=typescript&logoColor=white" />
-  <img alt="Supabase authentication, PostgreSQL, and Edge Functions" src="https://img.shields.io/badge/Supabase-Auth%20%7C%20Postgres%20%7C%20Edge%20Functions-3FCF8E?logo=supabase&logoColor=white" />
+  <img alt="Supabase backend" src="https://img.shields.io/badge/Supabase-Auth%20%7C%20Postgres%20%7C%20Edge%20Functions-3FCF8E?logo=supabase&logoColor=white" />
   <img alt="FastAPI valuation service" src="https://img.shields.io/badge/FastAPI-Valuation%20API-009688?logo=fastapi&logoColor=white" />
+  <img alt="Render inference hosting" src="https://img.shields.io/badge/Render-Inference%20Hosting-46E3B7?logo=render&logoColor=000000" />
   <img alt="Python valuation inference" src="https://img.shields.io/badge/Python-Inference-3776AB?logo=python&logoColor=white" />
-  <img alt="CatBoost research model" src="https://img.shields.io/badge/CatBoost-Research%20model-FFCC00" />
+  <img alt="CatBoost research model" src="https://img.shields.io/badge/CatBoost-Research%20Model-FFCC00" />
 </p>
 
-SG Homie brings HDB listing discovery, seller workflows, property information, and conversational help into one web application. Valuation is a research/demo feature; estimates are not official valuations or financial advice.
+---
 
-## How it works
+## ✨ About
+
+SG Homie is a data-informed housing companion built to make Singapore HDB property decisions easier to explore and understand.
+
+It brings together property discovery, seller listing workflows, structured conversational assistance, and a research-based resale valuation service in one web application.
+
+The platform separates trusted application data, model-generated estimates, provisional AI guidance, and synthetic demo content so users can better understand what each feature represents.
+
+> **Note:** The valuation feature is a research/demo capability. Its estimates are not official property valuations or financial advice.
+
+---
+
+## 🏗️ How it works
 
 ```mermaid
 flowchart LR
-  Browser["Browser<br/>React and TypeScript"]
+    Browser["Browser<br/>React + TypeScript"]
 
-  subgraph Supabase["Supabase trust boundary"]
-    Auth["Auth and user session"]
-    Data["Data API<br/>PostgreSQL and RLS"]
-    Storage["Property image storage"]
-    Functions["Edge Functions<br/>chatbot, valuation, HDB address lookup"]
-  end
+    subgraph Supabase["Supabase trust boundary"]
+        Auth["Auth<br/>User session"]
+        Data["PostgreSQL<br/>+ RLS"]
+        Storage["Property<br/>image storage"]
+        Functions["Edge Functions<br/>chatbot · valuation · HDB lookup"]
+    end
 
-  subgraph Services["Server-side services"]
-    Render["Render FastAPI<br/>versioned CatBoost bundle"]
-    Provider["Configured LLM provider<br/>OpenAI or OpenRouter"]
-    Address["OneMap and official HDB address check"]
-  end
+    subgraph Services["Server-side services"]
+        Render["Render + FastAPI<br/>CatBoost bundle"]
+        Provider["LLM provider<br/>OpenAI / OpenRouter"]
+        Address["OneMap + HDB<br/>address verification"]
+    end
 
-  Tiles["OpenStreetMap tiles"]
+    Tiles["OpenStreetMap<br/>map tiles"]
 
-  Browser -->|sign-in and session| Auth
-  Browser -->|session-scoped application requests| Data
-  Browser -->|authenticated function requests| Functions
-  Browser -->|policy-controlled image uploads| Storage
-  Browser -->|direct tile requests| Tiles
-  Functions -->|caller-scoped reads and writes| Data
-  Functions -->|server-held bearer and model features| Render
-  Render -->|estimate and uncertainty range| Functions
-  Functions -->|server-side provider request| Provider
-  Provider -->|provider response| Functions
-  Functions -->|HDB address lookup| Address
-  Address -->|address verification result| Functions
+    Browser -->|"session"| Auth
+    Browser -->|"application data"| Data
+    Browser -->|"authenticated requests"| Functions
+    Browser -->|"image uploads"| Storage
+    Browser -->|"map tiles"| Tiles
+
+    Functions -->|"RLS-scoped data"| Data
+    Functions -->|"valuation request"| Render
+    Render -->|"estimate + range"| Functions
+
+    Functions -->|"provider request"| Provider
+    Provider -->|"response"| Functions
+
+    Functions -->|"address lookup"| Address
+    Address -->|"verified address"| Functions
 ```
 
-*The browser uses the signed-in user's Supabase session. The Render service credential and provider credentials stay server-side. OneMap is used for HDB address verification, not nearby-amenity verification. This diagram describes repository architecture, not current hosted deployment.*
+*The browser uses the signed-in user's Supabase session. Render and LLM-provider credentials remain server-side. OneMap is used for HDB address verification, not nearby-amenity verification. This diagram describes repository architecture and does not by itself establish current hosted deployment state.*
+
+---
 
 ## What you can do
 
@@ -87,72 +127,159 @@ The chatbot can explain trusted listing results and help sellers save listing dr
 | 🏷️ **Demo data** | Nearby amenity records are synthetic demo data, not verified facilities. Market analytics include generated or hardcoded values; they are not verified market evidence. HDB address verification does not prove that every listing fact is genuine. |
 | 🛠️ **Planned** | Explainable personalized ranking, real amenity ingestion, historical transaction analytics, and CatBoost-based seller pricing guidance are not implemented. Search and sorting are not personalized recommendation ranking. |
 
-One authenticated hosted valuation request was user-reported successful on 2026-10-18. That dated observation is not independent verification of current deployment, a benchmark, or a service guarantee; see the [Supabase serving notes](SGHomie/BackEnd/supabase/README.md#hosted-serving-observation-and-log-correlation).
+One authenticated hosted valuation request was user-reported successful on **2026-10-18**. That dated observation is not independent verification of current deployment, a benchmark, or a service guarantee; see the [Supabase serving notes](SGHomie/BackEnd/supabase/README.md#hosted-serving-observation-and-log-correlation).
 
-## Technology and architecture
+
+---
+
+## 🛠️ Technology & Architecture
 
 <p align="center">
   <img alt="React" src="https://img.shields.io/badge/React-UI-61DAFB?logo=react&logoColor=20232A" />
-  <img alt="Supabase" src="https://img.shields.io/badge/Supabase-Application%20backend-3FCF8E?logo=supabase&logoColor=white" />
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-Frontend-3178C6?logo=typescript&logoColor=white" />
+  <img alt="Vite" src="https://img.shields.io/badge/Vite-Build%20Tool-646CFF?logo=vite&logoColor=white" />
+  <img alt="Tailwind CSS" src="https://img.shields.io/badge/Tailwind_CSS-Styling-06B6D4?logo=tailwindcss&logoColor=white" />
+  <img alt="Supabase" src="https://img.shields.io/badge/Supabase-Backend-3FCF8E?logo=supabase&logoColor=white" />
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-Database-4169E1?logo=postgresql&logoColor=white" />
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-Serving-009688?logo=fastapi&logoColor=white" />
-  <img alt="Python" src="https://img.shields.io/badge/Python-Research%20inference-3776AB?logo=python&logoColor=white" />
+  <img alt="Render" src="https://img.shields.io/badge/Render-Hosting-46E3B7?logo=render&logoColor=000000" />
+  <img alt="Python" src="https://img.shields.io/badge/Python-ML%20%26%20Inference-3776AB?logo=python&logoColor=white" />
+  <img alt="CatBoost" src="https://img.shields.io/badge/CatBoost-Valuation%20Model-FFCC00" />
 </p>
 
-The frontend uses React, TypeScript, Vite, Tailwind CSS, React Router, and Leaflet. Supabase provides authentication, PostgreSQL with Row Level Security (RLS), Edge Functions, and property image storage. The valuation research service uses Python, FastAPI, and a persisted CatBoost bundle. OpenAI or OpenRouter may power chatbot flows through server-side configuration.
+### 🖥️ Frontend Development
 
-The browser uses the user's Supabase session for application access. The Edge Function applies the caller's access policies; privileged service credentials and model/provider secrets stay on the server. The architecture diagram describes repository boundaries and does not verify a hosted deployment.
+- ⚛️ **React**: Component-based user interface and application views
+- 🔷 **TypeScript**: Typed frontend development
+- 🎨 **Tailwind CSS**: Responsive styling and reusable visual patterns
+- 🛣️ **React Router**: Client-side application routing
+- ⚡ **Vite**: Development server and frontend build tooling
+- 🗺️ **Leaflet / React Leaflet**: Interactive property maps
 
-## Quick Start
+### 🔥 Backend & Data
 
-Requirements: Node.js `^20.19.0` or `>=22.12.0` and npm.
+- 🔥 **Supabase**: Authentication, PostgreSQL access, Edge Functions, and property image storage
+- 🐘 **PostgreSQL**: Application data for users, listings, enquiries, seller drafts, and related records
+- 🛡️ **Row Level Security (RLS)**: Session-scoped access control for application data
+- ⚡ **Supabase Edge Functions**: Trusted server-side workflows for chatbot, valuation, and HDB address lookup
+- 🖼️ **Supabase Storage**: Property image storage and policy-controlled uploads
 
-### 1️⃣ Get the code
+### 🤖 Machine Learning & Inference
 
-From the repository root:
+- 🐍 **Python**: Data preparation, model research, evaluation, and inference tooling
+- 📊 **CatBoost**: Selected HDB resale-price point estimator
+- 📐 **Conformal Calibration**: Produces the model's calibrated likely market range
+- ⚡ **FastAPI**: HTTP inference API around the versioned valuation bundle
+- ☁️ **Render**: Hosts the FastAPI valuation service and loads the released model artifact
+
+### 🌐 External Services
+
+- 🤖 **OpenAI / OpenRouter**: Server-configured LLM providers for conversational workflows
+- 📍 **OneMap**: Postal-code geocoding used during HDB address verification
+- 🏢 **Official HDB Property Information**: Used to validate residential HDB addresses
+- 🗺️ **OpenStreetMap**: Map tiles used by the property-map interface
+- 📂 **data.gov.sg / HDB Resale Data**: Historical completed resale transactions used for valuation research
+
+### 🔐 Architecture & Trust Boundaries
+
+- 👤 **Authenticated browser access**: The frontend operates using the signed-in user's Supabase session.
+- 🛡️ **RLS-protected data access**: Supabase applies authentication and Row Level Security before application data is accessed.
+- ⚙️ **Trusted Edge Functions**: Sensitive application workflows such as chatbot orchestration, HDB lookup, and valuation requests run server-side.
+- 🔑 **Server-held credentials**: Render, OpenAI, OpenRouter, and OneMap credentials are never sent to the browser.
+- 🤖 **Controlled AI access**: LLM providers assist with conversation and structured extraction, while application code remains responsible for validation, database access, and persistence.
+
+#### 📊 Valuation Flow
+
+**Browser → Supabase Edge Function → Render FastAPI → CatBoost**
+
+The browser sends the property ID together with authenticated session context.
+
+The Edge Function:
+
+- Authenticates the caller
+- Reads trusted property data under RLS
+- Constructs model features server-side
+- Sends the trusted feature request to Render using a separate server-held credential
+
+Render's FastAPI service loads the versioned CatBoost bundle and returns the estimate and calibrated range.
+
+#### 💬 Chatbot Flow
+
+**Browser → Supabase chatbot Edge Function → validated application tools / configured LLM provider**
+
+The chatbot Edge Function controls:
+
+- Tool validation
+- Listing searches
+- Seller draft persistence
+- HDB address verification
+- Provider requests
+
+The LLM does not have arbitrary SQL access and does not directly control database reads or writes.
+
+---
+
+## 🚀 Quick Start
+
+### 📋 Prerequisites
+
+- 📦 **Node.js**: `^20.19.0` or `>=22.12.0`
+- 🔴 **npm**
+- 🔥 **Supabase**: A compatible hosted or local project configuration
+
+### 1️⃣ Clone & Navigate
 
 ```bash
-cd SGHomie/FrontEnd
+git clone https://github.com/Nitecry7/SC3040-Software-Engineering-Project.git
+cd SC3040-Software-Engineering-Project/SGHomie/FrontEnd
 ```
 
-### 2️⃣ Install dependencies
+### 2️⃣ Install Dependencies
 
-The frontend has a `package-lock.json`, so use the reproducible install:
+The frontend includes a `package-lock.json`, so use the reproducible install:
 
 ```bash
 npm ci
 ```
 
-### 3️⃣ Configure environment
+### 3️⃣ Configure Environment
 
-Copy `.env.example` to `.env`:
+Copy `.env.example` to `.env`.
+
+#### macOS / Linux
 
 ```bash
 cp .env.example .env
 ```
 
-In PowerShell:
+#### Windows PowerShell
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Set these browser-safe values in `.env`:
+Set these browser-safe values inside `.env`:
 
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
+```env
+VITE_SUPABASE_URL=
+VITE_SUPABASE_ANON_KEY=
+```
 
-`VITE_SUPABASE_FUNCTIONS_URL` is optional; leave it blank to use the Edge Functions configured with `VITE_SUPABASE_URL`.
+`VITE_SUPABASE_FUNCTIONS_URL` is optional when using the Edge Functions associated with `VITE_SUPABASE_URL`.
 
-Do not place service-role, OpenAI, OpenRouter, OneMap, or other privileged secrets in the frontend environment file. Vite variables are exposed to browser code.
+> 🔐 **Security:** Do not place service-role keys, OpenAI keys, OpenRouter keys, OneMap credentials, Render service tokens, or other privileged secrets in the frontend environment file. Vite environment variables are exposed to browser code.
 
-### 4️⃣ Launch local development server
+### 4️⃣ Launch Development Server
 
 ```bash
 npm run dev
 ```
 
-🚀 Open the local URL printed by Vite in your terminal. For Supabase backend, local functions, migrations, and secrets setup, see the [Supabase README](SGHomie/BackEnd/supabase/README.md).
+🚀 Open the local URL printed by Vite in your terminal.
 
+For Supabase backend setup, migrations, local Edge Functions, and server-side secrets, see the [Supabase README](SGHomie/BackEnd/supabase/README.md).
+
+---
 ## 🏗️ Project Structure
 
 ```text
