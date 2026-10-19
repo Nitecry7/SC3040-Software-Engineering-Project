@@ -4,8 +4,33 @@ V2 is the clean research pipeline for HDB resale price evaluation. It supports
 raw data profiling, deterministic row-wise feature preparation, chronological
 partitions, historical transaction-price baselines, and leakage-safe Linear,
 Ridge, tree, and CatBoost research. It evaluates uncertainty ranges for the
-selected CatBoost point estimator; it does not serve valuations or provide an
-approved production model.
+selected CatBoost point estimator and includes local inference plus a
+research/demo serving path. The model is not approved for production valuation;
+serving details appear later in this report.
+
+![Offline HDB transaction research and versioned artifact release separated from online Render bundle loading and FastAPI inference](../docs/architecture/assets/ml-lifecycle.svg)
+
+*Research and evaluation happen offline. The online service loads a released bundle and does not train during requests.*
+
+| Research snapshot | Current record |
+| --- | --- |
+| Selected model | CatBoost, chosen using 2025 validation data |
+| Later test period | 2026-01 through 2026-09; partial October excluded |
+| Later test MAE | $29,490.56 across 19,641 transactions |
+| Status | Research/demo artifact, not an approved production valuation |
+
+The results below include baselines, model comparisons, chronological robustness checks, uncertainty evaluation, bundle format, and local API details. Test metrics describe this historical period and do not guarantee an individual future estimate.
+
+## Guide to this report
+
+- [Model selection and evaluation design](#model-selection-summary)
+- [Dataset and data handling](#dataset)
+- [Baselines and model benchmarks](#historical-baselines)
+- [Matched and temporal robustness](#matched-and-temporal-robustness)
+- [Uncertainty ranges](#catboost-uncertainty-ranges)
+- [Persisted bundle and local inference API](#persisted-local-valuation-bundle)
+- [Hosted demo serving observations](#hosted-sg-homie-demo-serving-and-observed-latency)
+- [Render preparation, status, and setup](#render-deployment-preparation)
 
 ## Model selection summary
 

@@ -1,92 +1,69 @@
 <div align="center">
-  <img width="160" alt="SG Homie logo" src="https://github.com/user-attachments/assets/8e515211-77c0-4630-b725-9e27734192c8" />
+  <img width="144" alt="SG Homie logo" src="https://github.com/user-attachments/assets/8e515211-77c0-4630-b725-9e27734192c8" />
 
   <h1>SG Homie</h1>
-  <p>A data-informed companion for Singapore HDB housing decisions.</p>
+  <p><strong>The Housing Companion</strong><br />Singapore HDB housing decision support</p>
+
 </div>
 
-SG Homie brings HDB listing discovery, seller workflows, property information, and conversational help into one web application. Its current tools combine application listing data with a research/demo valuation service. Estimates are not official valuations or financial advice.
+<table>
+  <tr>
+    <td align="center"><a href="#buyer-search"><strong>Search</strong><br />Browse approved HDB listings</a></td>
+    <td align="center"><a href="#property-valuation"><strong>Valuation</strong><br />Explore a research/demo estimate</a></td>
+    <td align="center"><a href="#conversational-assistant"><strong>Chatbot</strong><br />Ask about listings and seller drafts</a></td>
+  </tr>
+</table>
 
-## What the platform does
-
-| For | Current workflows |
-| --- | --- |
-| Buyers | Search approved HDB listings, inspect property details, submit enquiries, and ask the chatbot to search listings using structured filters. |
-| Sellers | Verify an HDB address, create and manage listing drafts, and submit listings for review. Chat intake can save a draft for later completion in the Seller Dashboard. |
-| Administrators | Review listings and use the available administrative workflows. |
-
-The chatbot can suggest a provisional asking price during seller intake from application asking listings. This is AI guidance, not the CatBoost valuation or completed-transaction evidence.
-
-## Technology
-
-<p>
+<p align="center">
   <img alt="React" src="https://img.shields.io/badge/React-UI-61DAFB?logo=react&logoColor=20232A" />
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-Frontend-3178C6?logo=typescript&logoColor=white" />
-  <img alt="Vite" src="https://img.shields.io/badge/Vite-Frontend-646CFF?logo=vite&logoColor=white" />
   <img alt="Supabase" src="https://img.shields.io/badge/Supabase-Auth%20%7C%20Postgres%20%7C%20Edge%20Functions-3FCF8E?logo=supabase&logoColor=white" />
-  <img alt="Python and FastAPI" src="https://img.shields.io/badge/Python-FastAPI%20inference-3776AB?logo=python&logoColor=white" />
+  <img alt="Python" src="https://img.shields.io/badge/Python-Valuation%20inference-3776AB?logo=python&logoColor=white" />
   <img alt="CatBoost" src="https://img.shields.io/badge/CatBoost-Research%20model-FFCC00" />
 </p>
 
-The frontend also uses Tailwind CSS, React Router, and Leaflet. Supabase provides authentication, PostgreSQL with Row Level Security (RLS), Edge Functions, and property image storage. Python/FastAPI serves the persisted CatBoost research bundle. OpenAI or OpenRouter can power chatbot flows through server-side configuration. OneMap and HDB property information support seller address verification; OpenStreetMap tiles provide map backgrounds.
+SG Homie brings HDB listing discovery, seller workflows, property information, and conversational help into one web application. Valuation is a research/demo feature; estimates are not official valuations or financial advice.
 
-## Architecture at a glance
+## How it works
 
-The browser talks to Supabase using the user's session and the browser-safe Supabase key. Supabase applies authentication and RLS, and its Edge Functions coordinate trusted operations. Only the valuation Edge Function calls the Render inference service with a server-held credential. Chat provider credentials also remain server-side.
+![System overview showing the browser, Supabase trust boundary, server-side provider and address services, and the separate valuation inference service](docs/architecture/assets/system-overview.svg)
 
-```mermaid
-flowchart LR
-  Browser[Browser<br/>React + TypeScript]
-  Supabase[Supabase<br/>Auth · PostgreSQL · RLS<br/>Edge Functions · Storage]
-  Render[Render<br/>FastAPI inference<br/>Versioned CatBoost bundle]
-  LLM[OpenAI or OpenRouter]
-  Address[OneMap + HDB property information]
-  Tiles[OpenStreetMap tiles]
+*The browser uses the signed-in user's Supabase session. Privileged provider and valuation credentials stay on the server.*
 
-  Browser -->|User session and application requests| Supabase
-  Supabase -->|Server-side bearer-authenticated valuation request| Render
-  Supabase -->|Server-side provider request| LLM
-  Supabase -->|Address verification| Address
-  Browser -->|Map tiles| Tiles
-```
+## What you can do
 
-This diagram describes repository architecture and the reported valuation serving path; it does not establish current hosted configuration. Detailed generator source for four architecture diagrams is in [`docs/architecture`](docs/architecture/README.md). SVG rendering requires Python and Graphviz; those prerequisites were unavailable in the environment used for this change, so no rendered diagrams are included yet.
+<a id="buyer-search"></a>
+### Buyer search
 
-## Property valuation
+Search approved HDB listings, open property details, and submit enquiries. The buyer chatbot can search and sort listings through a structured read-only application tool. It does not rank personalized recommendations.
 
-The buyer-facing valuation flow is **Property Details → Supabase valuation Edge Function → Render FastAPI → Property Details**. The browser sends only a `property_id` with the authenticated Supabase session. The Edge Function checks the caller and reads the property under that caller's RLS access, constructs model features on the server, and sends the prediction request to Render with a separate server-held credential. The browser never receives the Render credential or supplies raw model features.
+<a id="property-valuation"></a>
+### Property valuation
 
-FastAPI loads a versioned CatBoost bundle and returns a point estimate with a conformal range. The asking price, when available, is used to classify its position relative to the range. A request ID correlates logs; it is not an authentication token. The bundle is research/demo quality, not an approved production valuation. One authenticated hosted request was user-reported as successful on 2026-10-18; this is not a benchmark or service guarantee. See the [valuation serving notes](SGHomie/BackEnd/supabase/README.md#valuation-integration-and-demo-provenance) for the dated observation.
+The authenticated valuation path accepts a property ID; the Supabase Edge Function reads data under the caller's access and builds model inputs server-side. A separate FastAPI service serves a versioned CatBoost research bundle. The output is an estimate, not an official valuation.
 
-### Training and inference are separate
+<a id="conversational-assistant"></a>
+### Conversational assistant
 
-Training and evaluation happen offline in `MLPricePredictorV2/`: HDB resale data is prepared, leakage-safe features and chronological splits are used, candidate models and uncertainty ranges are evaluated, and a versioned bundle is built. Render fetches and loads a released bundle to serve requests; it does not train a model during inference. The legacy `MLPricePredictor/` directory contains target leakage and is not trusted valuation evidence.
+The chatbot can explain trusted listing results and help sellers save listing drafts. Seller intake verifies the supplied HDB address; any suggested asking price is provisional AI guidance based on application asking listings, separate from the CatBoost valuation.
 
-See [V2 research methods and results](MLPricePredictorV2/README.md) for the evaluation, data provenance, bundle format, and inference API.
+## What works today
 
-## Conversational assistant
-
-The React chat UI calls the Supabase `chatbot` Edge Function. A server-configured provider (OpenAI or OpenRouter) supports conversation, while application tools perform bounded work:
-
-- **Buyer search:** the structured, read-only `search_listings` tool queries approved HDB listings. The LLM may explain returned records; it is not a recommendation-ranking engine and must not invent listing facts.
-- **Seller intake:** the provider extracts supplied details into a validated structure. The function verifies the HDB address through the location lookup and saves an owner-bound draft. The seller reviews and completes it in the dashboard before submitting.
-
-The chatbot does not have arbitrary SQL access. Seller price suggestions are provisional AI guidance and are separate from the CatBoost buyer valuation. Read the [buyer flow](SGHomie/docs/buy-flow.md) and [seller flow](SGHomie/docs/sell-flow.md) for details.
-
-## Capability status
-
-| Area | Status |
+| Label | Current state |
 | --- | --- |
-| HDB listing search, property details, enquiries, seller drafts, and admin listing workflows | Implemented in the repository; hosted data and deployments are environment-specific. |
-| Buyer chatbot structured listing search | Implemented in the repository; current hosted provider/configuration is not verified here. |
-| Seller chatbot intake and HDB address verification | Implemented in the repository; OneMap/provider secrets and hosted function state are not verified here. |
-| Buyer property valuation through Supabase and Render | Research/demo path; one user-reported hosted request succeeded on 2026-10-18. Not production-approved. |
-| Nearby amenity records and market analytics | Demo content. Amenity rows are synthetic; analytics contain generated or hardcoded values. |
-| Seller CatBoost pricing guidance, explainable recommendation ranking, real amenity ingestion, and historical transaction analytics | Planned; not implemented as those capabilities. |
+| **Implemented** | Buyer listing search, property details, enquiries, seller drafts, admin listing workflows, and structured buyer chatbot search are implemented in the repository. Hosted data and deployments are environment-specific. |
+| **Research** | Buyer valuation uses a research/demo model and serving path. It is not approved for production use. |
+| **Demo data** | Nearby amenity records are synthetic. Market analytics include generated or hardcoded values; they are not verified market evidence. |
+| **Planned** | Explainable personalized ranking, real amenity ingestion, historical transaction analytics, and CatBoost-based seller pricing guidance are not implemented as those capabilities. |
 
-## Run the frontend locally
+## Technology and architecture
 
-The current Vite toolchain requires Node.js `^20.19.0` or `>=22.12.0` and npm.
+The frontend uses React, TypeScript, Vite, Tailwind CSS, React Router, and Leaflet. Supabase provides authentication, PostgreSQL with Row Level Security (RLS), Edge Functions, and property image storage. The valuation research service uses Python, FastAPI, and a persisted CatBoost bundle. OpenAI or OpenRouter may power chatbot flows through server-side configuration.
+
+The architecture diagram describes repository boundaries; it does not verify a hosted deployment. See the [architecture guide](docs/architecture/README.md) for diagram sources and regeneration instructions.
+
+## Quick start
+
+Requirements: Node.js `^20.19.0` or `>=22.12.0` and npm.
 
 ```bash
 cd SGHomie/FrontEnd
@@ -95,41 +72,35 @@ cp .env.example .env
 npm run dev
 ```
 
-In PowerShell, use `Copy-Item .env.example .env` for the copy step. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env`; `VITE_SUPABASE_FUNCTIONS_URL` is optional when using the configured project's functions. Only browser-safe Supabase values belong in this file. Keep service-role, OpenAI, OpenRouter, and OneMap credentials in server-side configuration.
+In PowerShell, copy the environment template with `Copy-Item .env.example .env`. Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `.env`; `VITE_SUPABASE_FUNCTIONS_URL` is optional when using the configured project's functions. Keep service-role, OpenAI, OpenRouter, and OneMap credentials in server-side configuration. See the [Supabase setup guide](SGHomie/BackEnd/supabase/README.md) for backend setup and operations.
 
-See the [Supabase guide](SGHomie/BackEnd/supabase/README.md) for backend setup, local functions, migrations, and deployment procedures.
+## Repository map
 
-## Repository layout
-
-```text
-AGENTS.md                         Repository instructions
-PRODUCT.md                        Product direction and capability boundaries
-DESIGN.md                         Frontend design system snapshot
-SGHomie/FrontEnd/                 Active React, TypeScript, and Vite app
-SGHomie/BackEnd/supabase/         Supabase config, migrations, and Edge Functions
-SGHomie/docs/                     Buyer and seller chatbot flow guides
-docs/architecture/                Diagram source and regeneration instructions
-MLPricePredictorV2/               Leakage-safe valuation research and serving
-MLPricePredictor/                 Legacy experiments with target leakage
-render.yaml                       Render service blueprint for valuation inference
-archived_migrations/              Historical migrations
-```
+| Path | Contents |
+| --- | --- |
+| `SGHomie/FrontEnd/` | Active React, TypeScript, and Vite application |
+| `SGHomie/BackEnd/supabase/` | Supabase configuration, migrations, seed data, and Edge Functions |
+| `SGHomie/docs/` | Product workflow documentation |
+| `MLPricePredictorV2/` | HDB valuation research, evaluation, bundle, and inference API |
+| `MLPricePredictor/` | Legacy experiments containing target leakage; not trusted valuation evidence |
+| `docs/architecture/` | Architecture diagram sources and regeneration guide |
+| `archived_migrations/` | Historical migrations outside the active migration path |
 
 ## Documentation
 
-- [Product direction and status](PRODUCT.md)
-- [Design system](DESIGN.md)
-- [Supabase setup and valuation serving](SGHomie/BackEnd/supabase/README.md)
-- [Chatbot buyer flow](SGHomie/docs/buy-flow.md) · [seller flow](SGHomie/docs/sell-flow.md)
+- [Product direction and capability status](PRODUCT.md) · [Design system](DESIGN.md)
+- [Supabase setup, migrations, and valuation serving](SGHomie/BackEnd/supabase/README.md)
+- [Chatbot guide](SGHomie/docs/chatbot/README.md) · [Buyer flow](SGHomie/docs/buy-flow.md) · [Seller flow](SGHomie/docs/sell-flow.md)
 - [V2 valuation research and inference](MLPricePredictorV2/README.md)
-- [Architecture diagram source and regeneration](docs/architecture/README.md)
+- [Archived migrations notice](archived_migrations/README.md)
+- [Architecture diagrams and regeneration](docs/architecture/README.md)
 
 ## Contributors
 
 <table>
   <tr>
-    <td align="center"><a href="https://github.com/Nitecry7"><img src="https://github.com/Nitecry7.png" width="96" height="96" alt="GitHub avatar for Nitecry7" /><br /><sub><b>@Nitecry7</b></sub></a></td>
-    <td align="center"><a href="https://github.com/Kappro"><img src="https://github.com/Kappro.png" width="96" height="96" alt="GitHub avatar for Kappro" /><br /><sub><b>@Kappro</b></sub></a></td>
-    <td align="center"><a href="https://github.com/TyroneTiang"><img src="https://github.com/TyroneTiang.png" width="96" height="96" alt="GitHub avatar for TyroneTiang" /><br /><sub><b>@TyroneTiang</b></sub></a></td>
+    <td align="center"><a href="https://github.com/Nitecry7"><img src="https://github.com/Nitecry7.png" width="80" height="80" alt="GitHub avatar for Nitecry7" /><br /><sub><b>@Nitecry7</b></sub></a></td>
+    <td align="center"><a href="https://github.com/Kappro"><img src="https://github.com/Kappro.png" width="80" height="80" alt="GitHub avatar for Kappro" /><br /><sub><b>@Kappro</b></sub></a></td>
+    <td align="center"><a href="https://github.com/TyroneTiang"><img src="https://github.com/TyroneTiang.png" width="80" height="80" alt="GitHub avatar for TyroneTiang" /><br /><sub><b>@TyroneTiang</b></sub></a></td>
   </tr>
 </table>
