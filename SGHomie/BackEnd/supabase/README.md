@@ -2,6 +2,26 @@
 
 This guide covers the active Supabase schema, server-side functions, valuation path, provider configuration, and property image storage. Repository files describe intended setup; confirm the target project's migration history, secrets, and deployments in Supabase before relying on hosted state.
 
+```mermaid
+flowchart LR
+    subgraph SB["Supabase project boundary"]
+        AUTH["Auth and caller session"] --> EDGE["Edge Functions"]
+        EDGE --> RLS["Data API and PostgreSQL with RLS"]
+        EDGE --> STORE["Property image storage"]
+        EDGE --> CHAT["Chatbot provider adapter"]
+        EDGE --> VAL["Valuation request construction"]
+        EDGE --> LOOKUP["HDB address lookup"]
+    end
+    BROWSER["Browser"] -->|"JWT and property ID"| AUTH
+    BROWSER -->|"session-scoped reads and writes"| RLS
+    BROWSER --> STORE
+    CHAT --> LLM["Configured LLM provider"]
+    VAL -->|"validated features; server-held credential"| API["Render FastAPI"]
+    LOOKUP --> MAP["OneMap and HDB address data"]
+```
+
+*This is the backend source architecture. Repository configuration does not establish current hosted deployment or provider state.*
+
 | Need | Section |
 | --- | --- |
 | Understand the authenticated valuation request | [Valuation request flow](#valuation-request-flow) |
@@ -170,14 +190,18 @@ sequenceDiagram
     Edge->>DB: Read property with caller session
     DB-->>Edge: Property visible under caller RLS
     Edge->>Edge: Build validated model features server-side
-    Edge->>API: Features + separate server-held bearer token
+    opt Asking price was supplied
+        Edge->>Edge: Keep asking_price separate from CatBoost features
+    end
+    Edge->>API: Features + server-held bearer + X-Valuation-Request-ID
     API->>API: Predict with bundle loaded at startup
-    API-->>Edge: Point estimate and conformal range
-    Edge-->>UI: Estimate, range, price position, request ID
+    API->>API: Calculate conformal range and optional asking-price position
+    API-->>Edge: Point estimate + range + optional price position
+    Edge-->>UI: Estimate, range, optional position, request ID
     UI-->>Buyer: Display research/demo estimate
 ```
 
-*The request ID is for log correlation, not authentication. This research/demo output is not an official valuation or production-approved service.*
+*The request ID is correlation metadata, not authentication. Asking price is a comparison input only and is not a CatBoost feature. This research/demo output is not an official valuation or production-approved service.*
 
 ### Hosted serving observation and log correlation
 

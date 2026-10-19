@@ -25,9 +25,40 @@ SG Homie brings HDB listing discovery, seller workflows, property information, a
 
 ## How it works
 
-![System overview showing the browser, Supabase trust boundary, server-side provider and address services, and the separate valuation inference service](docs/architecture/assets/system-overview.svg)
+```mermaid
+flowchart LR
+  Browser[Browser<br/>React + TypeScript]
 
-*The browser uses the signed-in user's Supabase session. Privileged provider and valuation credentials stay on the server.*
+  subgraph Supabase[Supabase trust boundary]
+    Auth[Auth and user session]
+    Data[Data API<br/>PostgreSQL + RLS]
+    Storage[Property image storage]
+    Functions[Edge Functions<br/>chatbot · valuation · lookup-hdb-location]
+  end
+
+  subgraph Services[Server-side services]
+    Render[Render FastAPI<br/>versioned CatBoost bundle]
+    Provider[Configured LLM provider<br/>OpenAI or OpenRouter]
+    Address[OneMap + official HDB address check]
+  end
+
+  Tiles[OpenStreetMap tiles]
+
+  Browser -->|sign-in and session| Auth
+  Browser -->|session-scoped application requests| Data
+  Browser -->|authenticated function requests| Functions
+  Browser -->|policy-controlled image uploads| Storage
+  Browser -->|direct tile requests| Tiles
+  Functions -->|caller-scoped reads and writes| Data
+  Functions -->|server-held bearer and model features| Render
+  Render -->|estimate and uncertainty range| Functions
+  Functions -->|server-side provider request| Provider
+  Provider -->|provider response| Functions
+  Functions -->|address lookup| Address
+  Address -->|verified address data| Functions
+```
+
+*The browser uses the signed-in user's Supabase session. The Render service credential and provider credentials stay server-side. This diagram describes repository architecture, not current hosted deployment.*
 
 ## What you can do
 
@@ -55,11 +86,13 @@ The chatbot can explain trusted listing results and help sellers save listing dr
 | **Demo data** | Nearby amenity records are synthetic. Market analytics include generated or hardcoded values; they are not verified market evidence. |
 | **Planned** | Explainable personalized ranking, real amenity ingestion, historical transaction analytics, and CatBoost-based seller pricing guidance are not implemented as those capabilities. |
 
+One authenticated hosted valuation request was user-reported successful on 2026-10-18. That dated observation is not independent verification of current deployment, a benchmark, or a service guarantee; see the [Supabase serving notes](SGHomie/BackEnd/supabase/README.md#hosted-serving-observation-and-log-correlation).
+
 ## Technology and architecture
 
 The frontend uses React, TypeScript, Vite, Tailwind CSS, React Router, and Leaflet. Supabase provides authentication, PostgreSQL with Row Level Security (RLS), Edge Functions, and property image storage. The valuation research service uses Python, FastAPI, and a persisted CatBoost bundle. OpenAI or OpenRouter may power chatbot flows through server-side configuration.
 
-The architecture diagram describes repository boundaries; it does not verify a hosted deployment. See the [architecture guide](docs/architecture/README.md) for diagram sources and regeneration instructions.
+The diagram describes repository boundaries; it does not verify a hosted deployment.
 
 ## Quick start
 
@@ -83,7 +116,6 @@ In PowerShell, copy the environment template with `Copy-Item .env.example .env`.
 | `SGHomie/docs/` | Product workflow documentation |
 | `MLPricePredictorV2/` | HDB valuation research, evaluation, bundle, and inference API |
 | `MLPricePredictor/` | Legacy experiments containing target leakage; not trusted valuation evidence |
-| `docs/architecture/` | Architecture diagram sources and regeneration guide |
 | `archived_migrations/` | Historical migrations outside the active migration path |
 
 ## Documentation
@@ -93,7 +125,6 @@ In PowerShell, copy the environment template with `Copy-Item .env.example .env`.
 - [Chatbot guide](SGHomie/docs/chatbot/README.md) · [Buyer flow](SGHomie/docs/buy-flow.md) · [Seller flow](SGHomie/docs/sell-flow.md)
 - [V2 valuation research and inference](MLPricePredictorV2/README.md)
 - [Archived migrations notice](archived_migrations/README.md)
-- [Architecture diagrams and regeneration](docs/architecture/README.md)
 
 ## Contributors
 

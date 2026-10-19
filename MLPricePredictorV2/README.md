@@ -8,9 +8,30 @@ selected CatBoost point estimator and includes local inference plus a
 research/demo serving path. The model is not approved for production valuation;
 serving details appear later in this report.
 
-![Offline HDB transaction research and versioned artifact release separated from online Render bundle loading and FastAPI inference](../docs/architecture/assets/ml-lifecycle.svg)
+```mermaid
+flowchart LR
+    subgraph OFFLINE["Offline research and release"]
+        HDB["HDB resale transactions"] --> PREP["Deterministic preparation and leakage-safe features"]
+        PREP --> SPLIT["Chronological train, validation, and test"]
+        SPLIT --> EVAL["Select on validation; evaluate later test"]
+        EVAL --> CAL["Refit selected model and calibrate conformal ranges"]
+        CAL --> BUNDLE["Versioned bundle: hdb-catboost-2025-12-v1"]
+    end
+    subgraph ONLINE["Online research/demo inference"]
+        FETCH["Render build fetches released bundle"] --> START["FastAPI lifespan verifies and loads bundle"]
+        START --> INPUT["Validated property features from Supabase Edge Function"]
+        INPUT --> PRED["CatBoost point estimate"]
+        PRED --> RANGE["Conformal range"]
+        INPUT --> ASK["Optional asking_price comparison input; excluded from model features"]
+        PRED --> POSITION["Asking-price position comparison"]
+        ASK --> POSITION
+        RANGE --> RESPONSE["Estimate and range response"]
+        POSITION --> RESPONSE
+    end
+    BUNDLE -->|"Versioned artifact; no request-time training"| FETCH
+```
 
-*Research and evaluation happen offline. The online service loads a released bundle and does not train during requests.*
+*Chronological evaluation and conformal calibration happen offline. The online service loads the released bundle; it does not train during requests or retrain automatically.*
 
 | Research snapshot | Current record |
 | --- | --- |
