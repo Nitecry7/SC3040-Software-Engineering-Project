@@ -169,6 +169,87 @@ input, textarea, select {
 .valuation-tooltip-y { transform: translate(-50%, 0.25rem); }
 .group:hover .valuation-tooltip-y,
 .group:focus-visible .valuation-tooltip-y { transform: translate(-50%, 0); }
+.valuation-tooltip-y.valuation-tooltip-align-start { left: 0; transform: translateY(0.25rem); }
+.valuation-tooltip-y.valuation-tooltip-align-end { left: auto; right: 0; transform: translateY(0.25rem); }
+.group:hover .valuation-tooltip-y.valuation-tooltip-align-start,
+.group:focus-visible .valuation-tooltip-y.valuation-tooltip-align-start,
+.group:hover .valuation-tooltip-y.valuation-tooltip-align-end,
+.group:focus-visible .valuation-tooltip-y.valuation-tooltip-align-end { transform: translateY(0); }
+
+.valuation-gauge-asking-track {
+  position: relative;
+  height: 2.25rem;
+  overflow: visible;
+}
+
+.valuation-gauge-asking-label {
+  position: absolute;
+  bottom: 0.35rem;
+  z-index: 5;
+  width: max-content;
+  max-width: min(12rem, 70vw);
+  border: 1px solid rgb(203 213 225);
+  border-radius: 0.65rem;
+  background: white;
+  padding: 0.3rem 0.55rem;
+  color: rgb(15 23 42);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  box-shadow: 0 2px 5px rgb(15 23 42 / 10%);
+  transform: translateX(-50%);
+}
+
+.valuation-gauge-asking-label.valuation-gauge-anchor--start { transform: none; text-align: left; }
+.valuation-gauge-asking-label.valuation-gauge-anchor--end { transform: translateX(-100%); text-align: right; }
+
+.valuation-gauge-asking-continuation {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
+
+.valuation-gauge-asking-continuation--below { color: rgb(146 64 14); }
+.valuation-gauge-asking-continuation--above { color: rgb(159 18 57); }
+
+.valuation-gauge-anchor-track {
+  position: relative;
+  display: block;
+  min-height: 7.6rem;
+  margin-top: 0.75rem;
+}
+
+.valuation-gauge-anchor {
+  position: absolute;
+  top: 0;
+  width: 10rem;
+  max-width: 44%;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.valuation-gauge-anchor--lane-1 { top: 2.6rem; }
+.valuation-gauge-anchor--lane-2 { top: 5.2rem; }
+.valuation-gauge-anchor--start { transform: none; text-align: left; }
+.valuation-gauge-anchor--center { transform: translateX(-50%); text-align: center; }
+.valuation-gauge-anchor--end { transform: translateX(-100%); text-align: right; }
+
+.valuation-gauge-scale-note {
+  margin-top: 0.5rem;
+  color: rgb(71 85 105);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 639px) {
+  .valuation-gauge-anchor-track { min-height: 9.6rem; }
+  .valuation-gauge-anchor { width: min(10rem, 46vw); max-width: 46%; }
+  .valuation-gauge-anchor--lower { top: 0; }
+  .valuation-gauge-anchor--estimate { top: 3.1rem; }
+  .valuation-gauge-anchor--upper { top: 6.2rem; }
+  .valuation-gauge-asking-label { max-width: min(12rem, 72vw); }
+}
 
 .valuation-result-skeleton {
   background: linear-gradient(100deg, rgb(226 232 240 / 65%) 20%, rgb(248 250 252 / 95%) 38%, rgb(226 232 240 / 65%) 56%);
@@ -217,6 +298,8 @@ input, textarea, select {
   .valuation-cta:hover:not(:disabled) { box-shadow: 0 8px 18px rgb(49 46 129 / 18%); }
   .valuation-result-enter { animation: none !important; }
   .valuation-tooltip-y { transform: translate(-50%, 0); }
+  .valuation-tooltip-y.valuation-tooltip-align-start,
+  .valuation-tooltip-y.valuation-tooltip-align-end { transform: none; }
   .valuation-progress-track::after {
     left: 20%;
     width: 60%;
