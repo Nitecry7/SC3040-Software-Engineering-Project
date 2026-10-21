@@ -1,9 +1,41 @@
 # Supabase setup
 
+This guide covers the active Supabase schema, server-side functions, valuation path, provider configuration, and property image storage. Repository files describe intended setup; confirm the target project's migration history, secrets, and deployments in Supabase before relying on hosted state.
+
+```mermaid
+flowchart LR
+    subgraph SB["Supabase project boundary"]
+        AUTH["Auth and caller session"] --> EDGE["Edge Functions"]
+        EDGE --> RLS["Data API and PostgreSQL with RLS"]
+        EDGE --> STORE["Property image storage"]
+        EDGE --> CHAT["Chatbot provider adapter"]
+        EDGE --> VAL["Valuation request construction"]
+        EDGE --> LOOKUP["HDB address lookup"]
+    end
+    BROWSER["Browser"] -->|"JWT and property ID"| AUTH
+    BROWSER -->|"session-scoped reads and writes"| RLS
+    BROWSER --> STORE
+    CHAT --> LLM["Configured LLM provider"]
+    VAL -->|"validated features; server-held credential"| API["Render FastAPI"]
+    LOOKUP --> MAP["OneMap and HDB address data"]
+```
+
+*This is the backend source architecture. Repository configuration does not establish current hosted deployment or provider state.*
+
+| Need | Section |
+| --- | --- |
+| Understand the authenticated valuation request | [Valuation request flow](#valuation-request-flow) |
+| Review demo amenity and valuation provenance | [Demo data and provenance](#deterministic-demo-amenities) · [Valuation integration](#valuation-integration-and-demo-provenance) |
+| Preview migrations and apply schema changes | [Reset and push the schema](#reset-and-push-the-schema) |
+| Configure address lookup or chatbot provider | [HDB postal-code lookup](#hdb-postal-code-lookup) · [Chatbot provider selection](#chatbot-provider-selection) |
+| Configure property image cleanup | [Property image storage and cleanup](#property-image-storage-and-cleanup) |
+
 The chatbot Buy flow, listing-search tool contract, verification and deployment
 steps are documented in [Chatbot buy flow](../../docs/buy-flow.md).
 The seller intake, provisional pricing, partial drafts and saved-draft card are
 documented in [Chatbot sell flow](../../docs/sell-flow.md).
+
+For visual overviews of both structured chatbot paths, see the [chatbot guide](../../docs/chatbot/README.md).
 
 The active migration path starts with one complete initial migration and then
 applies incremental migrations for the current application features:
@@ -141,6 +173,36 @@ configuration or documentation:
   metadata. Synthetic fixture owner IDs are allowed. This flag does not enable
   local demos and does not change seller eligibility.
 
+### Valuation request flow
+
+The browser sends a property ID and the signed-in user's session. Feature construction and the service credential remain server-side.
+
+```mermaid
+sequenceDiagram
+    actor Buyer
+    participant UI as Property Details UI
+    participant Edge as Supabase valuation Edge Function
+    participant DB as Supabase property data with RLS
+    participant API as Render FastAPI
+    Buyer->>UI: Request an estimate
+    UI->>Edge: property_id + Supabase user JWT
+    Edge->>Edge: Authenticate caller
+    Edge->>DB: Read property with caller session
+    DB-->>Edge: Property visible under caller RLS
+    Edge->>Edge: Build validated model features server-side
+    opt Asking price was supplied
+        Edge->>Edge: Keep asking_price separate from CatBoost features
+    end
+    Edge->>API: Features + server-held bearer + X-Valuation-Request-ID
+    API->>API: Predict with bundle loaded at startup
+    API->>API: Calculate conformal range and optional asking-price position
+    API-->>Edge: Point estimate + range + optional price position
+    Edge-->>UI: Estimate, range, optional position, request ID
+    UI-->>Buyer: Display research/demo estimate
+```
+
+*The request ID is correlation metadata, not authentication. Asking price is a comparison input only and is not a CatBoost feature. This research/demo output is not an official valuation or production-approved service.*
+
 ### Hosted serving observation and log correlation
 
 The buyer valuation path has been live-verified by the user with an
@@ -233,6 +295,9 @@ where id = (
 ```
 
 ## Reset and push the schema
+
+> [!WARNING]
+> `supabase db reset` clears the local development database. Never run it against a linked hosted project; preview linked migration changes and confirm the project reference before applying them.
 
 From the backend directory:
 
@@ -331,6 +396,9 @@ supabase functions serve chatbot --env-file .env
 The hosted chatbot reads **Supabase Edge Function secrets**, not local or
 frontend `.env` files. Add `OPENAI_API_KEY` securely in Dashboard → Edge Functions
 → Secrets, then select OpenAI with:
+
+> [!CAUTION]
+> API keys and service credentials must stay in Supabase Function Secrets. Do not put them in frontend environment files, committed documentation, screenshots, or logs.
 
 ```bash
 supabase secrets set CHAT_PROVIDER=openai OPENAI_MODEL=gpt-6-luna
