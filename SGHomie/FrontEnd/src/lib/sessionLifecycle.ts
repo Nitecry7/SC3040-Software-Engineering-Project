@@ -1,5 +1,6 @@
 export const SESSION_IDLE_TIMEOUT_MS = 60 * 60 * 1000;
-export const SESSION_WARNING_BEFORE_MS = 55 * 60 * 1000;
+export const SESSION_WARNING_AT_MS = 55 * 60 * 1000;
+export const SESSION_WARNING_BEFORE_MS = SESSION_IDLE_TIMEOUT_MS - SESSION_WARNING_AT_MS;
 export const ACTIVITY_PERSIST_THROTTLE_MS = 1_000;
 export const SESSION_ACTIVITY_STORAGE_KEY = 'sghomie:lastActivityAt:v1';
 
@@ -35,6 +36,10 @@ export async function verifySessionUser(
   } catch {
     return false;
   }
+}
+
+export function sessionExpiryMinutesRemaining(expiresAt: number, now: number): number {
+  return Math.max(1, Math.ceil((expiresAt - now) / 60_000));
 }
 
 export function createIdleSession(dependencies: IdleSessionDependencies): IdleSessionController {

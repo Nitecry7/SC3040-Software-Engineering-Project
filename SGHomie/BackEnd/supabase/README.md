@@ -67,29 +67,41 @@ with no per-user daily cap for privileged. A repeated burst-denial policy starts
 a 15-minute chatbot cooldown after five denials within ten minutes. The initial
 project reserve is 18 provider calls per minute and 45 per Singapore calendar
 day. These values are application settings, not guarantees about upstream
-provider capacity.
+provider capacity. PostgreSQL calculates the next Singapore calendar-day reset
+and returns its timestamp in quota snapshots; the frontend displays that
+server-provided weekday, date and time instead of estimating when access will
+return.
 
 The authenticated `reserve_chat_user_interaction()` RPC derives the user from
 `auth.uid()`. The `service_role`-only `reserve_chat_provider_call()` RPC protects
 the global reserve and cannot be called by ordinary authenticated users. Both
 functions serialize updates with row locks. Tier assignments and settings are
 trusted database operations; users cannot read or write those tables through
-the Data API. To assign a project member, use a trusted SQL session and the
-member's Auth UUID (never an email in source code):
+the Data API. Admin or seller status does not grant a quota tier. To assign an
+authorized test account, confirm the target Supabase project, copy the account's
+Auth UUID from the Dashboard, then run this in the trusted SQL Editor:
 
 ```sql
 INSERT INTO public.chat_quota_assignments (user_id, tier)
-VALUES ('<auth-user-uuid>', 'tester')
+VALUES ('<auth-user-uuid>'::uuid, 'privileged')
 ON CONFLICT (user_id) DO UPDATE SET tier = EXCLUDED.tier, updated_at = now();
 ```
+
+Verify the account's next authenticated quota response reports `tier: privileged`,
+`minute_limit: 20`, `daily_limit: null` and `daily_remaining: null`. Privileged
+accounts still share the project-wide 18 provider calls/minute and 45/day caps,
+and remain subject to burst-abuse cooldowns. To assign `tester`, replace
+`'privileged'` above with `'tester'` and verify the returned tier and limits.
 
 Delete the assignment to restore the default `standard` tier:
 
 ```sql
-DELETE FROM public.chat_quota_assignments WHERE user_id = '<auth-user-uuid>';
+DELETE FROM public.chat_quota_assignments WHERE user_id = '<auth-user-uuid>'::uuid;
 ```
 
-Only a trusted database operator should update the configuration tables. After
+Only a trusted database operator should run these statements or update the
+configuration tables. Do not grant table access or expose a tier-assignment RPC
+to authenticated users. After
 applying the migration, deploy the `chatbot` Edge Function and verify both the
 migration and function version in the target Supabase project. The function
 requires the platform-provided `SUPABASE_SERVICE_ROLE_KEY` only in its server

@@ -4,7 +4,9 @@ import {
   ACTIVITY_PERSIST_THROTTLE_MS,
   createIdleSession,
   SESSION_IDLE_TIMEOUT_MS,
+  SESSION_WARNING_AT_MS,
   SESSION_WARNING_BEFORE_MS,
+  sessionExpiryMinutesRemaining,
   verifySessionUser,
 } from '../FrontEnd/src/lib/sessionLifecycle.ts';
 
@@ -54,17 +56,30 @@ function clockHarness({ start = 1_000, storedActivity = null, options = {} } = {
   };
 }
 
-test('authenticated idle session starts with a persisted timestamp and schedules warning at 55 minutes', () => {
+test('warning stays hidden through 54:59 idle and opens at 55 minutes with five minutes left', () => {
   const harness = clockHarness();
   harness.controller.start();
   assert.equal(harness.stored, 1_000);
-  harness.advance(SESSION_IDLE_TIMEOUT_MS - SESSION_WARNING_BEFORE_MS - 1);
+  harness.advance(5 * 60_000);
+  assert.deepEqual(harness.warnings, []);
+  harness.advance(25 * 60_000);
+  assert.deepEqual(harness.warnings, []);
+  harness.advance(SESSION_WARNING_AT_MS - 30 * 60_000 - 1);
   assert.deepEqual(harness.warnings, []);
   harness.advance(1);
   assert.deepEqual(harness.warnings, [{
     visible: true, expiresAt: 1_000 + SESSION_IDLE_TIMEOUT_MS,
-    at: 1_000 + SESSION_IDLE_TIMEOUT_MS - SESSION_WARNING_BEFORE_MS,
+    at: 1_000 + SESSION_WARNING_AT_MS,
   }]);
+  assert.equal(sessionExpiryMinutesRemaining(harness.warnings[0].expiresAt, harness.now), 5);
+});
+
+test('countdown minutes derive from the authoritative expiry deadline', () => {
+  const expiresAt = 1_000 + SESSION_IDLE_TIMEOUT_MS;
+  assert.equal(sessionExpiryMinutesRemaining(expiresAt, 1_000 + SESSION_WARNING_AT_MS), 5);
+  assert.equal(sessionExpiryMinutesRemaining(expiresAt, 1_000 + SESSION_WARNING_AT_MS + 60_000), 4);
+  assert.equal(sessionExpiryMinutesRemaining(expiresAt, expiresAt - 1), 1);
+  assert.equal(sessionExpiryMinutesRemaining(expiresAt, expiresAt), 1);
 });
 
 test('automatic sign-out happens at 60 minutes and delayed timers compare the deadline timestamp', () => {
@@ -86,9 +101,29 @@ test('restored activity does not grant a fresh 60 minutes after page reload', ()
   const harness = clockHarness({ start: 1_000 + 45 * 60_000, storedActivity: 1_000 });
   harness.controller.start();
   assert.equal(harness.controller.lastActivityAt, 1_000);
-  harness.advance(10 * 60_000);
+  assert.deepEqual(harness.warnings, []);
+  harness.advance(10 * 60_000 - 1);
+  assert.deepEqual(harness.warnings, []);
+  harness.advance(1);
   assert.equal(harness.warnings.at(-1).visible, true);
   harness.advance(5 * 60_000);
+  assert.equal(harness.expirations, 1);
+});
+
+test('Stay signed in verifies the active user and resets a full 60-minute period', async () => {
+  const harness = clockHarness();
+  harness.controller.start();
+  harness.advance(SESSION_WARNING_AT_MS);
+  assert.equal(harness.warnings.at(-1).visible, true);
+  const verified = await verifySessionUser(async () => ({ data: { user: { id: 'buyer-1' } }, error: null }), 'buyer-1');
+  assert.equal(verified, true);
+  harness.controller.activity(harness.now);
+  assert.equal(harness.warnings.at(-1).visible, false);
+  harness.advance(SESSION_WARNING_AT_MS - 1);
+  assert.equal(harness.warnings.at(-1).visible, false);
+  harness.advance(1);
+  assert.equal(harness.warnings.at(-1).visible, true);
+  harness.advance(SESSION_WARNING_BEFORE_MS);
   assert.equal(harness.expirations, 1);
 });
 

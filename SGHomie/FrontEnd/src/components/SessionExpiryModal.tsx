@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+import { sessionExpiryMinutesRemaining } from '../lib/sessionLifecycle';
 
 interface SessionExpiryModalProps {
   expiresAt: number;
@@ -12,7 +13,6 @@ interface SessionExpiryModalProps {
 }
 
 const COUNTDOWN_REFRESH_MS = 1_000;
-const MILLISECONDS_PER_MINUTE = 60_000;
 
 const SessionExpiryModal: React.FC<SessionExpiryModalProps> = ({
   expiresAt, error, busy, onStaySignedIn, onSignOut, onDismiss,
@@ -20,7 +20,7 @@ const SessionExpiryModal: React.FC<SessionExpiryModalProps> = ({
   const dialogRef = useRef<HTMLDivElement>(null);
   const stayRef = useRef<HTMLButtonElement>(null);
   const [now, setNow] = useState(() => Date.now());
-  const remainingMinutes = Math.max(1, Math.ceil((expiresAt - now) / MILLISECONDS_PER_MINUTE));
+  const remainingMinutes = sessionExpiryMinutesRemaining(expiresAt, now);
 
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;

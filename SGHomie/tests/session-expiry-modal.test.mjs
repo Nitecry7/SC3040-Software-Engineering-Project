@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from '../FrontEnd/node_modules/typescript/lib/typescript.js';
+import { sessionExpiryMinutesRemaining } from '../FrontEnd/src/lib/sessionLifecycle.ts';
 
 const source = readFileSync(new URL('../FrontEnd/src/components/SessionExpiryModal.tsx', import.meta.url), 'utf8');
 const compiled = ts.transpileModule(source, {
@@ -31,6 +32,7 @@ runInNewContext(compiled, {
     if (name === 'react-dom') return { createPortal: tree => tree };
     if (name === 'react/jsx-runtime') return { jsx, jsxs: jsx };
     if (name === 'lucide-react') return { X: 'X' };
+    if (name === '../lib/sessionLifecycle') return { sessionExpiryMinutesRemaining };
     assert.fail(`Unexpected import: ${name}`);
   },
 });

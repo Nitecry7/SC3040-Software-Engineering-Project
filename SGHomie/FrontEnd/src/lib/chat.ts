@@ -14,11 +14,17 @@ type ChatFailurePayload = {
   quota?: { daily_reset_at?: unknown };
 };
 
-function singaporeTime(value: unknown): string | undefined {
+export function formatSingaporeResetTimestamp(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return undefined;
-  return date.toLocaleTimeString('en-SG', { timeZone: 'Asia/Singapore', hour: 'numeric', minute: '2-digit' });
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-SG', {
+    timeZone: 'Asia/Singapore', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  }).formatToParts(date).map(part => [part.type, part.value])) as Record<string, string>;
+  const { weekday, day, month, year, hour, minute, dayPeriod } = parts;
+  if (!weekday || !day || !month || !year || !hour || !minute || !dayPeriod) return undefined;
+  return `${weekday}, ${day} ${month} ${year} at ${hour}:${minute} ${dayPeriod.toUpperCase()}`;
 }
 
 export function chatFailureText(status?: number, code?: string, payload?: ChatFailurePayload): string {
@@ -28,15 +34,16 @@ export function chatFailureText(status?: number, code?: string, payload?: ChatFa
     return `You're sending messages a little too quickly. Please wait${seconds ? ` ${seconds} seconds` : ''} and try again.`;
   }
   if (code === 'CHAT_USER_DAILY_LIMIT') {
-    const reset = singaporeTime(payload?.quota?.daily_reset_at) ?? singaporeTime(payload?.retry_at);
-    return `You've reached today's SG Homie AI allowance.${reset ? ` Your AI chat access resets at ${reset} Singapore time.` : ' Your AI chat access resets at the next Singapore day.'}`;
+    const reset = formatSingaporeResetTimestamp(payload?.quota?.daily_reset_at)
+      ?? formatSingaporeResetTimestamp(payload?.retry_at);
+    return `You've reached today's SG Homie AI allowance.${reset ? ` Your allowance resets ${reset} Singapore time.` : ' Please try again later.'}`;
   }
   if (code === 'CHAT_COOLDOWN_ACTIVE') {
-    const retry = singaporeTime(payload?.retry_at);
+    const retry = formatSingaporeResetTimestamp(payload?.retry_at);
     return `AI chat has been temporarily paused for this account because of repeated rapid requests.${retry ? ` You can try again at ${retry}.` : ' Please try again later.'}`;
   }
   if (code === 'CHAT_GLOBAL_CAPACITY') {
-    const retry = singaporeTime(payload?.retry_at);
+    const retry = formatSingaporeResetTimestamp(payload?.retry_at);
     return `SG Homie's AI service has reached its current capacity.${retry ? ` Please try again at ${retry}.` : ' Please try again later.'} The rest of SG Homie remains available.`;
   }
   if (code === 'provider_rate_limited') return 'The AI service has reached its request limit. You can use the [listing search](/search) to browse homes while the chat service recovers.';

@@ -48,7 +48,14 @@ After deployment, verify in Supabase that the migration is applied, the
 `chatbot` function version contains the quota code, and no privileged key was
 added to frontend environment settings. Use the trusted tier-assignment SQL in
 the [Supabase setup guide](../../BackEnd/supabase/README.md) to promote a
-project test account and delete its assignment to return it to standard.
+project test account. For the privileged tier, copy the intended account's Auth
+UUID from the target project's Dashboard and execute the documented statement
+in Supabase SQL Editor after confirming the project and UUID. Verify the next
+authenticated quota snapshot reports `tier: privileged`, a 20/minute user
+limit and null daily limit/remaining values. `is_admin` does not assign this
+tier. Deleting the account's assignment returns it to standard; setting it to
+`tester` provides 10/minute and 25/day. Privileged users still share the
+18/minute and 45/day project provider caps and the burst-denial cooldown.
 Configuration edits must use a trusted database operator; ordinary accounts
 must not be given table write access.
 

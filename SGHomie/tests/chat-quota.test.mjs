@@ -5,7 +5,7 @@ import {
   ChatQuotaError, ChatQuotaUnavailableError, reserveProviderCapacity,
   reserveUserInteraction, withProviderCapacity,
 } from '../BackEnd/supabase/functions/chatbot/quota.ts';
-import { chatFailureText } from '../FrontEnd/src/lib/chat.ts';
+import { chatFailureText, formatSingaporeResetTimestamp } from '../FrontEnd/src/lib/chat.ts';
 
 const snapshot = { tier: 'tester', minute_limit: 10, minute_remaining: 9, daily_limit: 25,
   daily_remaining: 24, daily_reset_at: '2026-10-27T16:00:00.000Z', cooldown_until: null };
@@ -67,9 +67,35 @@ test('global denial carries current user metadata but never global counters', as
 
 test('quota errors map to deterministic account-only messages', () => {
   assert.match(chatFailureText(429, 'CHAT_USER_BURST_LIMIT', { retry_after_seconds: 7 }), /wait 7 seconds/);
-  assert.match(chatFailureText(429, 'CHAT_USER_DAILY_LIMIT', { quota: { daily_reset_at: snapshot.daily_reset_at } }), /Singapore time/);
+  assert.match(chatFailureText(429, 'CHAT_USER_DAILY_LIMIT', { quota: { daily_reset_at: '2026-10-26T16:00:00.000Z' } }),
+    /Tuesday, 27 October 2026 at 12:00 AM Singapore time/);
+  assert.match(chatFailureText(429, 'CHAT_USER_DAILY_LIMIT', { quota: { daily_reset_at: 'invalid' }, retry_at: '2026-10-26T16:00:00.000Z' }),
+    /Tuesday, 27 October 2026 at 12:00 AM Singapore time/);
+  assert.match(chatFailureText(429, 'CHAT_USER_DAILY_LIMIT', { quota: { daily_reset_at: 'invalid' }, retry_at: 'also-invalid' }),
+    /Please try again later/);
   assert.match(chatFailureText(429, 'CHAT_COOLDOWN_ACTIVE', { retry_at: '2026-10-26T10:15:00Z' }), /temporarily paused for this account/);
   assert.match(chatFailureText(429, 'CHAT_GLOBAL_CAPACITY', {}), /rest of SG Homie remains available/);
+});
+
+test('Singapore reset formatter handles midnight and month/year boundaries from server timestamps', () => {
+  assert.equal(formatSingaporeResetTimestamp('2026-10-26T15:59:00.000Z'), 'Monday, 26 October 2026 at 11:59 PM');
+  assert.equal(formatSingaporeResetTimestamp('2026-10-26T16:00:00.000Z'), 'Tuesday, 27 October 2026 at 12:00 AM');
+  assert.equal(formatSingaporeResetTimestamp('2026-12-31T16:00:00.000Z'), 'Friday, 1 January 2027 at 12:00 AM');
+  assert.equal(formatSingaporeResetTimestamp('invalid'), undefined);
+  assert.equal(formatSingaporeResetTimestamp(undefined), undefined);
+});
+
+test('privileged quota snapshots remove only the per-user daily cap', async () => {
+  const privileged = { tier: 'privileged', minute_limit: 20, minute_remaining: 19,
+    daily_limit: null, daily_remaining: null, daily_reset_at: snapshot.daily_reset_at, cooldown_until: null };
+  const result = await reserveUserInteraction({ async rpc(name) {
+    assert.equal(name, 'reserve_chat_user_interaction');
+    return { data: { allowed: true, quota: privileged }, error: null };
+  } });
+  assert.equal(result.tier, 'privileged');
+  assert.equal(result.minute_limit, 20);
+  assert.equal(result.daily_limit, null);
+  assert.equal(result.daily_remaining, null);
 });
 
 test('migration uses bounded state, transaction locks, Singapore dates and restricted RPC grants', async () => {
@@ -87,6 +113,9 @@ test('migration uses bounded state, transaction locks, Singapore dates and restr
   assert.match(sql, /'tester', 10, 25, 5, 600, 900/);
   assert.match(sql, /'privileged', 20, NULL, 5, 600, 900/);
   assert.match(sql, /VALUES \(true, 18, 45\)/);
+  assert.match(sql, /IF v_config\.daily_limit IS NOT NULL AND v_state\.daily_count >= v_config\.daily_limit/);
+  assert.match(sql, /REVOKE ALL ON public\.chat_quota_tier_config, public\.chat_quota_assignments,[\s\S]*FROM PUBLIC, anon, authenticated, service_role/);
+  assert.match(sql, /'Asia\/Singapore'/);
   assert.doesNotMatch(sql, /ALTER TABLE public\.user_profiles|is_admin|is_seller/i);
   assert.doesNotMatch(sql, /email/i);
 });
