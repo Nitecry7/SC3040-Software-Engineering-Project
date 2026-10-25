@@ -70,6 +70,37 @@ already been verified.
 6. The Render Blueprint has `autoDeployTrigger: 'off'`; follow the approved Render deployment workflow. Check the expected model version and `/health` after any release. Do not copy secrets into a shell transcript, source file or Vite variable.
 7. Verify the deployed frontend, auth, Edge Functions, database access and valuation path in the intended environment. Record what was actually checked and what remains unverified.
 
+### Phase 4 chatbot telemetry and feedback
+
+**Implemented in repository; deployment verification pending.** Migration
+`20261026140000_chat_telemetry_privacy_feedback.sql` adds protected interaction,
+provider-call and feedback tables plus caller-owned feedback and service-only
+content-cleanup RPCs. Apply the migration through the reviewed Supabase process,
+then deploy the `chatbot` Edge Function. Keep the service-role key server-side;
+feedback uses the authenticated caller session.
+
+The cleanup function clears redacted user/assistant text and written feedback
+after 30 days, closes stale `started` interactions after one hour, and removes
+user/conversation linkage when interaction content expires while retaining
+metadata, structured feedback reasons and opaque interaction IDs. To schedule
+daily cleanup, configure Supabase Dashboard Cron to execute
+`SELECT public.cleanup_chat_content();` once per day. The migration does not
+prove that a hosted schedule exists; verify the job in the target project. The
+function is idempotent and can be run manually against a controlled test
+fixture. Never modify real user records to simulate expiry.
+
+After deployment, verify in a non-production project that JSON and SSE replies
+return matching interaction/request IDs and the supplied conversation ID; each
+actual provider attempt has one child row with only returned model/usage data;
+buyer search outcome/count and quota metadata are recorded; quota denial remains
+HTTP 429 and produces no provider call; a fake credential is blocked before
+quota/provider use and is absent from stored content; feedback can be updated on
+the same interaction; a second account cannot read, alter or rate the first
+account's interaction; direct Data API access is denied; and an old synthetic
+fixture is cleaned while metadata remains. Check function logs contain no raw
+messages, credentials, authorization headers, or seller/unit details. These are
+post-deployment procedures, not proof of current hosted state.
+
 ## Safety and rollback
 
 - Git merge does not automatically deploy every service. Supabase Edge Functions and migrations are separate operations; Render auto-deployment is disabled in the current Blueprint.

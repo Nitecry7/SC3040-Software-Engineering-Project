@@ -18,7 +18,8 @@ import { parseSellerContext, parseSellerDetails, type SellerContext, type Seller
 import { sellerDetailsPrompt, useProfileContacts, collectSellerDetails, generatedSellerTitle, missingSellerFields, newSellerContext, priceDecision, suggestSellerPrice } from './sell.ts';
 import { profileListingFilters } from './buyerRequirements.ts';
 import { buyOnboarding, onboardingAction, REGISTRATION_MESSAGE, SELL_ONBOARDING } from './onboarding.ts';
-import { ChatQuotaError, ChatQuotaUnavailableError, reserveProviderCapacity, reserveUserInteraction, withProviderCapacity, type ChatQuotaSnapshot } from './quota.ts';
+import { ChatQuotaError, ChatQuotaUnavailableError, reserveProviderCapacity, reserveUserInteraction, type ChatQuotaSnapshot } from './quota.ts';
+import { createChatTelemetry, createTelemetryStore, detectSensitiveInput, observeChatStream, SENSITIVE_INPUT_WARNING, type InteractionStatus } from './telemetry.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -273,10 +274,9 @@ async function verifyHdbPostalCode(
         : undefined;
       console.error('HDB postal lookup returned a non-success response', {
         requestId,
-        postalCode,
         status: response.status,
         statusText: response.statusText,
-        diagnostic,
+        hasDiagnostic: typeof diagnostic === 'string',
       });
       return {
         address: null,
@@ -308,7 +308,6 @@ async function verifyHdbPostalCode(
     ) {
       console.error('HDB postal lookup returned an invalid payload', {
         requestId,
-        postalCode,
         payloadKeys: isRecord(payload) ? Object.keys(payload) : [],
         addressKeys: isRecord(address) ? Object.keys(address) : [],
       });
@@ -323,8 +322,7 @@ async function verifyHdbPostalCode(
   } catch (error) {
     console.error('Chatbot HDB postal verification failed', {
       requestId,
-      postalCode,
-      error,
+      errorType: error instanceof Error ? error.name : 'unknown',
     });
     return {
       address: null,
@@ -472,6 +470,7 @@ async function handleSellFlow(
   previous?: SellerContext,
   intent?: 'buy' | 'sell',
   reserveProvider?: (quota: ChatQuotaSnapshot) => Promise<void>,
+  telemetry?: ReturnType<typeof createChatTelemetry>,
 ): Promise<SellFlowResult> {
   const latest = userMessages(messages).at(-1) ?? '';
   if (/^\s*(?:cancel|stop|never mind|nevermind|forget it)\s*[.!]?\s*$/i.test(latest) && previous && previous.stage !== 'complete') {
@@ -541,11 +540,25 @@ async function handleSellFlow(
   let quotaSnapshot: ChatQuotaSnapshot | undefined;
   if (intake.stage === 'details') {
     if (!context.client || !reserveProvider) throw new ChatQuotaUnavailableError();
-    quotaSnapshot = await reserveUserInteraction(context.client);
+    await telemetry?.start();
+    try {
+      quotaSnapshot = await reserveUserInteraction(context.client);
+      telemetry?.setQuota(quotaSnapshot);
+    } catch (error) {
+      if (error instanceof ChatQuotaError) telemetry?.setQuota(error.quota, error.code);
+      throw error;
+    }
     try {
       const provider = createChatProvider(name => Deno.env.get(name), req.headers.get('origin') ?? undefined);
-      const client = withProviderCapacity(provider.client, () => reserveProvider(quotaSnapshot!));
-      intake.details = useProfileContacts(await collectSellerDetails(client, provider.model, intake.details, latest), profileContacts);
+      telemetry?.setProvider(provider.provider, provider.model);
+      const client = telemetry
+        ? telemetry.providerClient(provider.client, () => reserveProvider(quotaSnapshot!))
+        : provider.client;
+      const protectedClient = telemetry ? client : { chat: { completions: { create: async (params: Parameters<typeof provider.client.chat.completions.create>[0]) => {
+        await reserveProvider(quotaSnapshot!);
+        return provider.client.chat.completions.create(params);
+      } } } };
+      intake.details = useProfileContacts(await collectSellerDetails(protectedClient, provider.model, intake.details, latest), profileContacts);
       intake.title = generatedSellerTitle(intake.details, postalVerification.address.town);
       if (!decision.decided) {
         const d = intake.details;
@@ -557,7 +570,8 @@ async function handleSellFlow(
             .gt('price', 0).order('created_at', { ascending: false }).limit(20);
           references = (data ?? []).filter(row => typeof row.price === 'number' && row.price > 0);
         }
-        intake.suggested_price = await suggestSellerPrice(client, provider.model, intake, postalVerification.address, references);
+        intake.suggested_price = await suggestSellerPrice(protectedClient, provider.model, intake, postalVerification.address, references,
+          telemetry ? telemetry.setFallback : undefined);
         intake.stage = 'price';
         const price = intake.suggested_price;
         return { handled: true, event: { context: intake }, quota: quotaSnapshot, response: price
@@ -566,6 +580,7 @@ async function handleSellFlow(
       }
     } catch (error) {
       if (error instanceof ChatQuotaError || error instanceof ChatQuotaUnavailableError) throw error;
+      telemetry?.markFailure('provider_error', 'seller_extraction_failed');
       return { handled: true, event: { context: intake }, quota: quotaSnapshot, response: 'I couldn’t read those listing details right now. Nothing has been saved yet. Please try sending the details again; unknown fields can be left as “don’t know”.' };
     }
   }
@@ -586,7 +601,7 @@ async function handleSellFlow(
   };
 }
 
-function streamText(text: string, event?: SellerFlowEvent, quota?: ChatQuotaSnapshot): ReadableStream<Uint8Array> {
+function streamText(text: string, event?: SellerFlowEvent, quota?: ChatQuotaSnapshot, metadata?: Record<string, unknown>): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const chunk = {
     id: `chatcmpl-${crypto.randomUUID()}`,
@@ -601,13 +616,30 @@ function streamText(text: string, event?: SellerFlowEvent, quota?: ChatQuotaSnap
       if (quota) controller.enqueue(encoder.encode(`event: quota\ndata: ${JSON.stringify(quota)}\n\n`));
       controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
       if (event) controller.enqueue(encoder.encode(`event: seller_flow\ndata: ${JSON.stringify(event)}\n\n`));
+      if (metadata) controller.enqueue(encoder.encode(`event: interaction\ndata: ${JSON.stringify(metadata)}\n\n`));
       controller.enqueue(encoder.encode('data: [DONE]\n\n'));
       controller.close();
     },
   });
 }
 
-function textResponse(text: string, stream: boolean, event?: SellerFlowEvent, quota?: ChatQuotaSnapshot): Response {
+function textResponse(text: string, stream: boolean, event?: SellerFlowEvent, quota?: ChatQuotaSnapshot,
+  telemetry?: ReturnType<typeof createChatTelemetry>, metadata?: Record<string, unknown>): Response | Promise<Response> {
+  if (telemetry && metadata) {
+    telemetry.setAssistant(text);
+    if (stream) {
+      const observed = observeChatStream(streamText(text, event, quota, metadata), telemetry);
+      return new Response(observed, { headers: streamHeaders });
+    }
+    telemetry.noteOutput();
+    return telemetry.finish({ status: 'success' }).then(() => jsonResponse({
+      response: text,
+      choices: [{ message: { role: 'assistant', content: text } }],
+      ...(event ? { seller_flow: event } : {}),
+      ...(quota ? { quota } : {}),
+      ...metadata,
+    }));
+  }
   if (stream) {
     return new Response(streamText(text, event, quota), { headers: streamHeaders });
   }
@@ -674,6 +706,7 @@ function parseRequest(body: unknown): {
   previousFilters?: ListingFilters;
   previousSearchIndex?: number;
   sellerContext?: SellerContext;
+  conversationId: string;
 } {
   if (!isRecord(body)) {
     throw new RequestError('Request body must be a JSON object');
@@ -683,6 +716,8 @@ function parseRequest(body: unknown): {
     throw new RequestError('stream must be a boolean');
   }
   if (body.intent !== undefined && body.intent !== 'buy' && body.intent !== 'sell') throw new RequestError('intent must be buy or sell when provided');
+  const conversationId = typeof body.conversation_id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.conversation_id)
+    ? body.conversation_id : crypto.randomUUID();
   let sellerContext: SellerContext | undefined;
   if (body.seller_context !== undefined) {
     try { sellerContext = parseSellerContext(body.seller_context); } catch (error) {
@@ -740,10 +775,11 @@ function parseRequest(body: unknown): {
     previousFilters,
     previousSearchIndex,
     sellerContext,
+    conversationId,
   };
 }
 
-function publicError(error: unknown): { body: Record<string, unknown>; status: number; headers?: Record<string, string> } {
+function publicError(error: unknown, requestId?: string): { body: Record<string, unknown>; status: number; headers?: Record<string, string> } {
   if (error instanceof ChatQuotaError) {
     const retryAfterSeconds = error.retryAfterSeconds
       ?? (error.retryAt ? Math.max(1, Math.ceil((Date.parse(error.retryAt) - Date.now()) / 1000)) : undefined);
@@ -768,9 +804,9 @@ function publicError(error: unknown): { body: Record<string, unknown>; status: n
   if (error instanceof OpenRouterError) {
     const provider = error instanceof OpenAIError ? 'OpenAI' : 'OpenRouter';
     console.error(`${provider} request failed:`, {
+      request_id: requestId,
       status: error.status,
-      message: error.message,
-      responseBody: error.responseBody,
+      code: `provider_http_${error.status}`,
     });
     const status = error.status === 429 ? 503 : 502;
     return {
@@ -784,11 +820,14 @@ function publicError(error: unknown): { body: Record<string, unknown>; status: n
   }
   if (error instanceof ListingServiceError) return { body: { error: error.message }, status: 502 };
 
-  console.error('Unexpected chatbot error:', error);
+  console.error('Unexpected chatbot error:', { request_id: requestId, errorType: error instanceof Error ? error.name : 'unknown' });
   return { body: { error: 'Internal Server Error' }, status: 500 };
 }
 
 export async function handleRequest(req: Request): Promise<Response> {
+  const requestId = crypto.randomUUID();
+  let telemetry: ReturnType<typeof createChatTelemetry> | undefined;
+  let conversationId = crypto.randomUUID();
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
@@ -801,6 +840,7 @@ export async function handleRequest(req: Request): Promise<Response> {
     let body: unknown;
     try { body = await req.json(); } catch { throw new RequestError('Request body must be valid JSON'); }
     const request = parseRequest(body);
+    conversationId = request.conversationId;
     const latestUserMessage = request.messages.at(-1)?.content ?? '';
     const authContext = await getAuthContext(req);
     // This is the provider authorization boundary. Browser history, intents and
@@ -810,6 +850,9 @@ export async function handleRequest(req: Request): Promise<Response> {
       return textResponse(action === 'buy' ? await buyOnboarding(name => Deno.env.get(name))
         : action === 'sell' ? SELL_ONBOARDING : REGISTRATION_MESSAGE, request.stream);
     }
+    const dangerous = request.messages.filter(message => message.role === 'user')
+      .map(message => detectSensitiveInput(message.content)).find(Boolean);
+    if (dangerous) return textResponse(SENSITIVE_INPUT_WARNING, request.stream) as Response;
     // An explicit Buy selection must escape a pending seller address question.
     // Keep that journey active when the next message contains only requirements.
     const latestJourney = [...request.messages].reverse().find(message => message.role === 'user'
@@ -817,7 +860,24 @@ export async function handleRequest(req: Request): Promise<Response> {
     const startingBuy = request.intent === 'buy'
       || (request.intent !== 'sell' && isBuyIntent(latestUserMessage) && !SELL_INTENT_PATTERN.test(latestUserMessage))
       || (request.intent !== 'sell' && !!latestJourney && isBuyIntent(latestJourney.content) && !SELL_INTENT_PATTERN.test(latestJourney.content));
+    const sellerCandidate = request.intent === 'sell' || isSellIntent(request.messages)
+      || (!!request.sellerContext && request.sellerContext.stage !== 'complete');
+    const shouldTrackSeller = sellerCandidate && !startingBuy && request.intent !== 'sell'
+      && request.sellerContext?.stage === 'details' && authContext.isSeller && !authContext.isAdmin;
+    const shouldTrackBuyer = !sellerCandidate || startingBuy;
     let capacityClient: SupabaseClient | undefined;
+    if (shouldTrackBuyer || shouldTrackSeller) {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL');
+      const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+      if (supabaseUrl && serviceRoleKey) capacityClient = createClient(supabaseUrl, serviceRoleKey,
+        { auth: { persistSession: false, autoRefreshToken: false } });
+    }
+    const store = capacityClient ? createTelemetryStore(capacityClient) : undefined;
+    if (shouldTrackBuyer || shouldTrackSeller) {
+      telemetry = createChatTelemetry({ store, interactionId: requestId, conversationId, userId: authContext.userId!, streaming: request.stream,
+        messages: request.messages, includeUserContent: shouldTrackBuyer });
+      if (shouldTrackBuyer) await telemetry.start();
+    }
     const reserveProvider = async (quota: ChatQuotaSnapshot) => {
       if (!capacityClient) {
         const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -830,8 +890,13 @@ export async function handleRequest(req: Request): Promise<Response> {
       await reserveProviderCapacity(capacityClient, quota);
     };
     if (!startingBuy) {
-      const sellFlow = await handleSellFlow(req, request.messages, authContext, request.sellerContext, request.intent, reserveProvider);
-      if (sellFlow.handled) return textResponse(sellFlow.response, request.stream, sellFlow.event, sellFlow.quota);
+      const sellFlow = await handleSellFlow(req, request.messages, authContext, request.sellerContext, request.intent, reserveProvider, telemetry);
+      if (sellFlow.handled) {
+        const completedTelemetry = telemetry?.isStarted() ? telemetry : undefined;
+        const metadata = completedTelemetry ? { interaction_id: requestId, request_id: requestId, conversation_id: conversationId,
+          feedback_eligible: completedTelemetry.feedbackEligible() } : undefined;
+        return await textResponse(sellFlow.response, request.stream, sellFlow.event, sellFlow.quota, completedTelemetry, metadata);
+      }
     }
     const resetBuy = request.intent === 'buy' || isBareBuyMessage(latestUserMessage);
     const clearedSellerFlow: SellerFlowEvent | undefined = startingBuy && (request.sellerContext || resetBuy) ? { context: null } : undefined;
@@ -840,7 +905,7 @@ export async function handleRequest(req: Request): Promise<Response> {
       ? `Authenticated user: yes. Seller account: ${authContext.isSeller ? 'yes' : 'no'}.`
       : 'Authenticated user: no.';
 
-    const search = async (filters: ListingFilters) => {
+    const rawSearch = async (filters: ListingFilters) => {
       const supabaseUrl = Deno.env.get('SUPABASE_URL');
       const anonKey = Deno.env.get('SUPABASE_ANON_KEY');
       if (!supabaseUrl || !anonKey) throw new ListingServiceError('Listing search is not configured');
@@ -850,6 +915,7 @@ export async function handleRequest(req: Request): Promise<Response> {
         authorization: authContext.userId ? req.headers.get('Authorization') ?? undefined : undefined,
       });
     };
+    const search = rawSearch;
     // Selecting Buy can immediately use saved preferences. Advice and later turns
     // still go through the conversational model's optional search tool.
     const initialPreferences = resetBuy && isBareBuyMessage(latestUserMessage) ? authContext.buyerPreferences : undefined;
@@ -859,17 +925,27 @@ export async function handleRequest(req: Request): Promise<Response> {
     let model: string;
     let conversation: Awaited<ReturnType<typeof prepareBuyConversation>>;
     if (initialPreferences) {
-      const initialSearch = await search(initialPreferences);
-      quota = await reserveUserInteraction(authContext.client);
+      const initialSearch = telemetry
+        ? await telemetry.recordTool('search_listings', () => search(initialPreferences), result => result.listings.length, result => !('error' in result))
+        : await search(initialPreferences);
+      try { quota = await reserveUserInteraction(authContext.client); telemetry?.setQuota(quota); }
+      catch (error) { if (error instanceof ChatQuotaError) telemetry?.setQuota(error.quota, error.code); throw error; }
       const provider = createChatProvider(name => Deno.env.get(name), req.headers.get('origin') ?? undefined);
       model = provider.model;
-      openrouter = withProviderCapacity(provider.client, () => reserveProvider(quota));
+      telemetry?.setProvider(provider.provider, provider.model);
+      openrouter = telemetry ? telemetry.providerClient(provider.client, () => reserveProvider(quota)) : {
+        chat: { completions: { create: async params => { await reserveProvider(quota); return provider.client.chat.completions.create(params); } } },
+      };
       conversation = { messages: request.messages, search: initialSearch, completion: undefined };
     } else {
-      quota = await reserveUserInteraction(authContext.client);
+      try { quota = await reserveUserInteraction(authContext.client); telemetry?.setQuota(quota); }
+      catch (error) { if (error instanceof ChatQuotaError) telemetry?.setQuota(error.quota, error.code); throw error; }
       const provider = createChatProvider(name => Deno.env.get(name), req.headers.get('origin') ?? undefined);
       model = provider.model;
-      openrouter = withProviderCapacity(provider.client, () => reserveProvider(quota));
+      telemetry?.setProvider(provider.provider, provider.model);
+      openrouter = telemetry ? telemetry.providerClient(provider.client, () => reserveProvider(quota)) : {
+        chat: { completions: { create: async params => { await reserveProvider(quota); return provider.client.chat.completions.create(params); } } },
+      };
       conversation = await prepareBuyConversation({
         client: openrouter, model,
         systemPrompt: `${SYSTEM_PROMPT}\n\n${BUY_SYSTEM_PROMPT}\n\nCurrent server-verified session context: ${sessionContext}`,
@@ -877,24 +953,39 @@ export async function handleRequest(req: Request): Promise<Response> {
         previousFilters: resetBuy ? undefined : request.previousFilters,
         previousSearchIndex: resetBuy ? undefined : request.previousSearchIndex,
         search,
+        ...(telemetry ? { recordTool: telemetry.recordTool } : {}),
       });
     }
     // Generate prose separately from tool execution; cards retain the verified result.
     if (conversation.search) {
       const response = await generateListingReply({ client: openrouter, model, history: request.messages, search: conversation.search,
+        ...(telemetry ? { onFallback: telemetry.setFallback } : {}),
         ...(initialPreferences ? { preferenceSource: 'saved_profile' as const } : {}) });
-      if (request.stream) return new Response(withQuotaEvent(createBuyStream(response, conversation.search, clearedSellerFlow), quota), { headers: streamHeaders });
-      return jsonResponse({ id: crypto.randomUUID(), object: 'chat.completion', model, created: Math.floor(Date.now() / 1000),
+      const metadata = telemetry ? { interaction_id: requestId, request_id: requestId, conversation_id: conversationId,
+        feedback_eligible: telemetry.feedbackEligible() } : undefined;
+      telemetry?.setAssistant(response);
+      if (request.stream) {
+        const stream = withQuotaEvent(createBuyStream(response, conversation.search, clearedSellerFlow, metadata), quota);
+        return new Response(telemetry ? observeChatStream(stream, telemetry) : stream, { headers: streamHeaders });
+      }
+      telemetry?.noteOutput();
+      if (telemetry) await telemetry.finish({ status: 'success' });
+      return jsonResponse({ id: requestId, object: 'chat.completion', model, created: Math.floor(Date.now() / 1000),
         choices: [{ index: 0, message: { role: 'assistant', content: response }, finish_reason: 'stop' }],
-        response, recommendations: conversation.search, quota, ...(clearedSellerFlow ? { seller_flow: clearedSellerFlow } : {}) });
+        response, recommendations: conversation.search, quota, ...(clearedSellerFlow ? { seller_flow: clearedSellerFlow } : {}), ...(metadata ?? {}) });
     }
     const completion = conversation.completion;
     if (!completion) throw new OpenRouterError('The model returned no answer', 502);
 
     if (request.stream) {
-      return new Response(withQuotaEvent(createBuyStream(
-        completion instanceof ReadableStream ? completion : getAssistantText(completion), conversation.search, clearedSellerFlow,
-      ), quota), {
+      const assistantText = completion instanceof ReadableStream ? '' : getAssistantText(completion);
+      telemetry?.setAssistant(assistantText);
+      const metadata = telemetry ? { interaction_id: requestId, request_id: requestId, conversation_id: conversationId,
+        feedback_eligible: telemetry.feedbackEligible() } : undefined;
+      const stream = withQuotaEvent(createBuyStream(
+        completion instanceof ReadableStream ? completion : assistantText, conversation.search, clearedSellerFlow, metadata,
+      ), quota);
+      return new Response(telemetry ? observeChatStream(stream, telemetry) : stream, {
         headers: streamHeaders,
       });
     }
@@ -902,15 +993,25 @@ export async function handleRequest(req: Request): Promise<Response> {
     // Keep `response` for the existing frontend, while returning the normal
     // chat-completion fields for OpenAI-style consumers.
     if (completion instanceof ReadableStream) throw new OpenRouterError('Expected a chat completion', 502);
+    if (telemetry) { telemetry.setAssistant(getAssistantText(completion)); telemetry.noteOutput(); await telemetry.finish({ status: 'success' }); }
     return jsonResponse({
       ...completion,
       response: getAssistantText(completion),
       quota,
       ...(clearedSellerFlow ? { seller_flow: clearedSellerFlow } : {}),
       ...(conversation.search ? { recommendations: conversation.search } : {}),
+      ...(telemetry ? { interaction_id: requestId, request_id: requestId, conversation_id: conversationId,
+        feedback_eligible: telemetry.feedbackEligible() } : {}),
     });
   } catch (error) {
-    const result = publicError(error);
+    const result = publicError(error, requestId);
+    if (telemetry?.isStarted()) {
+      const status: InteractionStatus = error instanceof ChatQuotaError ? 'quota_denied'
+        : error instanceof OpenRouterError ? 'provider_error'
+        : error instanceof ListingServiceError ? 'tool_error' : 'internal_error';
+      await telemetry.finish({ status, error_code: error instanceof ChatQuotaError ? error.code : undefined });
+      Object.assign(result.body, { interaction_id: requestId, request_id: requestId, conversation_id: conversationId });
+    }
     return jsonResponse(result.body, result.status, result.headers);
   }
 }

@@ -18,6 +18,7 @@ const request = body => new Request('https://functions.example/chatbot', { metho
 
 function service(t, { extracted = details, estimate = 600000, failPrivate = false, failInsert = false, failEstimate = false, profile = { name: null, phone: null } } = {}) {
   const rows = new Map(); const privateRows = new Map(); const calls = [];
+  const telemetry = { started: [], finished: [], providerCalls: [] };
   t.mock.method(globalThis, 'fetch', async (input, init = {}) => {
     const url = new URL(String(input)); const method = init.method ?? 'GET';
     const body = init.body ? JSON.parse(init.body) : undefined;
@@ -28,6 +29,15 @@ function service(t, { extracted = details, estimate = 600000, failPrivate = fals
       quota: { tier: 'standard', minute_limit: 2, minute_remaining: 1, daily_limit: 5, daily_remaining: 4,
         daily_reset_at: '2026-10-27T16:00:00.000Z', cooldown_until: null } });
     if (url.pathname.endsWith('/rpc/reserve_chat_provider_call')) return Response.json({ allowed: true });
+    if (url.pathname.endsWith('/chat_interactions')) {
+      if (method === 'POST') telemetry.started.push(body);
+      if (method === 'PATCH') telemetry.finished.push(body);
+      return new Response(null, { status: method === 'PATCH' ? 204 : 201 });
+    }
+    if (url.pathname.endsWith('/chat_provider_calls')) {
+      telemetry.providerCalls.push(...body);
+      return new Response(null, { status: 201 });
+    }
     if (url.pathname.endsWith('/lookup-hdb-location')) return Response.json({ valid: true, address });
     if (url.hostname === 'openrouter.ai') {
       if (body.tools?.some(tool => tool.function.name === 'search_listings')) return Response.json(completion('Happy to help with buying. Are you planning to move soon?'));
@@ -60,7 +70,7 @@ function service(t, { extracted = details, estimate = 600000, failPrivate = fals
     }
     assert.fail(`Unexpected service call: ${url}`);
   });
-  return { rows, privateRows, calls };
+  return { rows, privateRows, calls, telemetry };
 }
 
 async function turn(message, context, extra = {}) {
@@ -97,6 +107,13 @@ test('complete sell flow persists confirmed details and private unit before emit
   assert.equal(priced.event.context.suggested_price, 600000);
   assert.match(priced.text, /provisional AI/);
   assert.match(priced.text, /not completed sale prices/);
+  assert.equal(db.telemetry.started.length, 1);
+  assert.equal(db.telemetry.started[0].user_message_redacted, null, 'seller workflow text is omitted from telemetry');
+  assert.equal(db.telemetry.providerCalls.length, 2, 'detail extraction and price guidance are separate provider calls');
+  assert.ok(db.telemetry.providerCalls.every(call => call.interaction_id === db.telemetry.started[0].interaction_id));
+  assert.doesNotMatch(JSON.stringify(db.telemetry.started), /#08-123|Fixture Seller|91234567/);
+  assert.doesNotMatch(JSON.stringify(db.telemetry.providerCalls), /#08-123|Fixture Seller|91234567/);
+  assert.equal(db.telemetry.finished[0].status, 'success');
   const saved = await turn('okay', priced.event.context);
   assert.equal(saved.event.context.stage, 'complete');
   assert.equal(saved.event.draft.price, 600000);
@@ -136,6 +153,7 @@ test('user can choose an independent price and pricing-provider failures allow s
   const db = service(t, { failEstimate: true });
   const priced = await intake();
   assert.equal(priced.event.context.suggested_price, null);
+  assert.equal(db.telemetry.finished[0].fallback_used, true);
   const saved = await turn('S$725,000', priced.event.context);
   assert.equal(saved.event.draft.price, 725000);
   assert.equal(db.rows.size, 1);

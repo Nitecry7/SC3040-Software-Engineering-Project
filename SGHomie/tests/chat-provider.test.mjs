@@ -27,6 +27,9 @@ function mockChatServices(t, handler, reservations = {}) {
     if (url.includes('/rest/v1/user_profiles')) return Response.json([{ is_seller: false, is_admin: false }]);
     if (url.includes('/rest/v1/rpc/reserve_chat_user_interaction')) return Response.json(reservations.user ?? { allowed: true, quota });
     if (url.includes('/rest/v1/rpc/reserve_chat_provider_call')) return Response.json(reservations.provider ?? { allowed: true });
+    if (url.includes('/rest/v1/chat_interactions') || url.includes('/rest/v1/chat_provider_calls')) {
+      return new Response(null, { status: init?.method === 'PATCH' ? 204 : 201 });
+    }
     return handler(input, init);
   });
 }

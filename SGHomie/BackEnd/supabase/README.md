@@ -51,6 +51,7 @@ applies incremental migrations for the current application features:
 - `20261013150000_require_approved_demo_valuations.sql` replaces the demo completeness check to require approved listings while preserving fixture owner IDs
 - `20261026120000_authenticated_enquiry_insert.sql` restricts enquiry creation to authenticated users and binds new enquiry email/status fields to the caller
 - `20261026130000_chatbot_quotas_and_capacity.sql` adds server-authoritative chatbot tiers, user interaction reservations, provider-call capacity reservations and bounded cooldown state
+- `20261026140000_chat_telemetry_privacy_feedback.sql` adds private interaction/provider-call metadata, caller-owned feedback and a service-only 30-day content cleanup function
 
 The initial migration creates the full application schema, policies, views, and
 triggers for a fresh Supabase project. Later migrations must be applied in
@@ -94,6 +95,36 @@ migration and function version in the target Supabase project. The function
 requires the platform-provided `SUPABASE_SERVICE_ROLE_KEY` only in its server
 environment; do not copy it to frontend configuration. No migration or
 function deployment is performed by this guide.
+
+### Chatbot telemetry, feedback and retention
+
+The Phase 4 migration stores one row for each authenticated AI interaction and
+one child row per outbound provider attempt. Anonymous onboarding and
+deterministic seller steps are excluded. User/assistant text is best-effort
+redacted before insert; seller workflow text is omitted. Redaction is not
+guaranteed to find every sensitive value. Normal Data API roles have no direct
+access to telemetry tables. `submit_chat_feedback()` derives ownership from
+`auth.uid()`, accepts only completed successful interactions, validates
+structured reasons and upserts one rating per interaction. Written feedback is
+redacted in the function before storage.
+
+`cleanup_chat_content()` clears redacted conversation text and written feedback
+after 30 days, closes stale `started` records after one hour, and drops
+user/conversation linkage when content expires while retaining metadata and
+structured reasons. Account deletion cascades while the user linkage remains.
+The cleanup function is granted only to `service_role`. To enable recurring
+cleanup, configure a daily Supabase Dashboard Cron job to run:
+
+```sql
+SELECT public.cleanup_chat_content();
+```
+
+Dashboard scheduling and migration application are deployment-dependent. After
+applying the migration, deploy the `chatbot` Edge Function and verify RPC/table
+permissions, feedback ownership, denial of direct telemetry reads, and cleanup
+against a synthetic expired fixture in the target project. Do not wait 30 days
+or alter real users' records for this check. No migration, schedule, or function
+deployment is performed by this guide.
 
 Enquiry submission is registered-user only. The latest enquiry policy permits
 authenticated inserts only when the enquiry email matches the caller's Auth

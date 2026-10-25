@@ -4,6 +4,8 @@ import { parseSellerContext, type SellerFlowEvent } from '../../../BackEnd/supab
 export type { SellerContext, SellerDraftCard, SellerFlowEvent } from '../../../BackEnd/supabase/functions/_shared/sellerFlow.ts';
 export type { ListingSearchResult } from '../../../BackEnd/supabase/functions/_shared/listings.ts';
 
+export type ChatInteractionMetadata = { interaction_id: string; request_id: string; conversation_id: string; feedback_eligible: boolean };
+
 export const BUY_MESSAGE = 'I want to buy a house';
 
 type ChatFailurePayload = {
@@ -49,6 +51,7 @@ export async function consumeChatStream(
   onRecommendations: (result: ListingSearchResult) => void,
   onSellerFlow?: (event: SellerFlowEvent) => void,
   signal?: AbortSignal,
+  onInteraction?: (metadata: ChatInteractionMetadata) => void,
 ): Promise<string> {
   signal?.throwIfAborted();
   if (!response.body) throw new Error('The chatbot returned an empty response stream');
@@ -59,6 +62,7 @@ export async function consumeChatStream(
   let buffer = '';
   let content = '';
   let completed = false;
+  let streamDone = false;
   const processEvent = (event: string) => {
     const lines = event.split(/\r?\n/);
     const kind = lines.find(line => line.startsWith('event:'))?.slice(6).trim();
@@ -67,6 +71,11 @@ export async function consumeChatStream(
     if (data === '[DONE]') { completed = true; return; }
     const payload = JSON.parse(data);
     if (kind === 'error' || payload.error) throw new Error('The chatbot response was interrupted');
+    if (kind === 'interaction') {
+      if (typeof payload.interaction_id === 'string' && typeof payload.request_id === 'string'
+        && typeof payload.conversation_id === 'string' && typeof payload.feedback_eligible === 'boolean') onInteraction?.(payload as ChatInteractionMetadata);
+      return;
+    }
     if (kind === 'recommendations') { onRecommendations(payload as ListingSearchResult); return; }
     if (kind === 'seller_flow') {
       const context = payload.context === null ? null : parseSellerContext(payload.context);
@@ -83,14 +92,14 @@ export async function consumeChatStream(
     if (typeof delta === 'string' && delta) { content += delta; onText(visibleAssistantText(content)); }
   };
   try {
-    while (!completed) {
+    while (!streamDone) {
       const { value, done } = await reader.read();
       signal?.throwIfAborted();
       buffer += decoder.decode(value, { stream: !done });
       const events = buffer.split(/\r?\n\r?\n/);
       buffer = events.pop() ?? '';
       events.forEach(processEvent);
-      if (done) { if (buffer.trim()) processEvent(buffer); break; }
+      if (done) { if (buffer.trim()) processEvent(buffer); streamDone = true; }
     }
     const visible = visibleAssistantText(content);
     if (!completed || !visible.trim()) throw new Error('The chatbot returned an incomplete response');

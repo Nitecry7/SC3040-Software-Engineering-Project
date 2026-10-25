@@ -5,6 +5,17 @@ export interface ChatMessage {
   content: string;
   recommendations?: ListingSearchResult;
   draft?: SellerDraftCard;
+  interactionId?: string;
+  feedback?: 'positive' | 'negative';
+  feedbackReasons?: string[];
+  feedbackComment?: string;
+  feedbackOpen?: boolean;
+  feedbackSaving?: boolean;
+  feedbackError?: string;
+}
+
+export function createConversationId(): string {
+  return crypto.randomUUID();
 }
 
 // Only temporary conversation data belongs here. No auth or persistent storage.

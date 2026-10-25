@@ -1,12 +1,12 @@
 // Import React and its hooks for state management, referencing, and side-effects.
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 // Import icons from the lucide-react library to use in the UI.
-import { MessageCircle, X, Send, Maximize2, Minimize2, GripVertical, MoveDiagonal2, RotateCcw } from 'lucide-react';
+import { MessageCircle, X, Send, Maximize2, Minimize2, GripVertical, MoveDiagonal2, RotateCcw, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 // Import the Supabase client for making API requests.
 import { chatbotSupabase, supabase } from '../lib/supabase';
 import { BUY_MESSAGE, chatFailureText, consumeChatStream, type ListingSearchResult, type SellerContext } from '../lib/chat';
-import { createChatLifecycle, type ChatMessage } from '../lib/chatSession';
+import { createChatLifecycle, createConversationId, type ChatMessage } from '../lib/chatSession';
 import ListingRecommendations from './ListingRecommendations';
 import SellerDraft from './SellerDraft';
 import { useAuth } from '../contexts/AuthContext';
@@ -22,6 +22,15 @@ const SUGGESTED_PROMPTS = [
 ];
 
 const MAX_HISTORY_MESSAGES = 20;
+const FEEDBACK_REASONS = [
+  ['incorrect', 'Incorrect'],
+  ['not_relevant', 'Not relevant'],
+  ['unsupported', 'Made up or unsupported information'],
+  ['did_not_follow', "Didn't follow my request"],
+  ['too_verbose', 'Too verbose'],
+  ['too_vague', 'Too vague'],
+  ['other', 'Other'],
+] as const;
 
 // Main functional component for the Chatbot.
 const Chatbot: React.FC = () => {
@@ -44,12 +53,15 @@ const Chatbot: React.FC = () => {
   const hasOpenedRef = useRef(false);
   const followStreamRef = useRef(true);
   const lifecycle = useRef(createChatLifecycle()).current;
+  const conversationIdRef = useRef<string | null>(null);
+  if (!conversationIdRef.current) conversationIdRef.current = createConversationId();
   const searchContextRef = useRef<ListingSearchResult['filters']>();
   const sellerContextRef = useRef<SellerContext>();
   const currentUserIdRef = useRef(user?.id);
 
   const resetChat = useCallback(() => {
     const fresh = lifecycle.reset();
+    conversationIdRef.current = createConversationId();
     sellerContextRef.current = fresh.seller;
     searchContextRef.current = fresh.search;
     followStreamRef.current = fresh.followStream;
@@ -153,6 +165,7 @@ const Chatbot: React.FC = () => {
         body: {
           messages: requestMessages,
           stream: true,
+          conversation_id: conversationIdRef.current,
           ...(intent ? { intent } : {}),
           ...(searchContextRef.current ? { search_context: searchContextRef.current, search_context_after: lastSearchIndex } : {}),
           ...(sellerContextRef.current ? { seller_context: sellerContextRef.current } : {}),
@@ -196,7 +209,15 @@ const Chatbot: React.FC = () => {
           });
           window.dispatchEvent(new CustomEvent('seller-dashboard-refresh'));
         }
-      }, request.controller.signal);
+      }, request.controller.signal, (metadata) => {
+        if (!isCurrentAccount() || metadata.conversation_id !== conversationIdRef.current || !metadata.feedback_eligible) return;
+        setMessages(prev => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last?.role === 'assistant') next[next.length - 1] = { ...last, interactionId: metadata.interaction_id };
+          return next;
+        });
+      });
     } catch (error) {
       if (!isCurrentAccount()) return;
       let failureText = chatFailureText();
@@ -218,10 +239,10 @@ const Chatbot: React.FC = () => {
         if (import.meta.env.DEV) console.error('Chatbot Edge Function failed:', {
           status: error.context.status,
           statusText: error.context.statusText,
-          body: parsedBody,
+          code,
         });
       } else {
-        console.error('Error getting response:', error);
+        console.error('Chatbot request failed');
       }
       if (!isCurrentAccount()) return;
       updateLastAssistantMessage(hasSavedDraft
@@ -258,6 +279,33 @@ const Chatbot: React.FC = () => {
 
   const handleListingOpen: React.MouseEventHandler<HTMLAnchorElement> = event => {
     if (!event.defaultPrevented && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) minimise();
+  };
+
+  const updateFeedbackMessage = (interactionId: string, update: Partial<ChatMessage>) => {
+    setMessages(prev => prev.map(msg => msg.interactionId === interactionId ? { ...msg, ...update } : msg));
+  };
+
+  const persistFeedback = async (msg: ChatMessage, rating: 'positive' | 'negative', reasons: string[] = [], comment: string | null = null) => {
+    if (!msg.interactionId) return;
+    updateFeedbackMessage(msg.interactionId, { feedbackSaving: true, feedbackError: undefined });
+    const { error } = await supabase.rpc('submit_chat_feedback', {
+      p_interaction_id: msg.interactionId,
+      p_rating: rating,
+      p_reasons: reasons,
+      p_comment: comment?.trim() || null,
+    });
+    if (error) {
+      updateFeedbackMessage(msg.interactionId, { feedbackSaving: false, feedbackError: 'Feedback could not be saved. Please try again.' });
+      return;
+    }
+    updateFeedbackMessage(msg.interactionId, {
+      feedback: rating,
+      feedbackReasons: reasons,
+      feedbackComment: comment ?? '',
+      feedbackOpen: false,
+      feedbackSaving: false,
+      feedbackError: undefined,
+    });
   };
 
   return (
@@ -341,6 +389,9 @@ const Chatbot: React.FC = () => {
               followStreamRef.current = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
             }}>
             <div className={`mx-auto space-y-4 ${chatWindow.mode === 'expanded' ? 'max-w-3xl' : ''}`}>
+              {hasRegisteredUser && <p role="note" className="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-relaxed text-gray-700">
+                Some chat messages and feedback may be stored in redacted form for up to 30 days and reviewed to evaluate response quality and reliability. AI requests may be processed by our configured provider. Please do not share passwords, API keys, NRIC/FIN, payment details, authentication tokens, or other sensitive information.
+              </p>}
               {messages.length === 0 && (
                 <div className="space-y-4 py-4">
                   <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-600"><MessageCircle className="h-6 w-6" /></div>
@@ -360,6 +411,65 @@ const Chatbot: React.FC = () => {
                     {msg.content && <ChatMarkdown content={msg.content} onListingOpen={handleListingOpen} />}
                     {msg.recommendations && <ListingRecommendations result={msg.recommendations} compact={chatWindow.mode === 'compact'} onListingOpen={handleListingOpen} />}
                     {msg.draft && <SellerDraft draft={msg.draft} onListingOpen={handleListingOpen} />}
+                    {msg.role === 'assistant' && msg.interactionId && hasRegisteredUser && (
+                      <div className="mt-2 border-t border-gray-200 pt-2">
+                        <div className="flex items-center gap-1">
+                          <span className="mr-1 text-xs text-gray-500">Was this helpful?</span>
+                          <button type="button" aria-label="Helpful response" aria-pressed={msg.feedback === 'positive' && !msg.feedbackOpen}
+                            onClick={() => void persistFeedback(msg, 'positive')}
+                            disabled={isLoading || msg.feedbackSaving}
+                            className={`flex h-11 w-11 items-center justify-center rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${msg.feedback === 'positive' && !msg.feedbackOpen ? 'bg-blue-100 text-blue-800' : 'text-gray-600 hover:bg-gray-100'}`}>
+                            <ThumbsUp className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                          <button type="button" aria-label="Unhelpful response" aria-pressed={msg.feedback === 'negative' || msg.feedbackOpen === true}
+                            onClick={() => updateFeedbackMessage(msg.interactionId!, { feedbackOpen: !msg.feedbackOpen, feedbackError: undefined })}
+                            disabled={isLoading || msg.feedbackSaving}
+                            className={`flex h-11 w-11 items-center justify-center rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${msg.feedback === 'negative' || msg.feedbackOpen ? 'bg-blue-100 text-blue-800' : 'text-gray-600 hover:bg-gray-100'}`}>
+                            <ThumbsDown className="h-4 w-4" aria-hidden="true" />
+                          </button>
+                          {msg.feedback && !msg.feedbackOpen && <span role="status" className="text-xs text-emerald-800">Feedback saved</span>}
+                          {msg.feedbackSaving && <span role="status" className="text-xs text-gray-600">Saving feedback…</span>}
+                        </div>
+                        {msg.feedbackOpen && (
+                          <div className="mt-2 space-y-2 rounded-lg border border-gray-200 bg-white p-3">
+                            <fieldset className="space-y-1">
+                              <legend className="mb-1 text-xs font-medium text-gray-800">What could be better? (optional)</legend>
+                              {FEEDBACK_REASONS.map(([value, label]) => (
+                                <label key={value} className="flex min-h-11 items-center gap-2 text-xs text-gray-700">
+                                  <input type="checkbox" checked={msg.feedbackReasons?.includes(value) ?? false}
+                                    disabled={msg.feedbackSaving}
+                                    onChange={event => {
+                                      const reasons = new Set(msg.feedbackReasons ?? []);
+                                      if (event.target.checked) reasons.add(value); else reasons.delete(value);
+                                      updateFeedbackMessage(msg.interactionId!, { feedbackReasons: [...reasons] });
+                                    }} className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-600" />
+                                  {label}
+                                </label>
+                              ))}
+                            </fieldset>
+                            <label className="block text-xs font-medium text-gray-800" htmlFor={`feedback-${msg.interactionId}`}>Comment (optional)</label>
+                            <textarea id={`feedback-${msg.interactionId}`} value={msg.feedbackComment ?? ''} maxLength={1000}
+                              disabled={msg.feedbackSaving}
+                              onChange={event => updateFeedbackMessage(msg.interactionId!, { feedbackComment: event.target.value })}
+                              rows={2} className="w-full resize-y rounded-lg border border-gray-300 px-2 py-1.5 text-xs text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100" />
+                            <div className="flex items-center justify-between gap-2">
+                              {msg.feedbackError && <p role="alert" className="text-xs text-red-700">{msg.feedbackError}</p>}
+                              <button type="button" onClick={() => updateFeedbackMessage(msg.interactionId!, { feedbackOpen: false, feedbackError: undefined })}
+                                disabled={msg.feedbackSaving}
+                                className="min-h-11 rounded-lg px-3 text-xs font-medium text-gray-700 hover:bg-gray-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 disabled:opacity-50">
+                                Cancel
+                              </button>
+                              <button type="button" onClick={() => void persistFeedback(msg, 'negative', msg.feedbackReasons ?? [], msg.feedbackComment ?? null)}
+                                disabled={msg.feedbackSaving}
+                                className="min-h-11 rounded-lg bg-blue-600 px-3 text-xs font-semibold text-white hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-50">
+                                {msg.feedbackSaving ? 'Saving…' : 'Send feedback'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        {msg.feedbackError && !msg.feedbackOpen && <p role="alert" className="mt-1 text-xs text-red-700">{msg.feedbackError}</p>}
+                      </div>
+                    )}
                     {!msg.content && !msg.recommendations && isLoading && index === messages.length - 1 && <span className="text-gray-500">Thinking…</span>}
                   </div>
                 </div>

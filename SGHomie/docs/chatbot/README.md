@@ -44,6 +44,46 @@ meter. Anonymous deterministic onboarding and non-AI application paths do not
 consume either quota. Hosted policy and deployment state must be verified
 separately.
 
+## Privacy, telemetry and response feedback
+
+Authenticated AI requests receive a server-generated UUID used as the request
+and interaction identifier. The temporary conversation UUID is created in the
+browser, reused for turns in that chat, and replaced on New Chat or account
+change. It is correlation metadata only. A deliberately maintained prompt
+version (`chatbot-v1`) changes when material system, buyer/seller policy, or
+tool behavior changes; do not substitute a commit hash for the prompt version.
+
+The repository records status/error category, quota outcome, requested provider
+and model, returned model only when the provider supplies it, tool outcomes,
+timing, and provider usage only when returned. A buyer turn can make several
+provider calls, recorded as child rows. `first_output_event_ms` measures the
+first non-empty application SSE event, not provider TTFT: current provider
+responses are buffered before application streaming. Seller workflow text is
+excluded from telemetry. Other stored user/assistant text and feedback comments
+receive best-effort redaction and expire after 30 days; detection/redaction is
+not guaranteed to find every sensitive fact. Metadata, structured feedback
+reasons and opaque IDs can remain longer without user/conversation linkage after
+content expires. Deleting an account cascades while its telemetry still carries
+the user link.
+
+Before authenticated AI processing, obvious API keys/tokens, bearer/JWT values,
+payment-card-like values and Singapore NRIC/FIN values are blocked before quota
+reservation and provider calls. Prices, postal codes and block numbers are not
+blocked solely because they contain digits. A concise notice in the registered
+chat explains temporary review/storage and third-party provider processing;
+users should not submit passwords, keys, NRIC/FIN, payment details or other
+sensitive information.
+
+Eligible successful AI answers show 👍 and 👎 controls. A user can change the
+rating on the same interaction. Negative feedback supports multiple structured
+reasons and an optional comment. The database derives ownership from the signed-in
+user, rejects direct telemetry-table access, and redacts the comment before
+storage. Feedback is evaluation data for reliability and quality work; it is not
+automatically RLHF or model training. Failed telemetry writes do not break chat;
+feedback save failures are reported inline. The cleanup function is implemented
+in the repository, while its Supabase Dashboard schedule and hosted behavior
+remain deployment-dependent; see the [deployment runbook](../operations/deployment-runbook.md#phase-4-chatbot-telemetry-and-feedback).
+
 ### Property access
 
 Application navigation to `/property/:id` requires a registered user. Direct

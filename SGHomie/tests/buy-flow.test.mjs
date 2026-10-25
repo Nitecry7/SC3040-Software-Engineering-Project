@@ -17,7 +17,11 @@ const completion = (content, calls) => ({ id: 'test-completion', object: 'chat.c
 const request = (body, signedIn = true) => new Request('https://functions.example/chatbot', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(signedIn ? { Authorization: 'Bearer user-session' } : {}) }, body: JSON.stringify(body) });
 function mockChatServices(t, handler) {
   return t.mock.method(globalThis, 'fetch', async (input, init) => {
-    const auth = mockAuth(String(input), { is_seller: false, is_admin: false });
+    const url = String(input);
+    const auth = mockAuth(url, { is_seller: false, is_admin: false });
+    if (url.includes('/rest/v1/chat_interactions') || url.includes('/rest/v1/chat_provider_calls')) {
+      return new Response(null, { status: init?.method === 'PATCH' ? 204 : 201 });
+    }
     return auth ?? handler(input, init);
   });
 }
