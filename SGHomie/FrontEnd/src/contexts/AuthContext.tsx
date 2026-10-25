@@ -7,6 +7,7 @@ const PROFILE_LOOKUP_TIMEOUT_MS = 10_000;
 
 interface AuthContextType {
   user: User | null;
+  authTransition: 'intentional-sign-out' | null;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<{ needsProfileSetup: boolean; isAdmin: boolean; isSeller: boolean } | null>;
   needsProfileSetup: boolean;
@@ -19,6 +20,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
+  authTransition: null,
   signOut: async () => {},
   refreshProfile: async () => null,
   needsProfileSetup: false,
@@ -33,6 +35,7 @@ export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [authTransition, setAuthTransition] = useState<AuthContextType['authTransition']>(null);
   const [needsProfileSetup, setNeedsProfileSetup] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isSeller, setIsSeller] = useState(false);
@@ -103,6 +106,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const applySession = useCallback((currentUser: User | null) => {
     const userId = currentUser?.id ?? null;
+    if (currentUser && currentUser.is_anonymous !== true && activeUserId.current !== userId) {
+      setAuthTransition(null);
+    }
     setAuthLoading(false);
 
     // getSession() and INITIAL_SESSION can report the same user concurrently.
@@ -193,11 +199,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [applySession]);
 
   const signOut = async () => {
+    // Keep the reason through SIGNED_OUT and the redirect, regardless of whether
+    // the auth event arrives before or after the sign-out promise resolves.
+    setAuthTransition('intentional-sign-out');
     try {
-      await supabase.auth.signOut();
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
       localStorage.clear();
       applySession(null);
     } catch (error) {
+      setAuthTransition(null);
       console.error('Error signing out:', error);
       throw error;
     }
@@ -206,6 +217,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   return (
     <AuthContext.Provider value={{
       user,
+      authTransition,
       signOut,
       refreshProfile,
       needsProfileSetup,

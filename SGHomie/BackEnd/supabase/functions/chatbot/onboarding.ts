@@ -1,7 +1,23 @@
 type CatalogSummary = { properties: number; towns: string[] };
 
 export const REGISTRATION_MESSAGE = 'The full SG Homie AI consultant is available to registered users. Please sign up or log in for free using **Sign In** to ask questions about budgets, towns, HDB types and listings.';
-export const SELL_ONBOARDING = 'To sell a unit on SG Homie, please sign up or log in first using **Sign In**, then register on the [seller sign-up page](/seller/signup). Once registered as a seller, choose **Sell** again and the authenticated chatbot can guide you through creating a draft.';
+export const SELL_ONBOARDING = `**Welcome to SG Homie 👋**
+
+Looking to sell your HDB? SG Homie guides registered sellers through preparing a draft property listing.
+
+Once signed in and registered as a seller, the assistant can help you:
+
+- Verify your HDB address and collect property details.
+- Prepare a draft owned by you after the required steps succeed.
+- Get provisional AI asking-price guidance where available. This is not a CatBoost valuation or an official valuation.
+
+Unit numbers remain private. You control the final listing details and asking price.
+
+**To get started:**
+
+1. Sign up or log in for free using **Sign In**.
+2. Register on the [seller sign-up page](/seller/signup).
+3. Return to the chatbot and choose **Sell** again to access the authenticated seller assistant.`;
 
 export function onboardingAction(latest: string, intent?: 'buy' | 'sell'): 'buy' | 'sell' | undefined {
   if (intent) return intent;
