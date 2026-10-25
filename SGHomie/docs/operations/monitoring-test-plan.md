@@ -1,0 +1,99 @@
+# SG Homie monitoring and test plan
+
+> **How do we know SG Homie's intended functionality is available, performant, correct and safe when real users are using it?**
+
+**Initial version: 2026-10-26.** This is a living roadmap. Status labels describe repository evidence and do not confirm hosted behavior.
+
+## Status key
+
+- **Implemented** — present in repository code or tests; deployment still needs separate verification.
+- **Existing** — a supporting endpoint, log or test is already present; this does not imply continuous monitoring.
+- **Planned** — future work, not currently implemented.
+- **Deployment-dependent** — depends on hosting, secrets, configuration or service state that must be checked in that provider.
+- **Not yet verified** — evidence is insufficient to make a current claim.
+
+## Monitoring dimensions
+
+| Dimension | Operational question |
+| --- | --- |
+| Availability | Can users reach the component and complete its primary request? |
+| Performance | How long does the user-visible operation and each service stage take? |
+| Correctness / quality | Does the operation return valid, grounded and policy-compliant results? |
+| Usage / capacity | What volume and concurrency does it handle, and where are its limits? |
+| Security | Are authentication, authorization, data boundaries and abuse controls working? |
+
+Do not publish a numerical service-level target or claim a metric until its source, collection method, period and environment are established. A single user-reported valuation observation recorded in the [Supabase serving notes](../../BackEnd/supabase/README.md) is not a current latency baseline or service guarantee.
+
+## Component inventory
+
+| Component | Current repository evidence | Availability / performance / error signals | Correctness / quality signal | Security signal |
+| --- | --- | --- | --- | --- |
+| Netlify frontend | **Deployment-dependent:** React/Vite source; no Netlify config in this repository | **Planned:** independent reachability, deploy status, browser errors and route timing | **Implemented:** frontend tests and build; hosted workflow checks remain **Not yet verified** | **Implemented:** public Vite-variable boundary documented; deployed headers/config **Not yet verified** |
+| Supabase Auth | **Implemented:** session restore, sign-in/out and cross-tab SDK auth events | Hosted availability and Auth latency **Not yet verified** | **Implemented:** focused auth lifecycle tests | **Implemented:** registered-user gates in application; hosted auth settings **Deployment-dependent** |
+| PostgreSQL and RLS | **Implemented:** migrations and policy-controlled data access | Hosted database availability and query latency **Not yet verified** | **Implemented:** focused policy/query tests where present; production data correctness **Not yet verified** | **Implemented:** RLS policies in source; hosted policy state **Deployment-dependent** |
+| Supabase Edge Functions | **Implemented:** chatbot, valuation and HDB lookup functions | **Existing:** function logs/invocation views; service-wide alerting **Planned** | **Implemented:** request/schema tests; hosted version parity **Not yet verified** | **Implemented:** server-held secrets and authenticated paths in source; hosted secret/config state **Deployment-dependent** |
+| Chatbot | **Implemented:** deterministic anonymous onboarding and authenticated tool paths | **Existing:** request-correlation/stage logging where configured; aggregate latency/error metrics **Planned** | **Implemented:** buyer/seller authorization, grounding and flow tests; broader LLM regression suite **Planned** | **Implemented:** provider boundary and explicit tools; quotas and richer abuse controls **Planned** |
+| Buyer search tool | **Implemented:** structured, read-only search of approved listings | Query timing and error aggregates **Planned** | **Implemented:** filter and response tests; search is not personalized ranking | **Implemented:** registered-user server gate and read-only tool contract |
+| Seller workflow | **Implemented:** verified-address intake and seller-owned draft path | Stage-level product health aggregation **Planned** | **Implemented:** seller role, write and HDB verification tests | **Implemented:** ownership checks and RLS; hosted policy state **Deployment-dependent** |
+| HDB lookup | **Implemented:** postal-code lookup via Edge Function and authoritative HDB data | Lookup latency/error aggregates **Planned**; hosted uptime **Not yet verified** | **Implemented:** parser and verification tests | **Implemented:** seller-bound verification path and server-held OneMap credentials; deployed secret state **Deployment-dependent** |
+| Valuation Edge Function | **Implemented:** authenticated property lookup, feature preparation and server-side Render call | **Existing:** correlated stage-duration logs; dashboards/alerts **Planned** | **Implemented:** schema and request tests; model outcome quality needs later labels | **Implemented:** caller auth/RLS and server-held Render token; hosted configuration **Deployment-dependent** |
+| Render FastAPI | **Existing:** `/health`, model-info and prediction endpoints; Blueprint has auto-deploy off | **Existing:** health endpoint and service logs; independent uptime/error alerts **Planned** | **Existing:** health reports bundle readiness; prediction output tests exist | **Implemented:** prediction/model-info bearer auth in source; deployed state **Not yet verified** |
+| CatBoost inference | **Existing:** versioned bundle, schema validation and inference-stage timing | Prediction success/latency by model version **Planned** | Output sanity now; drift, error and interval coverage need later labelled outcomes | **Implemented:** server-side inference and bundle verification; no browser-held artifact/token |
+
+## Phase status
+
+### Phase 1 — Chatbot access hardening
+
+**Implemented** in the current repository: deterministic anonymous Buy/Sell onboarding, provider blocking for anonymous requests, structured buyer search and seller authorization boundaries. Deployment is separate and must be checked in Supabase. User reports Phase 1 was merged and deployed; this document does not independently verify hosted versions.
+
+### Phase 2 — Session lifecycle
+
+**Implemented** in repository source and focused tests: a 55-minute inactivity warning, 60-minute application sign-out, Stay signed in verification, cross-tab activity timestamp synchronization, wake/refresh deadline checks, and distinct manual, inactivity and unknown-session-end messaging. The browser lifecycle is a usability policy only. Supabase Auth, JWT validation, RLS and server-side authorization remain authoritative. Production timing and hosted behavior are **Deployment-dependent** until verified in the deployed frontend.
+
+### Phase 3 — Chat capacity protection
+
+**Planned.** Enforce limits on the server for registered-user AI requests: per-user burst limits, daily quotas, standard/tester/privileged tiers where justified, a project-level provider reserve, temporary abuse cooldowns and clear HTTP 429 handling. Target policy under discussion is approximately 2 requests/minute and 5 AI requests/day for standard accounts, higher configurable tester allowances and justified privileged exceptions. Keep the global ceiling below the current provider account limit. Verify provider constraints before rollout; provider ceilings change and remembered OpenRouter limits are not a source of truth.
+
+### Phase 4 — Chat telemetry, privacy and feedback
+
+**Planned.** Define interaction/request and conversation IDs; provider, requested/resolved model and prompt version; total/provider/tool latency; tool name and success; error/fallback state; token usage when supplied; and quota tier/remaining quota. Add thumbs-up/down, structured dislike reasons, optional written feedback, an AI/privacy notice, sensitive-input blocking and best-effort PII/credential redaction before analytics storage. Proposed retention is 30 days for raw or redacted conversation content and longer-lived aggregate metrics without raw content; settle policy and access controls before storage is introduced. Feedback is evaluation data for prompts, guardrails, schemas, validators, model choice and regression tests; it is not automatically RLHF or model training.
+
+### Phase 5 — LLM behavioral regression evaluation
+
+**Planned.** Add fixed buyer/seller, tool-use, adversarial/prompt-injection, grounding and response-relevance cases. Compare prompt/model versions with deterministic assertions where possible and small human-reviewed samples where needed. Feed reviewed production failures back into the regression set without exposing secrets or unnecessary personal data. Evaluate stable behavioral invariants—not exact wording—including correct tool/filter choice, authorization, no fabricated listings or secret disclosure, and relevant responses.
+
+### Phase 6 — Valuation and service monitoring
+
+**Planned.** Monitor Render `/health`, loaded model/version, prediction success, Supabase-to-Render latency, FastAPI feature-preparation and CatBoost inference time, output-schema sanity and interval ordering, uptime/error rate, and a synthetic known-property canary. Separate cold-start from model-computation time. Future drift/quality analysis may track input-feature and prediction distributions, MAE/MAPE when later actual outcomes are labelled, and conformal coverage over newly labelled data. These outcome metrics cannot be calculated reliably for an unlabelled live prediction at request time.
+
+### Phase 7 — Admin system-monitoring dashboard
+
+**Planned.** Add a System Monitoring area using the existing React design system and chart libraries, with Overview, Services, Chatbot, Valuation, Security and Feedback sections. Candidate measures include service state, active alerts, request volume, p50/p95 latency, errors, fallback/tool success, serving-model mix, quota use, suspicious activity and feedback trends. Do not add Grafana or Sentry solely to imitate enterprise architecture.
+
+Admin badge semantics: Manage Properties counts pending actions; Manage Enquiries counts unread/unresolved enquiries; System Monitoring counts active, unacknowledged warning/critical alerts. An alert remains active when viewed. The planned lifecycle is `active/unread → acknowledged → resolved`.
+
+### Phase 8 — Alerting and Telegram
+
+**Planned.** Send warning/critical incidents and recovery messages, with links to the Admin Dashboard, compact summaries, unresolved alert counts, useful pending-property/unread-enquiry counts and a daily digest. Avoid sending every low-level event. Use a dedicated monitoring bot and store its token only in server/GitHub secrets.
+
+### Phase 9 — Outside-in monitoring
+
+**Planned.** Use a scheduled external monitor such as GitHub Actions to check the production frontend, an intended Supabase application-health path and Render `/health`. An external monitor can report broad reachability if Supabase itself is unavailable; internal monitoring should explain the failure. Do not treat the minimal Render model-readiness endpoint as proof that the entire application works.
+
+### Phase 10 — User-facing AI usage status
+
+**Planned.** Show daily requests used/allowed, remaining requests, reset time, AI availability and serving model where reliable quota/model data exists. Keep quota display separate from LLM context-window capacity. Consider context-window display only after resolved-model limits and token usage are trustworthy.
+
+## Phase 2 regression and release checks
+
+The frontend lifecycle suite should use a fake clock and controllable storage; it must not wait in real time. Cover:
+
+- Warning before/at/after 55 minutes, expiration at 60 minutes and delayed callbacks after sleep.
+- Activity reset and persistence throttling; active-tab timestamp propagation to idle tabs; manual/idle cross-tab logout; stale-tab protection.
+- Page refresh/reopen preserving elapsed inactivity; anonymous users and unresolved auth state receiving no idle UI.
+- Stay signed in verifying the Supabase user, resetting the deadline and preserving route, search, chat and current work.
+- ×/Escape closing the warning without extending the deadline; later activity resetting it.
+- Manual sign-out success/failure, inactivity-specific sign-out and generic unknown session loss without duplicate route-guard toasts.
+- Dialog focus entry, Tab/Shift+Tab containment, focus restoration, background inertness, readable error state, reduced motion and narrow-screen layout.
+
+Before release, run focused Node tests, AuthContext/ProtectedRoute/chat tests, frontend lint, root and app TypeScript checks, the production build and `git diff --check`. For browser checks, enable only the development/test timing path; never alter the production 55-/60-minute constants to speed up a manual test. Record browser, viewport, test timing configuration and which multi-tab scenarios were actually exercised.

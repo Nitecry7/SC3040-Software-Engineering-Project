@@ -26,9 +26,9 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     if (hasRegisteredUser) authenticatedLocation.current = locationKey;
     if (loading) return;
     if (!hasRegisteredUser) {
-      // Only silence logout from this authenticated navigation entry. A new
-      // guest navigation must still notify, even after an intentional logout.
-      if (authTransition !== 'intentional-sign-out' || authenticatedLocation.current !== locationKey) {
+      // Route-specific messaging belongs only to fresh guest navigation.
+      // Known logout/session-end reasons are reported by the session lifecycle.
+      if (authTransition === null || authenticatedLocation.current !== locationKey) {
         toast.error(signInMessage, { id: `protected-route-auth:${signInMessage}` });
       }
     } else if (requireProfileSetup && needsProfileSetup) {

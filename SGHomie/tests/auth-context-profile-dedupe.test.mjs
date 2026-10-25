@@ -24,6 +24,8 @@ function authHarness() {
   const stateWrites = [];
   const timers = [];
   const signOutResult = deferred();
+  const queuedSignOutResults = [];
+  const signOutCalls = [];
   let storageClears = 0;
   const hooks = [];
   let hookIndex = 0;
@@ -63,7 +65,10 @@ function authHarness() {
         authCallback = callback;
         return { data: { subscription: { unsubscribe() {} } } };
       },
-      signOut: () => signOutResult.promise,
+      signOut: options => {
+        signOutCalls.push(options ?? { scope: 'global' });
+        return queuedSignOutResults.shift()?.promise ?? signOutResult.promise;
+      },
     },
     from(table) {
       const query = { table, filters: {} };
@@ -112,6 +117,8 @@ function authHarness() {
     profileResponses,
     timers,
     signOutResult,
+    queuedSignOutResults,
+    signOutCalls,
     storageClears: () => storageClears,
     fireTimers: () => timers.filter(timer => !timer.cleared).forEach(timer => timer.callback()),
     start: () => effect(),
@@ -289,6 +296,22 @@ test('a token refresh during intentional sign-out does not clear its reason', as
   assert.equal(harness.value().authTransition, 'intentional-sign-out');
 });
 
+test('inactivity sign-out falls back to local session removal when remote revocation fails', async () => {
+  const harness = await signedInHarness();
+  const remote = deferred();
+  const local = deferred();
+  harness.queuedSignOutResults.push(remote, local);
+  const signingOut = harness.value().signOut('inactivity');
+  remote.resolve({ error: new Error('Network unavailable') });
+  await setImmediate();
+  assert.deepEqual(harness.signOutCalls.map(call => call.scope), ['global', 'local']);
+  local.resolve({ error: null });
+  await signingOut;
+  assert.equal(harness.value().user, null);
+  assert.equal(harness.value().authTransition, 'inactivity-sign-out');
+  assert.equal(harness.storageClears(), 1);
+});
+
 test('protected authorization remains loading through profile and role lookup', async () => {
   const profile = deferred();
   const harness = authHarness();
@@ -381,6 +404,7 @@ test('sign-out clears role state and ignores a late profile response', async () 
 
   harness.authEvent('SIGNED_OUT', null);
   assert.equal(harness.value().user, null);
+  assert.equal(harness.value().authTransition, 'session-ended', 'unrequested session loss is not attributed to manual or idle sign-out');
   assert.equal(harness.value().profileLoading, false);
   assert.equal(harness.value().loading, false);
   assert.equal(harness.value().isSeller, false);
@@ -402,6 +426,8 @@ test('Supabase anonymous sessions resolve as guests without a profile-role looku
   assert.equal(harness.value().profileLoading, false);
   assert.equal(harness.value().loading, false);
   assert.equal(harness.queries.length, 0);
+  harness.authEvent('SIGNED_OUT', null);
+  assert.equal(harness.value().authTransition, null, 'anonymous sessions do not get authenticated-session expiry messaging');
   cleanup();
 });
 

@@ -324,6 +324,8 @@ SC3040-Software-Engineering-Project/
 | 💬 [Chatbot architecture](SGHomie/docs/chatbot/README.md) | Structured buyer and seller flows |
 | 🔍 [Buyer chatbot flow](SGHomie/docs/buy-flow.md) | Buyer search tool and response behavior |
 | 🏠 [Seller chatbot flow](SGHomie/docs/sell-flow.md) | Seller address verification and draft workflow |
+| ⚙️ [Deployment runbook](SGHomie/docs/operations/deployment-runbook.md) | Service ownership, release boundaries, and safe deployment checks |
+| 📈 [Monitoring and test plan](SGHomie/docs/operations/monitoring-test-plan.md) | Current signals, production checks, and phased roadmap |
 | 🤖 [Valuation research and inference](MLPricePredictorV2/README.md) | Leakage-safe research, evaluation, bundle, and API |
 | ⚠️ [Archived migrations](archived_migrations/README.md) | Historical migration notice |
 

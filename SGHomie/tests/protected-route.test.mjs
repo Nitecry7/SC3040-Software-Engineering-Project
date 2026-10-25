@@ -86,19 +86,16 @@ test('other protected routes continue to require profile setup', () => {
   }]);
 });
 
-test('reactive sign-out removes property content and applies the guest gate on rerender', () => {
+test('unexpected auth loss removes property content without mislabeling it as unauthorized navigation', () => {
   const app = protectedRouteHarness({ user: { id: 'buyer-1' }, loading: false, needsProfileSetup: false });
   const beforeSignOut = app.render('PropertyDetails', { requireProfileSetup: false });
   assert.equal(beforeSignOut.type, 'Fragment');
   assert.equal(beforeSignOut.props.children, 'PropertyDetails');
-  app.setAuth({ user: null, loading: false, needsProfileSetup: false });
+  app.setAuth({ user: null, loading: false, needsProfileSetup: false, authTransition: 'session-ended' });
   const rendered = app.render('PropertyDetails', { signInMessage: 'Sign up or log in to view property details' });
   app.flushEffects();
   assert.equal(rendered.type, 'Navigate');
-  assert.deepEqual(app.notices, [{
-    message: 'Sign up or log in to view property details',
-    id: 'protected-route-auth:Sign up or log in to view property details',
-  }]);
+  assert.deepEqual(app.notices, []);
 });
 
 test('replayed StrictMode effects reuse the same auth toast ID and message', () => {
