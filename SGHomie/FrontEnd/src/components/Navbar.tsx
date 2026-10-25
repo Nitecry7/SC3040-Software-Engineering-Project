@@ -5,10 +5,11 @@ import { useAuth } from '../contexts/AuthContext';
 
 const Navbar = () => {
   const [isOpen, setIsOpen] = useState(false);
-  const { user, isAdmin, isSeller } = useAuth();
+  const { user, isAdmin, isSeller, loading } = useAuth();
   const location = useLocation();
+  const isRegisteredUser = !!user && user.is_anonymous !== true;
 
-  const navigation = user ? [
+  const navigation = loading ? [] : isRegisteredUser ? [
     { name: 'Explore', href: '/search' },
     { name: 'Trends', href: '/analytics' },
     { name: 'Enquiry', href: '/enquiry' },
@@ -55,7 +56,7 @@ const Navbar = () => {
               </Link>
             ))}
             
-            {user ? (
+            {isRegisteredUser ? (
               <div className="relative ml-3 flex items-center space-x-4">
                 <Link 
                   to="/profile" 
@@ -87,7 +88,7 @@ const Navbar = () => {
           </div>
 
           <div className="md:hidden flex items-center gap-2">
-            {user ? (
+            {isRegisteredUser ? (
               <Link
                 to="/profile"
                 aria-label="Your account"
@@ -139,7 +140,7 @@ const Navbar = () => {
                 {item.name}
               </Link>
             ))}
-            {!user && (
+            {!isRegisteredUser && (
               <button
                 onClick={() => {
                   window.dispatchEvent(new CustomEvent('toggle-auth-modal'));

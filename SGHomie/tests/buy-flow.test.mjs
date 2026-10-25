@@ -14,7 +14,13 @@ const { handleRequest } = await import('../BackEnd/supabase/functions/chatbot/in
 const property = (id, overrides = {}) => ({ id, title: `4-Room Home ${id}`, price: 500000, location: 'TAMPINES', bedrooms: 3, bathrooms: 2, area_sqft: 1000, description: 'Renovated 4-room HDB', image_url: '', ...overrides });
 const toolCall = args => ({ id: 'search-1', type: 'function', function: { name: 'search_listings', arguments: JSON.stringify(args) } });
 const completion = (content, calls) => ({ id: 'test-completion', object: 'chat.completion', model: 'test-tool-model', created: 0, choices: [{ index: 0, message: { role: 'assistant', content, ...(calls ? { tool_calls: calls } : {}) }, finish_reason: calls ? 'tool_calls' : 'stop' }] });
-const request = (body, signedIn = false) => new Request('https://functions.example/chatbot', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(signedIn ? { Authorization: 'Bearer user-session' } : {}) }, body: JSON.stringify(body) });
+const request = (body, signedIn = true) => new Request('https://functions.example/chatbot', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(signedIn ? { Authorization: 'Bearer user-session' } : {}) }, body: JSON.stringify(body) });
+function mockChatServices(t, handler) {
+  return t.mock.method(globalThis, 'fetch', async (input, init) => {
+    const auth = mockAuth(String(input), { is_seller: false, is_admin: false });
+    return auth ?? handler(input, init);
+  });
+}
 const emptyResult = filters => ({ filters, total_matches: 0, listings: [] });
 const options = client => ({ client, model: 'test', systemPrompt: 'test', history: [{ role: 'user', content: 'Show me any homes' }], search: async filters => emptyResult(filters) });
 const clientReturning = response => ({ chat: { completions: { create: async () => response } } });
@@ -200,7 +206,7 @@ test('screenshot timing question stays conversational, then an explicit search u
   const question = 'My budget is 500k. Should I buy now or wait until flats get cheaper?';
   const advice = 'There is no reliable way to promise cheaper flats later. Your timeline and budget buffer matter. When would you need to move?';
   let searches = 0;
-  t.mock.method(globalThis, 'fetch', async (input, init) => {
+  mockChatServices(t, async (input, init) => {
     if (String(input).includes('/rest/v1/properties')) {
       searches++;
       assert.match(new URL(String(input)).searchParams.get('and'), /price.lte.500000/);
@@ -244,7 +250,7 @@ test('screenshot timing question stays conversational, then an explicit search u
 });
 
 test('preferences discussed after a previous search override its snapshot when a later search is requested', async t => {
-  t.mock.method(globalThis, 'fetch', async (input, init) => {
+  mockChatServices(t, async (input, init) => {
     if (String(input).includes('/rest/v1/properties')) {
       const query = new URL(String(input)).searchParams.get('and');
       assert.match(query, /TAMPINES/);
@@ -434,7 +440,7 @@ test('new explicit constraints remain protected, while any or removal clears onl
 test('screenshot broadening uses the model-selected filter patch and preserves the budget in JSON and SSE', async t => {
   const previous = { locations: ['BUKIT MERAH'], room_type: '3 ROOM', max_price: 400000 };
   let searches = 0;
-  t.mock.method(globalThis, 'fetch', async (input, init) => {
+  mockChatServices(t, async (input, init) => {
     if (String(input).includes('/rest/v1/properties')) {
       searches++;
       const query = new URL(String(input)).searchParams.get('and');
@@ -469,7 +475,7 @@ test('screenshot broadening uses the model-selected filter patch and preserves t
 
 test('HTTP removal of Clementi searches across towns and writes using the new result scope', async t => {
   let calls = 0;
-  t.mock.method(globalThis, 'fetch', async (input, init) => {
+  mockChatServices(t, async (input, init) => {
     const url = String(input);
     if (url.includes('/rest/v1/properties')) {
       const query = new URL(url).searchParams.get('and');
@@ -526,7 +532,7 @@ test('completed tool searches retain verified cards when reply writing is unavai
   let providerStatus;
   let databaseCalls = 0;
   let writingCalls = 0;
-  t.mock.method(globalThis, 'fetch', async (input, init) => {
+  mockChatServices(t, async (input, init) => {
     const url = String(input);
     if (url.includes('/rest/v1/properties')) {
       databaseCalls++;
@@ -585,7 +591,7 @@ test('model-selected searches preserve literal town, room type and budget constr
 
 test('provider failure before a tool decision cannot produce automatic searches or invented cards', async t => {
   let providerStatus;
-  t.mock.method(globalThis, 'fetch', async (input, init) => {
+  mockChatServices(t, async (input, init) => {
     assert.ok(String(input).includes('openrouter.ai'), 'no tool decision means no database query');
     assert.equal(JSON.parse(init.body).tool_choice, 'auto');
     return Response.json({ error: { message: 'temporarily unavailable' } }, { status: providerStatus });
@@ -672,7 +678,7 @@ test('database results outside the town or budget are rejected before recommendi
 
 test('HTTP Sengkang search preserves constraints and sends only a verified result reply', async t => {
   let modelCalls = 0;
-  t.mock.method(globalThis, 'fetch', async (input, init) => {
+  mockChatServices(t, async (input, init) => {
     const url = String(input);
     if (url.includes('/rest/v1/properties')) {
       const query = new URL(url).searchParams.get('and');
@@ -888,7 +894,7 @@ test('saved preferences do not auto-search advice turns or become preferences fo
   assert.equal(result.status, 200);
   assert.equal((await result.json()).recommendations, undefined);
   const anonymous = await handleRequest(request({ message: BUY_MESSAGE, intent: 'buy',
-    preferred_locations: ['TAMPINES'], preferred_property_type: '4 ROOM' }));
+    preferred_locations: ['TAMPINES'], preferred_property_type: '4 ROOM' }, false));
   assert.equal(anonymous.status, 200);
   assert.equal((await anonymous.json()).recommendations, undefined);
 });
@@ -931,10 +937,10 @@ test('requirement reply searches three cards and cannot be trapped in the pendin
   assert.deepEqual(calls, ['decide', 'database', 'write']);
 });
 
-test('anonymous buyers use anon role and JSON responses retain response compatibility', async t => {
+test('authenticated buyers retain caller identity and JSON response compatibility', async t => {
   let round = 0;
-  t.mock.method(globalThis, 'fetch', async (url, init) => {
-    if (String(url).includes('/rest/v1/')) { assert.equal(init.headers.Authorization, `Bearer ${env.SUPABASE_ANON_KEY}`); return Response.json([property('one')], { headers: { 'Content-Range': '0-0/1' } }); }
+  mockChatServices(t, async (url, init) => {
+    if (String(url).includes('/rest/v1/')) { assert.equal(init.headers.Authorization, 'Bearer user-session'); return Response.json([property('one')], { headers: { 'Content-Range': '0-0/1' } }); }
     if (JSON.parse(init.body).tools) return Response.json(completion(null, [toolCall({ locations: ['TAMPINES'] })]));
     round++;
     return Response.json(completion('I found 1 home. Tell me more to refine it.'));
@@ -950,7 +956,7 @@ test('anonymous buyers use anon role and JSON responses retain response compatib
 
 test('explicit no-preference reply can search broadly after the requirements question', async t => {
   let round = 0;
-  t.mock.method(globalThis, 'fetch', async (url, init) => {
+  mockChatServices(t, async (url, init) => {
     if (String(url).includes('/rest/v1/')) {
       assert.equal(new URL(String(url)).searchParams.get('and'), null);
       return Response.json([property('one')], { headers: { 'Content-Range': '0-0/1' } });
@@ -971,7 +977,7 @@ test('explicit no-preference reply can search broadly after the requirements que
 });
 
 test('invalid requests never reach model/database and cannot inject tool/system roles', async t => {
-  t.mock.method(globalThis, 'fetch', async () => assert.fail('invalid request reached service'));
+  mockChatServices(t, async () => assert.fail('invalid request reached service'));
   for (const index of [-2, 0, 1, 2, 0.5, '0']) {
     assert.equal((await handleRequest(request({ messages: [{ role: 'user', content: 'hello' }],
       search_context: {}, search_context_after: index }))).status, 400);
@@ -982,11 +988,12 @@ test('invalid requests never reach model/database and cannot inject tool/system 
 });
 
 test('database/provider failures remain errors rather than no-match recommendations', async t => {
-  const mock = t.mock.method(globalThis, 'fetch', async url => String(url).includes('/rest/v1/') ? new Response('unavailable', { status: 503 }) : Response.json(completion(null, [toolCall({})])));
+  const mock = mockChatServices(t, async url => String(url).includes('/rest/v1/') ? new Response('unavailable', { status: 503 }) : Response.json(completion(null, [toolCall({})])));
   const response = await handleRequest(request({ message: 'Find homes in Tampines' }));
   assert.equal(response.status, 502);
   assert.equal((await response.json()).recommendations, undefined);
-  mock.mock.mockImplementation(async () => Response.json({ error: { message: 'rate limited' } }, { status: 429 }));
+  mock.mock.mockImplementation(async input => mockAuth(String(input), { is_seller: false, is_admin: false })
+    ?? Response.json({ error: { message: 'rate limited' } }, { status: 429 }));
   const limited = await handleRequest(request({ message: 'Find renovated homes in Tampines' }));
   assert.equal(limited.status, 503);
   assert.equal((await limited.json()).code, 'provider_rate_limited');
@@ -996,7 +1003,7 @@ test('default model uses the free router without optional parameters that exclud
   const originalModel = env.OPENROUTER_MODEL;
   delete env.OPENROUTER_MODEL;
   t.after(() => { env.OPENROUTER_MODEL = originalModel; });
-  t.mock.method(globalThis, 'fetch', async (url, init) => {
+  mockChatServices(t, async (url, init) => {
     assert.ok(String(url).includes('openrouter.ai'));
     const params = JSON.parse(init.body);
     assert.equal(params.model, 'openrouter/free');
@@ -1010,7 +1017,7 @@ test('default model uses the free router without optional parameters that exclud
 });
 
 test('unavailable model has an actionable error without exposing the upstream payload', async t => {
-  t.mock.method(globalThis, 'fetch', async () => Response.json({ error: { message: 'No endpoints found', metadata: { privateDetail: 'do-not-expose' } } }, { status: 404 }));
+  mockChatServices(t, async () => Response.json({ error: { message: 'No endpoints found', metadata: { privateDetail: 'do-not-expose' } } }, { status: 404 }));
   const response = await handleRequest(request({ message: 'Find renovated homes in Tampines' }));
   assert.equal(response.status, 502);
   const body = await response.json();
@@ -1021,10 +1028,10 @@ test('unavailable model has an actionable error without exposing the upstream pa
 
 test('existing sell flow retains anonymous, non-seller and admin gates without model calls', async t => {
   const mock = t.mock.method(globalThis, 'fetch', async () => assert.fail('anonymous sell must not use provider/database'));
-  const anonymous = await handleRequest(request({ messages: [{ role: 'user', content: BUY_MESSAGE }, { role: 'assistant', content: BUY_REQUIREMENTS_PROMPT }, { role: 'user', content: 'I want to sell my unit' }], stream: true }));
+  const anonymous = await handleRequest(request({ messages: [{ role: 'user', content: BUY_MESSAGE }, { role: 'assistant', content: BUY_REQUIREMENTS_PROMPT }, { role: 'user', content: 'I want to sell my unit' }], stream: true }, false));
   const text = await consumeChatStream(anonymous, () => {}, () => assert.fail('sell should not emit recommendations'));
   assert.match(text, /sign up or log in/);
-  const mentionsBuyer = await handleRequest(request({ message: 'I want to sell my unit to a buyer' }));
+  const mentionsBuyer = await handleRequest(request({ message: 'I want to sell my unit to a buyer' }, false));
   assert.match((await mentionsBuyer.json()).response, /sign up or log in/);
   for (const [profile, pattern] of [[{ is_seller: false, is_admin: false }, /register as a seller/], [{ is_seller: true, is_admin: true }, /Admin Dashboard/], [{ is_seller: true, is_admin: false }, /6-digit postal code/]]) {
     mock.mock.mockImplementation(async url => { const auth = mockAuth(String(url), profile); assert.ok(auth, 'sell gate must not reach provider or write'); return auth; });

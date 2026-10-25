@@ -16,7 +16,16 @@ const params = { model: 'gpt-6-luna', messages: [{ role: 'system', content: 'Kee
   tool_choice: { type: 'function', function: { name: 'search_listings' } },
   provider: { require_parameters: true }, max_tokens: 700, temperature: 0.2, stream: false };
 const request = body => new Request('https://functions.example/chatbot', { method: 'POST',
-  headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  headers: { 'Content-Type': 'application/json', Authorization: 'Bearer fixture-session' }, body: JSON.stringify(body) });
+
+function mockChatServices(t, handler) {
+  return t.mock.method(globalThis, 'fetch', async (input, init) => {
+    const url = String(input);
+    if (url.includes('/auth/v1/user')) return Response.json({ id: '11111111-1111-4111-8111-111111111111' });
+    if (url.includes('/rest/v1/user_profiles')) return Response.json([{ is_seller: false, is_admin: false }]);
+    return handler(input, init);
+  });
+}
 
 test('provider switch defaults to existing router, selects separate models and validates config', () => {
   const settings = { OPENROUTER_API_KEY: 'router', OPENAI_API_KEY: 'openai' };
@@ -132,7 +141,7 @@ test('Edge Function sends identical system prompts and tools for both providers'
   const sent = [];
   const saved = { ...env };
   t.after(() => { for (const key of Object.keys(env)) delete env[key]; Object.assign(env, saved); });
-  t.mock.method(globalThis, 'fetch', async (url, options) => {
+  mockChatServices(t, async (url, options) => {
     sent.push({ url, headers: options.headers, body: JSON.parse(options.body) });
     return Response.json(completion('How can I help?'));
   });
@@ -156,7 +165,7 @@ test('Edge Function reports OpenAI-specific model configuration and safe rate-li
   t.after(() => { for (const key of Object.keys(env)) delete env[key]; Object.assign(env, saved); });
   Object.assign(env, { CHAT_PROVIDER: 'openai', OPENAI_API_KEY: 'private-key' });
   for (const status of [404, 429]) {
-    t.mock.method(globalThis, 'fetch', async () => Response.json({ error: { message: 'Private upstream diagnostic' } }, { status }));
+    mockChatServices(t, async () => Response.json({ error: { message: 'Private upstream diagnostic' } }, { status }));
     const response = await handleRequest(request({ message: 'Hello' }));
     const body = await response.json();
     assert.equal(response.status, status === 429 ? 503 : 502);

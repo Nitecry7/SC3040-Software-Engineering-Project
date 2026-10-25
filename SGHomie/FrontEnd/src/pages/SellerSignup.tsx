@@ -24,7 +24,7 @@ const LOCATIONS = [
 // SellerSignup component for registering as a seller.
 const SellerSignup = () => {
   // Destructure the current user and signOut method from the Auth context.
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, refreshProfile } = useAuth();
   // Get navigate function from react-router-dom.
   const navigate = useNavigate();
 
@@ -134,6 +134,11 @@ const SellerSignup = () => {
 
       // Throw an error if the update fails.
       if (error) throw error;
+
+      const updatedProfile = await refreshProfile();
+      if (!updatedProfile?.isSeller) {
+        throw new Error('Seller access could not be confirmed');
+      }
 
       // On success, show a success notification.
       toast.success('Successfully registered as a seller!');

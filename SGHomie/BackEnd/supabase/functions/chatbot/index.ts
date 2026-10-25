@@ -17,6 +17,7 @@ import {
 import { parseSellerContext, parseSellerDetails, type SellerContext, type SellerDraftCard, type SellerFlowEvent } from '../_shared/sellerFlow.ts';
 import { sellerDetailsPrompt, useProfileContacts, collectSellerDetails, generatedSellerTitle, missingSellerFields, newSellerContext, priceDecision, suggestSellerPrice } from './sell.ts';
 import { profileListingFilters } from './buyerRequirements.ts';
+import { buyOnboarding, onboardingAction, REGISTRATION_MESSAGE, SELL_ONBOARDING } from './onboarding.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -138,7 +139,7 @@ function getAuthContext(req: Request): Promise<AuthContext> {
     });
 
     const { data: authData, error: authError } = await client.auth.getUser();
-    if (authError || !authData.user) {
+    if (authError || !authData.user || authData.user.is_anonymous === true) {
       return anonymousContext;
     }
 
@@ -751,6 +752,13 @@ export async function handleRequest(req: Request): Promise<Response> {
     const request = parseRequest(body);
     const latestUserMessage = request.messages.at(-1)?.content ?? '';
     const authContext = await getAuthContext(req);
+    // This is the provider authorization boundary. Browser history, intents and
+    // contexts cannot grant AI access or enter authenticated seller operations.
+    if (!authContext.userId) {
+      const action = onboardingAction(latestUserMessage, request.intent);
+      return textResponse(action === 'buy' ? await buyOnboarding(name => Deno.env.get(name))
+        : action === 'sell' ? SELL_ONBOARDING : REGISTRATION_MESSAGE, request.stream);
+    }
     // An explicit Buy selection must escape a pending seller address question.
     // Keep that journey active when the next message contains only requirements.
     const latestJourney = [...request.messages].reverse().find(message => message.role === 'user'

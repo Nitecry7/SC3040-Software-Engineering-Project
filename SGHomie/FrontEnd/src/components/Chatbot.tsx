@@ -1,11 +1,12 @@
 // Import React and its hooks for state management, referencing, and side-effects.
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 // Import icons from the lucide-react library to use in the UI.
-import { MessageCircle, X, Send, Maximize2, Minimize2, GripVertical, MoveDiagonal2 } from 'lucide-react';
+import { MessageCircle, X, Send, Maximize2, Minimize2, GripVertical, MoveDiagonal2, RotateCcw } from 'lucide-react';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 // Import the Supabase client for making API requests.
 import { chatbotSupabase, supabase } from '../lib/supabase';
-import { BUY_MESSAGE, chatFailureText, consumeChatStream, type ListingSearchResult, type SellerContext, type SellerDraftCard } from '../lib/chat';
+import { BUY_MESSAGE, chatFailureText, consumeChatStream, type ListingSearchResult, type SellerContext } from '../lib/chat';
+import { createChatLifecycle, type ChatMessage } from '../lib/chatSession';
 import ListingRecommendations from './ListingRecommendations';
 import SellerDraft from './SellerDraft';
 import { useAuth } from '../contexts/AuthContext';
@@ -13,16 +14,6 @@ import ChatMarkdown from './ChatMarkdown';
 import useChatWindow from '../hooks/useChatWindow';
 import { LAUNCHER_SIZE, WINDOW_MARGIN } from '../lib/chatWindow';
 import './Chatbot.css';
-
-// Define a TypeScript interface for a chat message.
-// Each message has a 'role' (either 'user' or 'assistant')
-// and a 'content' string.
-interface Message {
-  role: 'user' | 'assistant';
-  content: string;
-  recommendations?: ListingSearchResult;
-  draft?: SellerDraftCard;
-}
 
 // Keep the initial chatbot menu focused on the two supported journeys.
 const SUGGESTED_PROMPTS = [
@@ -35,6 +26,7 @@ const MAX_HISTORY_MESSAGES = 20;
 // Main functional component for the Chatbot.
 const Chatbot: React.FC = () => {
   const { user } = useAuth();
+  const hasRegisteredUser = !!user && user.is_anonymous !== true;
   // State to manage whether the chat window is open.
   const [isOpen, setIsOpen] = useState(false);
   const [showInvitation, setShowInvitation] = useState(true);
@@ -43,7 +35,7 @@ const Chatbot: React.FC = () => {
   // State to manage the current message input by the user.
   const [message, setMessage] = useState('');
   // State to store the list of messages exchanged in the chat.
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   // State to indicate if the chatbot is waiting for a response (i.e. loading state).
   const [isLoading, setIsLoading] = useState(false);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -51,18 +43,28 @@ const Chatbot: React.FC = () => {
   const moveButtonRef = useRef<HTMLButtonElement>(null);
   const hasOpenedRef = useRef(false);
   const followStreamRef = useRef(true);
-  const requestInFlightRef = useRef(false);
+  const lifecycle = useRef(createChatLifecycle()).current;
   const searchContextRef = useRef<ListingSearchResult['filters']>();
   const sellerContextRef = useRef<SellerContext>();
   const currentUserIdRef = useRef(user?.id);
 
+  const resetChat = useCallback(() => {
+    const fresh = lifecycle.reset();
+    sellerContextRef.current = fresh.seller;
+    searchContextRef.current = fresh.search;
+    followStreamRef.current = fresh.followStream;
+    setMessages(fresh.messages);
+    setMessage(fresh.input);
+    setIsLoading(fresh.loading);
+  }, [lifecycle]);
+
   useEffect(() => {
     // Never carry another account's listing intake or private details forward.
     currentUserIdRef.current = user?.id;
-    sellerContextRef.current = undefined;
-    searchContextRef.current = undefined;
-    setMessages([]);
-  }, [user?.id]);
+    resetChat();
+  }, [user?.id, resetChat]);
+
+  useEffect(() => () => { lifecycle.reset(); }, [lifecycle]);
 
   useEffect(() => {
     const container = messagesRef.current;
@@ -105,10 +107,11 @@ const Chatbot: React.FC = () => {
 
   const sendMessage = async (value: string, intent?: 'buy' | 'sell') => {
     const userMessage = value.trim();
-    if (!userMessage || requestInFlightRef.current) return;
-    requestInFlightRef.current = true;
+    if (!userMessage) return;
+    const request = lifecycle.begin();
+    if (!request) return;
     const requestUserId = user?.id;
-    const isCurrentAccount = () => currentUserIdRef.current === requestUserId;
+    const isCurrentAccount = () => currentUserIdRef.current === requestUserId && lifecycle.isCurrent(request);
     followStreamRef.current = true;
     if (intent) {
       searchContextRef.current = undefined;
@@ -146,6 +149,7 @@ const Chatbot: React.FC = () => {
 
       // Ask the Supabase Edge Function for an OpenAI-style streamed response.
       const { data, error } = await chatbotSupabase.functions.invoke<Response>('chatbot', {
+        signal: request.controller.signal,
         body: {
           messages: requestMessages,
           stream: true,
@@ -154,6 +158,11 @@ const Chatbot: React.FC = () => {
           ...(sellerContextRef.current ? { seller_context: sellerContextRef.current } : {}),
         },
       });
+
+      if (!isCurrentAccount()) {
+        if (data instanceof Response) await data.body?.cancel().catch(() => undefined);
+        return;
+      }
 
       // If an error occurs during the request, throw the error.
       if (error) throw error;
@@ -187,7 +196,7 @@ const Chatbot: React.FC = () => {
           });
           window.dispatchEvent(new CustomEvent('seller-dashboard-refresh'));
         }
-      });
+      }, request.controller.signal);
     } catch (error) {
       if (!isCurrentAccount()) return;
       let failureText = chatFailureText();
@@ -195,6 +204,7 @@ const Chatbot: React.FC = () => {
       // console during local development to help diagnose backend failures.
       if (error instanceof FunctionsHttpError) {
         const responseBody = await error.context.clone().text().catch(() => '');
+        if (!isCurrentAccount()) return;
         let parsedBody: unknown = responseBody;
         try {
           parsedBody = JSON.parse(responseBody);
@@ -211,6 +221,7 @@ const Chatbot: React.FC = () => {
       } else {
         console.error('Error getting response:', error);
       }
+      if (!isCurrentAccount()) return;
       updateLastAssistantMessage(hasSavedDraft
         ? 'Your draft is saved. Click the draft card below to continue, or open the [Seller Dashboard](/seller).'
         : hasRecommendations
@@ -218,8 +229,7 @@ const Chatbot: React.FC = () => {
         : failureText);
     } finally {
       // Turn off the loading indicator when the request is complete.
-      requestInFlightRef.current = false;
-      setIsLoading(false);
+      if (lifecycle.finish(request)) setIsLoading(false);
     }
   };
 
@@ -307,6 +317,10 @@ const Chatbot: React.FC = () => {
                 <span className="block text-[11px] text-blue-100">{chatWindow.mode === 'compact' ? 'Compact chat' : 'Expanded chat'}</span>
               </span>
             </button>
+            <button type="button" onClick={resetChat} aria-label="New chat" title="New chat"
+              className="shrink-0 rounded-lg p-2 hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-white">
+              <RotateCcw className="h-4 w-4" aria-hidden="true" />
+            </button>
             <button type="button"
               onClick={() => chatWindow.setMode(chatWindow.mode === 'compact' ? 'expanded' : 'compact')}
               aria-label={chatWindow.mode === 'compact' ? 'Expand chat' : 'Use compact chat'}
@@ -329,7 +343,7 @@ const Chatbot: React.FC = () => {
                 <div className="space-y-4 py-4">
                   <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-600"><MessageCircle className="h-6 w-6" /></div>
                   <p className="text-center font-medium text-gray-900">How can I help with your home?</p>
-                  <p className="text-center text-sm text-gray-500">Choose Buy or Sell, or ask a question.</p>
+                  <p className="text-center text-sm text-gray-500">{hasRegisteredUser ? 'Choose Buy or Sell, or ask a question.' : 'Choose Buy or Sell to get started. Full AI chat requires login.'}</p>
                   <div className="grid grid-cols-2 gap-2">
                     {SUGGESTED_PROMPTS.map(prompt => (
                       <button key={prompt.label} onClick={() => handlePromptClick(prompt.message)} disabled={isLoading}
@@ -352,6 +366,10 @@ const Chatbot: React.FC = () => {
             </div>
           </div>
           <form onSubmit={handleSubmit} className="shrink-0 border-t border-gray-100 bg-white px-3 pb-3 pt-3">
+            {!hasRegisteredUser && <button type="button" onClick={() => { minimise(); window.dispatchEvent(new CustomEvent('toggle-auth-modal')); }}
+              className="mb-2 rounded-lg px-1 py-1 text-sm font-medium text-blue-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600">
+              Sign up / Log in
+            </button>}
             <div className="flex gap-2">
               <input type="text" value={message} onChange={event => setMessage(event.target.value)}
                 placeholder="Type your message…" aria-label="Message SG Homie Consultant" maxLength={4000}

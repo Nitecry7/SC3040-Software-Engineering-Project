@@ -2,13 +2,42 @@
 
 The chatbot UI calls the Supabase `chatbot` Edge Function. OpenAI or OpenRouter can provide language responses through server-side configuration; bounded application tools handle listing search and seller draft intake. The model does not have arbitrary SQL access, and trusted application results take precedence over model memory.
 
+## Authentication and New Chat
+
+Full AI conversation requires a registered Supabase user, verified server-side
+before provider creation. Anonymous Buy/Sell are deterministic onboarding:
+Buy can read a bounded summary of approved HDB application listings, and Sell
+explains login and seller registration. Other anonymous text receives registration
+guidance. Invalid/expired tokens and Supabase anonymous-user sessions cannot reach
+AI, `search_listings`, seller intake or address verification. Catalog failures
+return onboarding without fabricated counts or an AI fallback. Explore remains
+login-protected; application asking listings may include demo records.
+
+The header's **New chat** action clears temporary conversation history, input,
+buyer filters and seller intake. It aborts/invalidates the old request and ignores
+late responses while retaining login, profile preferences and saved application
+data. Requests remain bounded to 20 messages of at most 4,000 characters each;
+no long-term conversation memory is introduced. Authenticated buyer/seller/admin
+permissions and database policies are unchanged.
+
+### Property access
+
+Application navigation to `/property/:id` requires a registered user. Direct
+URLs, browser history, chatbot links and Explore links pass through the same
+route guard. The guard waits for Supabase session restoration and reacts to
+sign-out while property details are open. An authenticated user may view details
+without completing the buyer profile. This is an application route restriction;
+the existing RLS policy still permits anonymous reads of approved property rows
+through the Supabase Data API. No listing RLS or interest visibility policy is
+changed by the route guard.
+
 ## Buyer listing search
 
 The buyer flow uses the validated, read-only `search_listings` tool to search and sort approved HDB listings. It is not a personalized recommendation-ranking engine. The LLM can explain returned records but must not invent listing IDs, prices, amenities, distances, or valuation evidence.
 
 ```mermaid
 sequenceDiagram
-    actor Buyer
+    actor Buyer as Authenticated buyer
     participant UI as React chat UI
     participant Edge as Supabase chatbot Edge Function
     participant LLM as Configured LLM provider
@@ -87,3 +116,12 @@ sequenceDiagram
 - [Supabase provider configuration and function setup](../../BackEnd/supabase/README.md#chatbot-provider-selection)
 
 Hosted provider configuration and deployment must be checked in the intended Supabase project; repository code alone does not establish hosted state.
+
+Phase 1 regression checks (repository root):
+
+```bash
+node --experimental-strip-types --import ./SGHomie/tests/register-deno-imports.mjs --test SGHomie/tests/chat-onboarding.test.mjs SGHomie/tests/chat-session.test.mjs SGHomie/tests/buy-flow.test.mjs SGHomie/tests/sell-flow.test.mjs SGHomie/tests/chat-provider.test.mjs SGHomie/tests/chat-window.test.mjs
+```
+
+These use isolated fixtures and reject anonymous provider construction/calls.
+They do not verify hosted deployment, paid provider access or hosted RLS state.

@@ -132,7 +132,7 @@ allowed_mime_types = ["image/jpeg", "image/png", "image/webp"]
 verify_jwt = false
 
 [functions.chatbot]
-# The chatbot welcomes anonymous users, then applies the seller gate itself.
+# Public deterministic onboarding; the function verifies users before any AI or seller intake.
 verify_jwt = false
 
 [functions.valuation]

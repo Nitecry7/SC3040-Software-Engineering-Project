@@ -2,6 +2,12 @@
 
 ## Implemented flow
 
+Anonymous **Sell** returns deterministic login and seller-registration guidance.
+It cannot invoke the provider, extract details, call HDB/OneMap verification,
+issue verification tokens or save a draft. Arbitrary anonymous messages receive
+registration guidance. The authenticated workflow below retains its existing
+seller/admin checks, ownership checks, RLS and verified-address requirements.
+
 1. **Sell** sends an explicit selling intent. Login, seller registration and admin
    restrictions remain enforced by the server on every turn.
 2. Ask for the six-digit postal code and verify it using `lookup-hdb-location`.
@@ -51,6 +57,11 @@
   It is cleared when the signed-in account changes. Unfinished chat intake itself
   is held in browser memory; only a successfully saved database draft survives a
   page refresh. Start Sell again after refreshing an unfinished intake.
+- **New chat** clears temporary conversation history and buyer/seller contexts,
+  cancels the active stream and ignores late responses. It keeps the account,
+  seller registration, saved preferences, drafts, properties and interests.
+  Starting a new chat performs no database writes/deletes and cannot undo a
+  server write already completed by the previous request.
 - Existing numeric columns require values. Unknown draft price/counts/area use
   the existing zero sentinel in the database, but edit inputs show them as blank
   and the draft card shows "Price to be added". There is no schema migration.

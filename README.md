@@ -118,6 +118,11 @@ The authenticated valuation path accepts a property ID; the Supabase Edge Functi
 
 The chatbot can explain trusted listing results and help sellers save listing drafts through structured application tools; it does not have arbitrary database access. Seller intake verifies the supplied HDB address. A seller's provisional AI asking-price suggestion is based on application asking listings and is separate from the CatBoost buyer valuation.
 
+Full AI chat requires login. Anonymous Buy/Sell provide deterministic onboarding
+without invoking an AI provider; other anonymous messages receive sign-up/login
+guidance. Explore remains login-protected. **New chat** clears temporary messages
+and buyer/seller context while preserving login, saved preferences and drafts.
+
 ## What works today
 
 | Status | Capability in this repository |

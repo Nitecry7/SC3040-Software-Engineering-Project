@@ -49,10 +49,16 @@ applies incremental migrations for the current application features:
 - `20261012120000_property_valuation_inputs.sql` adds nullable, provenance-labelled valuation inputs
 - `20261013140000_property_demo_batch_provenance.sql` adds canonical synthetic demo batch provenance and database-enforced eligibility invariants
 - `20261013150000_require_approved_demo_valuations.sql` replaces the demo completeness check to require approved listings while preserving fixture owner IDs
+- `20261026120000_authenticated_enquiry_insert.sql` restricts enquiry creation to authenticated users and binds new enquiry email/status fields to the caller
 
 The initial migration creates the full application schema, policies, views, and
 triggers for a fresh Supabase project. Later migrations must be applied in
 timestamp order with the initial schema.
+
+Enquiry submission is registered-user only. The latest enquiry policy permits
+authenticated inserts only when the enquiry email matches the caller's Auth
+email, the initial status is `PENDING`, and `admin_response` is empty. Existing
+authenticated email-scoped reads and admin management policies are preserved.
 
 ## Deterministic demo amenities
 
@@ -373,6 +379,20 @@ supabase functions deploy chatbot
 ```
 
 ## Chatbot provider selection
+
+The public `chatbot` endpoint retains `verify_jwt = false` for deterministic
+anonymous onboarding. Application code verifies the user through Supabase Auth
+before creating any AI provider or entering authenticated buyer/seller workflows.
+Missing, invalid, expired and Supabase anonymous-user sessions receive only Buy/Sell
+onboarding or sign-up/login guidance. Anonymous Buy uses an anonymous, read-only
+approved-HDB catalog scan (500 rows/page, at most 10 pages, five-second timeout),
+selecting only ID/town/location. Incomplete, changing, oversized or unavailable
+summaries omit counts; they never fall through to AI. No service-role key is used.
+Authenticated permissions, RLS, HDB verification and model routing are unchanged.
+
+New Chat clears browser-held conversation state and invalidates/aborts its active
+request. It does not delete profiles, preferences, seller drafts, interests or
+other persistent records, and cannot roll back already-completed server writes.
 
 The chatbot supports exactly two providers, selected by the server-side
 `CHAT_PROVIDER` setting. When omitted, it uses OpenRouter as before. The switch

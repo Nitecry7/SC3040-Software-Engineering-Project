@@ -18,9 +18,13 @@ export async function consumeChatStream(
   onText: (content: string) => void,
   onRecommendations: (result: ListingSearchResult) => void,
   onSellerFlow?: (event: SellerFlowEvent) => void,
+  signal?: AbortSignal,
 ): Promise<string> {
+  signal?.throwIfAborted();
   if (!response.body) throw new Error('The chatbot returned an empty response stream');
   const reader = response.body.getReader();
+  const cancel = () => { void reader.cancel().catch(() => undefined); };
+  signal?.addEventListener('abort', cancel, { once: true });
   const decoder = new TextDecoder();
   let buffer = '';
   let content = '';
@@ -51,6 +55,7 @@ export async function consumeChatStream(
   try {
     while (!completed) {
       const { value, done } = await reader.read();
+      signal?.throwIfAborted();
       buffer += decoder.decode(value, { stream: !done });
       const events = buffer.split(/\r?\n\r?\n/);
       buffer = events.pop() ?? '';
@@ -61,6 +66,7 @@ export async function consumeChatStream(
     if (!completed || !visible.trim()) throw new Error('The chatbot returned an incomplete response');
     return visible;
   } finally {
+    signal?.removeEventListener('abort', cancel);
     await reader.cancel().catch(() => undefined);
     reader.releaseLock();
   }

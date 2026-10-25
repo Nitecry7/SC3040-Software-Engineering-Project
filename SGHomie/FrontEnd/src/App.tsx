@@ -65,7 +65,11 @@ function App() {
                   </ProtectedRoute>
                 } 
               />
-              <Route path="/property/:id" element={<PropertyDetails />} />
+              <Route path="/property/:id" element={
+                <ProtectedRoute requireProfileSetup={false} signInMessage="Sign up or log in to view property details">
+                  <PropertyDetails />
+                </ProtectedRoute>
+              } />
               <Route 
                 path="/enquiry" 
                 element={
@@ -85,7 +89,7 @@ function App() {
               <Route
                 path="/seller"
                 element={
-                  <ProtectedRoute>
+                  <ProtectedRoute requiredRole="seller">
                     <SellerDashboard />
                   </ProtectedRoute>
                 }
