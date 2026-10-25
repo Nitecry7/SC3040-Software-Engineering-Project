@@ -20,6 +20,30 @@ data. Requests remain bounded to 20 messages of at most 4,000 characters each;
 no long-term conversation memory is introduced. Authenticated buyer/seller/admin
 permissions and database policies are unchanged.
 
+## AI fair use and provider capacity
+
+Registered-user AI paths reserve one user interaction before model processing.
+The policy is server-configured by tier: standard starts at 2 interactions per
+minute and 5 per Singapore calendar day, tester at 10 and 25, and privileged
+at 20 per minute with no per-user daily cap. All tiers remain subject to abuse
+cooldowns and project-wide capacity. A bare Buy request with saved preferences
+still uses a provider call for the written explanation; database-only listing
+search itself does not consume global provider capacity.
+
+User interactions and provider calls are different units. Buyer tool selection
+can retry up to three provider calls and a successful listing search can add a
+separate explanation call. Seller detail extraction can make a second call for
+provisional price guidance. The server reserves global capacity immediately
+before each outbound provider request. The initial application reserve is 18
+calls per minute and 45 per Singapore day; these are configurable application
+defaults, not upstream provider guarantees. Five burst-limit denials in ten
+minutes trigger a 15-minute chatbot-only cooldown. Quota denials return
+structured HTTP 429 responses and safe current-user quota metadata in JSON or
+an SSE `quota` event. The UI explains denials but does not yet show a usage
+meter. Anonymous deterministic onboarding and non-AI application paths do not
+consume either quota. Hosted policy and deployment state must be verified
+separately.
+
 ### Property access
 
 Application navigation to `/property/:id` requires a registered user. Direct

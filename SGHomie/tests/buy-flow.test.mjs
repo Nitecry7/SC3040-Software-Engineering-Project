@@ -8,7 +8,7 @@ import { visibleAssistantText } from '../BackEnd/supabase/functions/_shared/chat
 
 const BUY_REQUIREMENTS_PROMPT = 'What would you like help with as you plan your home purchase?';
 
-const env = { OPENROUTER_API_KEY: 'test-provider-key', SUPABASE_URL: 'https://database.example', SUPABASE_ANON_KEY: 'test-anon-key', OPENROUTER_MODEL: 'test-tool-model' };
+const env = { OPENROUTER_API_KEY: 'test-provider-key', SUPABASE_URL: 'https://database.example', SUPABASE_ANON_KEY: 'test-anon-key', SUPABASE_SERVICE_ROLE_KEY: 'test-service-key', OPENROUTER_MODEL: 'test-tool-model' };
 globalThis.Deno = { env: { get: name => env[name] }, serve() {} };
 const { handleRequest } = await import('../BackEnd/supabase/functions/chatbot/index.ts');
 const property = (id, overrides = {}) => ({ id, title: `4-Room Home ${id}`, price: 500000, location: 'TAMPINES', bedrooms: 3, bathrooms: 2, area_sqft: 1000, description: 'Renovated 4-room HDB', image_url: '', ...overrides });
@@ -711,6 +711,10 @@ test('HTTP Sengkang search preserves constraints and sends only a verified resul
 function mockAuth(url, profile = { is_seller: true, is_admin: false, name: 'Test Seller', phone: 'test' }) {
   if (url.includes('/auth/v1/user')) return Response.json({ id: '11111111-1111-4111-8111-111111111111', email: 'fixture@example.test' });
   if (url.includes('/rest/v1/user_profiles')) return Response.json([profile]);
+  if (url.includes('/rest/v1/rpc/reserve_chat_user_interaction')) return Response.json({ allowed: true,
+    quota: { tier: 'standard', minute_limit: 2, minute_remaining: 1, daily_limit: 5, daily_remaining: 4,
+      daily_reset_at: '2026-10-27T16:00:00.000Z', cooldown_until: null } });
+  if (url.includes('/rest/v1/rpc/reserve_chat_provider_call')) return Response.json({ allowed: true });
 }
 
 test('typed Buy clears seller intake and following requirements stay in the buy journey', async t => {

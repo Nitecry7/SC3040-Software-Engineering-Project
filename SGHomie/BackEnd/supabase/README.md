@@ -50,10 +50,50 @@ applies incremental migrations for the current application features:
 - `20261013140000_property_demo_batch_provenance.sql` adds canonical synthetic demo batch provenance and database-enforced eligibility invariants
 - `20261013150000_require_approved_demo_valuations.sql` replaces the demo completeness check to require approved listings while preserving fixture owner IDs
 - `20261026120000_authenticated_enquiry_insert.sql` restricts enquiry creation to authenticated users and binds new enquiry email/status fields to the caller
+- `20261026130000_chatbot_quotas_and_capacity.sql` adds server-authoritative chatbot tiers, user interaction reservations, provider-call capacity reservations and bounded cooldown state
 
 The initial migration creates the full application schema, policies, views, and
 triggers for a fresh Supabase project. Later migrations must be applied in
 timestamp order with the initial schema.
+
+### Chatbot quotas and provider capacity
+
+The chatbot quota migration defines configurable `standard`, `tester` and
+`privileged` policy rows, protected tier assignments, bounded per-user state and
+a singleton project provider-capacity state. Initial application defaults are
+2/5 interactions per minute/day for standard, 10/25 for tester, and 20/minute
+with no per-user daily cap for privileged. A repeated burst-denial policy starts
+a 15-minute chatbot cooldown after five denials within ten minutes. The initial
+project reserve is 18 provider calls per minute and 45 per Singapore calendar
+day. These values are application settings, not guarantees about upstream
+provider capacity.
+
+The authenticated `reserve_chat_user_interaction()` RPC derives the user from
+`auth.uid()`. The `service_role`-only `reserve_chat_provider_call()` RPC protects
+the global reserve and cannot be called by ordinary authenticated users. Both
+functions serialize updates with row locks. Tier assignments and settings are
+trusted database operations; users cannot read or write those tables through
+the Data API. To assign a project member, use a trusted SQL session and the
+member's Auth UUID (never an email in source code):
+
+```sql
+INSERT INTO public.chat_quota_assignments (user_id, tier)
+VALUES ('<auth-user-uuid>', 'tester')
+ON CONFLICT (user_id) DO UPDATE SET tier = EXCLUDED.tier, updated_at = now();
+```
+
+Delete the assignment to restore the default `standard` tier:
+
+```sql
+DELETE FROM public.chat_quota_assignments WHERE user_id = '<auth-user-uuid>';
+```
+
+Only a trusted database operator should update the configuration tables. After
+applying the migration, deploy the `chatbot` Edge Function and verify both the
+migration and function version in the target Supabase project. The function
+requires the platform-provided `SUPABASE_SERVICE_ROLE_KEY` only in its server
+environment; do not copy it to frontend configuration. No migration or
+function deployment is performed by this guide.
 
 Enquiry submission is registered-user only. The latest enquiry policy permits
 authenticated inserts only when the enquiry email matches the caller's Auth

@@ -2,6 +2,7 @@ import {
   getAssistantText, OpenRouterError, type ChatCompletionMessageParam,
   type ChatCompletionResponse, type OpenRouterClient,
 } from '../_shared/openrouter.ts';
+import { ChatQuotaError, ChatQuotaUnavailableError } from './quota.ts';
 import {
   ListingQueryError, SEARCH_LISTINGS_TOOL, TOWNS,
   type ListingFilters, type ListingSearchResult,
@@ -233,7 +234,8 @@ export async function generateListingReply(options: {
     if (hasUngroundedLocationReply(reply, options.search)) throw new OpenRouterError('Recommendation reply suggested unverified locations', 502);
     // Buffer before publishing so malformed provider output never flashes in chat.
     return reply;
-  } catch {
+  } catch (error) {
+    if (error instanceof ChatQuotaError || error instanceof ChatQuotaUnavailableError) throw error;
     // A writing failure should not hide a successful search or lose its result cards.
     console.warn('Recommendation writing unavailable; using verified search summary.');
     return listingSearchReply(options.search);

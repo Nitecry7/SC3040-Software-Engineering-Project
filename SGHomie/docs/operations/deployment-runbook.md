@@ -32,6 +32,40 @@ The expected frontend workflow is for merges to the configured Netlify productio
    supabase functions deploy <function-name>
    ```
 
+### Phase 3 chatbot quota rollout
+
+The repository migration `20261026130000_chatbot_quotas_and_capacity.sql`
+creates protected quota configuration, tier assignments and bounded usage
+state. Review the migration and linked history, then apply it only through the
+approved migration process above. Deploy the `chatbot` Edge Function after the
+migration. The global reservation path uses Supabase's server-side
+`SUPABASE_SERVICE_ROLE_KEY`; never add that key to Vite variables, client code,
+or operator transcripts. Do not broaden RPC/table grants to make a deployment
+work. The user RPC derives identity from the caller JWT; the provider-capacity
+RPC remains `service_role` only.
+
+After deployment, verify in Supabase that the migration is applied, the
+`chatbot` function version contains the quota code, and no privileged key was
+added to frontend environment settings. Use the trusted tier-assignment SQL in
+the [Supabase setup guide](../../BackEnd/supabase/README.md) to promote a
+project test account and delete its assignment to return it to standard.
+Configuration edits must use a trusted database operator; ordinary accounts
+must not be given table write access.
+
+Use non-production test accounts for acceptance checks. Confirm standard burst
+and daily denials, tester's higher limits, privileged's uncapped user daily
+limit with bounded burst, repeated-burst cooldown and expiry, and anonymous
+deterministic onboarding with no quota use. Verify Explore, Property Details,
+Profile, Enquiries and authorized seller features after chat denial. To check
+global denial safely, lower the application capacity in a non-production
+database and invoke the chatbot; do not exhaust the provider account. Restore
+the documented capacity values after the check. For database concurrency,
+issue simultaneous user reservations with the same authenticated test JWT at
+one below the configured burst limit and verify at most one succeeds; invoke
+the service-only global reservation only from a secured test function. These
+checks are post-deployment procedures, not evidence that hosted state has
+already been verified.
+
 5. Deploy the frontend using the configured Netlify workflow only after verifying its current production branch, build and publish settings. Those settings are not represented in this repository.
 6. The Render Blueprint has `autoDeployTrigger: 'off'`; follow the approved Render deployment workflow. Check the expected model version and `/health` after any release. Do not copy secrets into a shell transcript, source file or Vite variable.
 7. Verify the deployed frontend, auth, Edge Functions, database access and valuation path in the intended environment. Record what was actually checked and what remains unverified.

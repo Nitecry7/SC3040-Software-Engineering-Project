@@ -212,7 +212,9 @@ const Chatbot: React.FC = () => {
           // Keep the raw response text when the function did not return JSON.
         }
         const code = typeof parsedBody === 'object' && parsedBody !== null && 'code' in parsedBody && typeof parsedBody.code === 'string' ? parsedBody.code : undefined;
-        failureText = chatFailureText(error.context.status, code);
+        failureText = chatFailureText(error.context.status, code,
+          typeof parsedBody === 'object' && parsedBody !== null
+            ? parsedBody as Parameters<typeof chatFailureText>[2] : undefined);
         if (import.meta.env.DEV) console.error('Chatbot Edge Function failed:', {
           status: error.context.status,
           statusText: error.context.statusText,

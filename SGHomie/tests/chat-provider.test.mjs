@@ -6,7 +6,9 @@ import { SEARCH_LISTINGS_TOOL } from '../BackEnd/supabase/functions/_shared/list
 import { prepareBuyConversation, generateListingReply, createBuyStream } from '../BackEnd/supabase/functions/chatbot/buy.ts';
 import { consumeChatStream } from '../FrontEnd/src/lib/chat.ts';
 
-const env = { OPENROUTER_API_KEY: 'router-key', SUPABASE_URL: 'https://database.example', SUPABASE_ANON_KEY: 'anon-key' };
+const env = { OPENROUTER_API_KEY: 'router-key', SUPABASE_URL: 'https://database.example', SUPABASE_ANON_KEY: 'anon-key', SUPABASE_SERVICE_ROLE_KEY: 'server-only-test-key' };
+const quota = { tier: 'standard', minute_limit: 2, minute_remaining: 1, daily_limit: 5, daily_remaining: 4,
+  daily_reset_at: '2026-10-27T16:00:00.000Z', cooldown_until: null };
 globalThis.Deno = { env: { get: name => env[name] }, serve() {} };
 const { handleRequest } = await import('../BackEnd/supabase/functions/chatbot/index.ts');
 const completion = content => ({ id: 'completion-1', object: 'chat.completion', created: 0,
@@ -18,11 +20,13 @@ const params = { model: 'gpt-6-luna', messages: [{ role: 'system', content: 'Kee
 const request = body => new Request('https://functions.example/chatbot', { method: 'POST',
   headers: { 'Content-Type': 'application/json', Authorization: 'Bearer fixture-session' }, body: JSON.stringify(body) });
 
-function mockChatServices(t, handler) {
+function mockChatServices(t, handler, reservations = {}) {
   return t.mock.method(globalThis, 'fetch', async (input, init) => {
     const url = String(input);
     if (url.includes('/auth/v1/user')) return Response.json({ id: '11111111-1111-4111-8111-111111111111' });
     if (url.includes('/rest/v1/user_profiles')) return Response.json([{ is_seller: false, is_admin: false }]);
+    if (url.includes('/rest/v1/rpc/reserve_chat_user_interaction')) return Response.json(reservations.user ?? { allowed: true, quota });
+    if (url.includes('/rest/v1/rpc/reserve_chat_provider_call')) return Response.json(reservations.provider ?? { allowed: true });
     return handler(input, init);
   });
 }
@@ -146,18 +150,85 @@ test('Edge Function sends identical system prompts and tools for both providers'
     return Response.json(completion('How can I help?'));
   });
   const body = { message: 'Hello bro', stream: false };
-  assert.equal((await handleRequest(request(body))).status, 200);
+  const jsonResponse = await handleRequest(request(body));
+  assert.equal(jsonResponse.status, 200);
+  assert.equal((await jsonResponse.json()).quota.tier, 'standard');
   env.CHAT_PROVIDER = 'openai';
   env.OPENAI_API_KEY = 'openai-key';
   delete env.OPENROUTER_API_KEY;
   const response = await handleRequest(request({ ...body, stream: true }));
   assert.equal(response.status, 200);
+  assert.match(await response.clone().text(), /event: quota/);
   assert.equal(await consumeChatStream(response, () => {}), 'How can I help?');
   assert.equal(sent[0].url, 'https://openrouter.ai/api/v1/chat/completions');
   assert.equal(sent[1].url, 'https://api.openai.com/v1/chat/completions');
   assert.deepEqual(sent[0].body.messages, sent[1].body.messages);
   assert.deepEqual(sent[0].body.tools, sent[1].body.tools);
   assert.equal(sent[1].body.model, 'gpt-6-luna');
+});
+
+test('user and provider capacity denials return structured 429 before provider access', async t => {
+  const saved = { ...env };
+  t.after(() => { for (const key of Object.keys(env)) delete env[key]; Object.assign(env, saved); });
+  let providerCalls = 0;
+  const quotaDenial = { allowed: false, code: 'CHAT_USER_DAILY_LIMIT', retry_at: '2026-10-27T16:00:00.000Z',
+    quota: { ...quota, daily_remaining: 0 } };
+  const reservations = { user: quotaDenial };
+  mockChatServices(t, async () => { providerCalls++; return Response.json(completion('should not run')); }, reservations);
+  const userResponse = await handleRequest(request({ message: 'Hello', stream: true }));
+  const userBody = await userResponse.json();
+  assert.equal(userResponse.status, 429);
+  assert.equal(userBody.code, 'CHAT_USER_DAILY_LIMIT');
+  assert.equal(userBody.quota.daily_remaining, 0);
+  assert.equal(userResponse.headers.get('Retry-After') !== null, true);
+  assert.equal(providerCalls, 0);
+
+  reservations.user = undefined;
+  reservations.provider = { allowed: false, code: 'CHAT_GLOBAL_CAPACITY',
+    retry_at: '2026-10-26T10:01:00.000Z', retry_after_seconds: 60 };
+  const globalResponse = await handleRequest(request({ message: 'Hello', stream: false }));
+  const globalBody = await globalResponse.json();
+  assert.equal(globalResponse.status, 429);
+  assert.equal(globalBody.code, 'CHAT_GLOBAL_CAPACITY');
+  assert.equal(globalBody.quota.tier, 'standard');
+  assert.equal(JSON.stringify(globalBody).includes('global_remaining'), false);
+  assert.equal(providerCalls, 0);
+});
+
+test('one buyer interaction reserves one user allowance and one global permit per provider call', async t => {
+  const counts = { user: 0, provider: 0, model: 0 };
+  t.mock.method(globalThis, 'fetch', async (input, init = {}) => {
+    const url = String(input);
+    if (url.includes('/auth/v1/user')) return Response.json({ id: '11111111-1111-4111-8111-111111111111' });
+    if (url.includes('/rest/v1/user_profiles')) return Response.json([{ is_seller: false, is_admin: false }]);
+    if (url.includes('/rpc/reserve_chat_user_interaction')) {
+      counts.user++;
+      return Response.json({ allowed: true, quota });
+    }
+    if (url.includes('/rpc/reserve_chat_provider_call')) {
+      counts.provider++;
+      return Response.json({ allowed: true });
+    }
+    if (url.includes('/rest/v1/properties')) return Response.json([], { headers: { 'Content-Range': '*/0' } });
+    assert.ok(url.includes('openrouter.ai'));
+    counts.model++;
+    const params = JSON.parse(init.body);
+    if (params.tools) {
+      const result = completion(null);
+      result.choices[0].message.tool_calls = [{ id: 'buyer-search', type: 'function', function: {
+        name: 'search_listings', arguments: JSON.stringify({ locations: ['TAMPINES'] }),
+      } }];
+      result.choices[0].finish_reason = 'tool_calls';
+      return Response.json(result);
+    }
+    return Response.json(completion('No matching listings were found in Tampines.'));
+  });
+  const response = await handleRequest(request({ message: 'Find homes in Tampines', stream: false,
+    tier: 'privileged', daily_limit: 999999, user_id: '22222222-2222-4222-8222-222222222222', cooldown: false }));
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.quota.tier, 'standard');
+  assert.deepEqual(counts, { user: 1, provider: 2, model: 2 });
 });
 
 test('Edge Function reports OpenAI-specific model configuration and safe rate-limit errors', async t => {

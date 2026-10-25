@@ -2,13 +2,13 @@ import { createClient, type SupabaseClient } from 'npm:@supabase/supabase-js@2.1
 import {
   getAssistantText,
   OpenRouterError,
-  type ChatCompletionMessageParam,
+  type ChatCompletionMessageParam, type OpenRouterClient,
 } from '../_shared/openrouter.ts';
 import { ChatProviderConfigError, createChatProvider } from '../_shared/chatProvider.ts';
 import { OpenAIError } from '../_shared/openai.ts';
 import {
   ListingQueryError, ListingServiceError, parseListingFilters, searchListings,
-  type ListingFilters,
+  type ListingFilters, type ListingSearchResult,
 } from '../_shared/listings.ts';
 import {
   BUY_SYSTEM_PROMPT, createBuyStream, generateListingReply, isBareBuyMessage,
@@ -18,6 +18,7 @@ import { parseSellerContext, parseSellerDetails, type SellerContext, type Seller
 import { sellerDetailsPrompt, useProfileContacts, collectSellerDetails, generatedSellerTitle, missingSellerFields, newSellerContext, priceDecision, suggestSellerPrice } from './sell.ts';
 import { profileListingFilters } from './buyerRequirements.ts';
 import { buyOnboarding, onboardingAction, REGISTRATION_MESSAGE, SELL_ONBOARDING } from './onboarding.ts';
+import { ChatQuotaError, ChatQuotaUnavailableError, reserveProviderCapacity, reserveUserInteraction, withProviderCapacity, type ChatQuotaSnapshot } from './quota.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -83,6 +84,7 @@ type SellFlowResult = {
   response: string;
   handled: boolean;
   event?: SellerFlowEvent;
+  quota?: ChatQuotaSnapshot;
 };
 
 type HdbAddress = {
@@ -103,10 +105,10 @@ type HdbVerificationResult = {
   unavailable?: boolean;
 };
 
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, status = 200, extraHeaders?: Record<string, string>): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: jsonHeaders,
+    headers: { ...jsonHeaders, ...extraHeaders },
   });
 }
 
@@ -469,6 +471,7 @@ async function handleSellFlow(
   context: AuthContext,
   previous?: SellerContext,
   intent?: 'buy' | 'sell',
+  reserveProvider?: (quota: ChatQuotaSnapshot) => Promise<void>,
 ): Promise<SellFlowResult> {
   const latest = userMessages(messages).at(-1) ?? '';
   if (/^\s*(?:cancel|stop|never mind|nevermind|forget it)\s*[.!]?\s*$/i.test(latest) && previous && previous.stage !== 'complete') {
@@ -535,10 +538,14 @@ async function handleSellFlow(
   }
 
   const decision = priceDecision(latest, intake.stage === 'price' ? intake.suggested_price : null);
+  let quotaSnapshot: ChatQuotaSnapshot | undefined;
   if (intake.stage === 'details') {
+    if (!context.client || !reserveProvider) throw new ChatQuotaUnavailableError();
+    quotaSnapshot = await reserveUserInteraction(context.client);
     try {
       const provider = createChatProvider(name => Deno.env.get(name), req.headers.get('origin') ?? undefined);
-      intake.details = useProfileContacts(await collectSellerDetails(provider.client, provider.model, intake.details, latest), profileContacts);
+      const client = withProviderCapacity(provider.client, () => reserveProvider(quotaSnapshot!));
+      intake.details = useProfileContacts(await collectSellerDetails(client, provider.model, intake.details, latest), profileContacts);
       intake.title = generatedSellerTitle(intake.details, postalVerification.address.town);
       if (!decision.decided) {
         const d = intake.details;
@@ -550,15 +557,16 @@ async function handleSellFlow(
             .gt('price', 0).order('created_at', { ascending: false }).limit(20);
           references = (data ?? []).filter(row => typeof row.price === 'number' && row.price > 0);
         }
-        intake.suggested_price = await suggestSellerPrice(provider.client, provider.model, intake, postalVerification.address, references);
+        intake.suggested_price = await suggestSellerPrice(client, provider.model, intake, postalVerification.address, references);
         intake.stage = 'price';
         const price = intake.suggested_price;
-        return { handled: true, event: { context: intake }, response: price
+        return { handled: true, event: { context: intake }, quota: quotaSnapshot, response: price
           ? `Based on the details provided${references.length ? ' and similar database asking prices' : ''}, my **provisional AI asking-price estimate is S$${price.toLocaleString('en-SG')}**. This is a rough suggestion, not an official valuation or an ML prediction.${references.length ? ' Database asking prices may include demonstration listings and are not completed sale prices.' : ''}\n\n**Would you like to use this price, or do you have a different amount in mind?** We can also leave the price blank for now.`
           : `I’m unable to gauge a sensible price from the available details right now. **Do you have an asking price in mind?** Send an amount, or say **“no price in mind”** and I’ll save the draft with the price blank. You can set it in the Seller Dashboard later.` };
       }
-    } catch {
-      return { handled: true, event: { context: intake }, response: 'I couldn’t read those listing details right now. Nothing has been saved yet. Please try sending the details again; unknown fields can be left as “don’t know”.' };
+    } catch (error) {
+      if (error instanceof ChatQuotaError || error instanceof ChatQuotaUnavailableError) throw error;
+      return { handled: true, event: { context: intake }, quota: quotaSnapshot, response: 'I couldn’t read those listing details right now. Nothing has been saved yet. Please try sending the details again; unknown fields can be left as “don’t know”.' };
     }
   }
   if (!decision.decided) {
@@ -573,11 +581,12 @@ async function handleSellFlow(
   return {
     handled: true,
     event: { context: intake, draft },
+    quota: quotaSnapshot,
     response: `Your draft listing is **saved**. I generated the title and filled in the details you provided; unknown values are left for you to complete. Unit numbers are kept private.\n\n**Before submitting**, add: ${draft.missing_fields.join(', ')}. Review the generated title, price and other details too.\n\n**Click the draft card below to continue the listing**, or open the [Seller Dashboard](/seller).`,
   };
 }
 
-function streamText(text: string, event?: SellerFlowEvent): ReadableStream<Uint8Array> {
+function streamText(text: string, event?: SellerFlowEvent, quota?: ChatQuotaSnapshot): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const chunk = {
     id: `chatcmpl-${crypto.randomUUID()}`,
@@ -589,6 +598,7 @@ function streamText(text: string, event?: SellerFlowEvent): ReadableStream<Uint8
 
   return new ReadableStream({
     start(controller) {
+      if (quota) controller.enqueue(encoder.encode(`event: quota\ndata: ${JSON.stringify(quota)}\n\n`));
       controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
       if (event) controller.enqueue(encoder.encode(`event: seller_flow\ndata: ${JSON.stringify(event)}\n\n`));
       controller.enqueue(encoder.encode('data: [DONE]\n\n'));
@@ -597,15 +607,39 @@ function streamText(text: string, event?: SellerFlowEvent): ReadableStream<Uint8
   });
 }
 
-function textResponse(text: string, stream: boolean, event?: SellerFlowEvent): Response {
+function textResponse(text: string, stream: boolean, event?: SellerFlowEvent, quota?: ChatQuotaSnapshot): Response {
   if (stream) {
-    return new Response(streamText(text, event), { headers: streamHeaders });
+    return new Response(streamText(text, event, quota), { headers: streamHeaders });
   }
 
   return jsonResponse({
     response: text,
     choices: [{ message: { role: 'assistant', content: text } }],
     ...(event ? { seller_flow: event } : {}),
+    ...(quota ? { quota } : {}),
+  });
+}
+
+function withQuotaEvent(stream: ReadableStream<Uint8Array>, quota: ChatQuotaSnapshot): ReadableStream<Uint8Array> {
+  const reader = stream.getReader();
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    async start(controller) {
+      controller.enqueue(encoder.encode(`event: quota\ndata: ${JSON.stringify(quota)}\n\n`));
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          controller.enqueue(value);
+        }
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      } finally {
+        reader.releaseLock();
+      }
+    },
+    cancel(reason) { return reader.cancel(reason); },
   });
 }
 
@@ -709,7 +743,24 @@ function parseRequest(body: unknown): {
   };
 }
 
-function publicError(error: unknown): { body: Record<string, string>; status: number } {
+function publicError(error: unknown): { body: Record<string, unknown>; status: number; headers?: Record<string, string> } {
+  if (error instanceof ChatQuotaError) {
+    const retryAfterSeconds = error.retryAfterSeconds
+      ?? (error.retryAt ? Math.max(1, Math.ceil((Date.parse(error.retryAt) - Date.now()) / 1000)) : undefined);
+    return {
+      body: {
+        error: 'Chat usage limit reached', code: error.code,
+        ...(retryAfterSeconds !== undefined ? { retry_after_seconds: retryAfterSeconds } : {}),
+        ...(error.retryAt ? { retry_at: error.retryAt } : {}),
+        ...(error.quota ? { quota: error.quota } : {}),
+      },
+      status: 429,
+      ...(retryAfterSeconds !== undefined ? { headers: { 'Retry-After': String(retryAfterSeconds) } } : {}),
+    };
+  }
+  if (error instanceof ChatQuotaUnavailableError) {
+    return { body: { error: 'SG Homie AI chat is temporarily unavailable. Please try again later.', code: 'CHAT_QUOTA_UNAVAILABLE' }, status: 503 };
+  }
   if (error instanceof RequestError || error instanceof ChatProviderConfigError) {
     return { body: { error: error.message }, status: error instanceof RequestError ? error.status : 500 };
   }
@@ -766,14 +817,24 @@ export async function handleRequest(req: Request): Promise<Response> {
     const startingBuy = request.intent === 'buy'
       || (request.intent !== 'sell' && isBuyIntent(latestUserMessage) && !SELL_INTENT_PATTERN.test(latestUserMessage))
       || (request.intent !== 'sell' && !!latestJourney && isBuyIntent(latestJourney.content) && !SELL_INTENT_PATTERN.test(latestJourney.content));
+    let capacityClient: SupabaseClient | undefined;
+    const reserveProvider = async (quota: ChatQuotaSnapshot) => {
+      if (!capacityClient) {
+        const supabaseUrl = Deno.env.get('SUPABASE_URL');
+        const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+        if (!supabaseUrl || !serviceRoleKey) throw new ChatQuotaUnavailableError();
+        capacityClient = createClient(supabaseUrl, serviceRoleKey, {
+          auth: { persistSession: false, autoRefreshToken: false },
+        });
+      }
+      await reserveProviderCapacity(capacityClient, quota);
+    };
     if (!startingBuy) {
-      const sellFlow = await handleSellFlow(req, request.messages, authContext, request.sellerContext, request.intent);
-      if (sellFlow.handled) return textResponse(sellFlow.response, request.stream, sellFlow.event);
+      const sellFlow = await handleSellFlow(req, request.messages, authContext, request.sellerContext, request.intent, reserveProvider);
+      if (sellFlow.handled) return textResponse(sellFlow.response, request.stream, sellFlow.event, sellFlow.quota);
     }
     const resetBuy = request.intent === 'buy' || isBareBuyMessage(latestUserMessage);
     const clearedSellerFlow: SellerFlowEvent | undefined = startingBuy && (request.sellerContext || resetBuy) ? { context: null } : undefined;
-
-    const { client: openrouter, model } = createChatProvider(name => Deno.env.get(name), req.headers.get('origin') ?? undefined);
 
     const sessionContext = authContext.userId
       ? `Authenticated user: yes. Seller account: ${authContext.isSeller ? 'yes' : 'no'}.`
@@ -792,9 +853,24 @@ export async function handleRequest(req: Request): Promise<Response> {
     // Selecting Buy can immediately use saved preferences. Advice and later turns
     // still go through the conversational model's optional search tool.
     const initialPreferences = resetBuy && isBareBuyMessage(latestUserMessage) ? authContext.buyerPreferences : undefined;
-    const conversation = initialPreferences
-      ? { messages: request.messages, search: await search(initialPreferences), completion: undefined }
-      : await prepareBuyConversation({
+    if (!authContext.client) throw new ChatQuotaUnavailableError();
+    let quota: ChatQuotaSnapshot;
+    let openrouter: OpenRouterClient;
+    let model: string;
+    let conversation: Awaited<ReturnType<typeof prepareBuyConversation>>;
+    if (initialPreferences) {
+      const initialSearch = await search(initialPreferences);
+      quota = await reserveUserInteraction(authContext.client);
+      const provider = createChatProvider(name => Deno.env.get(name), req.headers.get('origin') ?? undefined);
+      model = provider.model;
+      openrouter = withProviderCapacity(provider.client, () => reserveProvider(quota));
+      conversation = { messages: request.messages, search: initialSearch, completion: undefined };
+    } else {
+      quota = await reserveUserInteraction(authContext.client);
+      const provider = createChatProvider(name => Deno.env.get(name), req.headers.get('origin') ?? undefined);
+      model = provider.model;
+      openrouter = withProviderCapacity(provider.client, () => reserveProvider(quota));
+      conversation = await prepareBuyConversation({
         client: openrouter, model,
         systemPrompt: `${SYSTEM_PROMPT}\n\n${BUY_SYSTEM_PROMPT}\n\nCurrent server-verified session context: ${sessionContext}`,
         history: request.messages,
@@ -802,22 +878,23 @@ export async function handleRequest(req: Request): Promise<Response> {
         previousSearchIndex: resetBuy ? undefined : request.previousSearchIndex,
         search,
       });
+    }
     // Generate prose separately from tool execution; cards retain the verified result.
     if (conversation.search) {
       const response = await generateListingReply({ client: openrouter, model, history: request.messages, search: conversation.search,
         ...(initialPreferences ? { preferenceSource: 'saved_profile' as const } : {}) });
-      if (request.stream) return new Response(createBuyStream(response, conversation.search, clearedSellerFlow), { headers: streamHeaders });
+      if (request.stream) return new Response(withQuotaEvent(createBuyStream(response, conversation.search, clearedSellerFlow), quota), { headers: streamHeaders });
       return jsonResponse({ id: crypto.randomUUID(), object: 'chat.completion', model, created: Math.floor(Date.now() / 1000),
         choices: [{ index: 0, message: { role: 'assistant', content: response }, finish_reason: 'stop' }],
-        response, recommendations: conversation.search, ...(clearedSellerFlow ? { seller_flow: clearedSellerFlow } : {}) });
+        response, recommendations: conversation.search, quota, ...(clearedSellerFlow ? { seller_flow: clearedSellerFlow } : {}) });
     }
     const completion = conversation.completion;
     if (!completion) throw new OpenRouterError('The model returned no answer', 502);
 
     if (request.stream) {
-      return new Response(createBuyStream(
+      return new Response(withQuotaEvent(createBuyStream(
         completion instanceof ReadableStream ? completion : getAssistantText(completion), conversation.search, clearedSellerFlow,
-      ), {
+      ), quota), {
         headers: streamHeaders,
       });
     }
@@ -828,12 +905,13 @@ export async function handleRequest(req: Request): Promise<Response> {
     return jsonResponse({
       ...completion,
       response: getAssistantText(completion),
+      quota,
       ...(clearedSellerFlow ? { seller_flow: clearedSellerFlow } : {}),
       ...(conversation.search ? { recommendations: conversation.search } : {}),
     });
   } catch (error) {
     const result = publicError(error);
-    return jsonResponse(result.body, result.status);
+    return jsonResponse(result.body, result.status, result.headers);
   }
 }
 

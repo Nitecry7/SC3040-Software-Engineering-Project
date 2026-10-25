@@ -5,7 +5,7 @@ import { collectSellerDetails, priceDecision, suggestSellerPrice, newSellerConte
 import { consumeChatStream } from '../FrontEnd/src/lib/chat.ts';
 
 globalThis.Deno = { env: { get: name => ({ OPENROUTER_API_KEY: 'fixture-key', OPENROUTER_MODEL: 'fixture-model',
-  SUPABASE_URL: 'https://database.example', SUPABASE_ANON_KEY: 'fixture-anon' })[name] }, serve() {} };
+  SUPABASE_URL: 'https://database.example', SUPABASE_ANON_KEY: 'fixture-anon', SUPABASE_SERVICE_ROLE_KEY: 'fixture-service' })[name] }, serve() {} };
 const { handleRequest } = await import('../BackEnd/supabase/functions/chatbot/index.ts');
 const userId = '11111111-1111-4111-8111-111111111111';
 const address = { postalCode: '560123', blockNumber: '123', streetName: 'TEST AVENUE', displayAddress: '123 TEST AVENUE',
@@ -24,6 +24,10 @@ function service(t, { extracted = details, estimate = 600000, failPrivate = fals
     calls.push({ url, method, body });
     if (url.pathname.endsWith('/auth/v1/user')) return Response.json({ id: userId });
     if (url.pathname.endsWith('/user_profiles')) return Response.json([{ is_seller: true, is_admin: false, ...profile }]);
+    if (url.pathname.endsWith('/rpc/reserve_chat_user_interaction')) return Response.json({ allowed: true,
+      quota: { tier: 'standard', minute_limit: 2, minute_remaining: 1, daily_limit: 5, daily_remaining: 4,
+        daily_reset_at: '2026-10-27T16:00:00.000Z', cooldown_until: null } });
+    if (url.pathname.endsWith('/rpc/reserve_chat_provider_call')) return Response.json({ allowed: true });
     if (url.pathname.endsWith('/lookup-hdb-location')) return Response.json({ valid: true, address });
     if (url.hostname === 'openrouter.ai') {
       if (body.tools?.some(tool => tool.function.name === 'search_listings')) return Response.json(completion('Happy to help with buying. Are you planning to move soon?'));
@@ -75,6 +79,15 @@ async function intake() {
   const priced = await turn('#08-123, 3 bedrooms, 2 toilets, 100 sqm, renovated 4-room. Fixture Seller, 91234567.', verified.event.context);
   return priced;
 }
+
+test('seller address verification and deterministic intake prompts reserve no AI quota', async t => {
+  const db = service(t);
+  const start = await turn('I want to sell', undefined, { intent: 'sell' });
+  const verified = await turn('560123', start.event.context);
+  assert.equal(verified.event.context.stage, 'details');
+  assert.equal(db.calls.some(call => call.url.pathname.includes('/rpc/reserve_chat_')), false);
+  assert.equal(db.calls.some(call => call.url.hostname === 'openrouter.ai'), false);
+});
 
 test('complete sell flow persists confirmed details and private unit before emitting a draft card', async t => {
   const db = service(t);

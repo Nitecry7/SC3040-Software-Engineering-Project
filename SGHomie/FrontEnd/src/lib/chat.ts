@@ -6,7 +6,37 @@ export type { ListingSearchResult } from '../../../BackEnd/supabase/functions/_s
 
 export const BUY_MESSAGE = 'I want to buy a house';
 
-export function chatFailureText(status?: number, code?: string): string {
+type ChatFailurePayload = {
+  retry_after_seconds?: unknown;
+  retry_at?: unknown;
+  quota?: { daily_reset_at?: unknown };
+};
+
+function singaporeTime(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date.toLocaleTimeString('en-SG', { timeZone: 'Asia/Singapore', hour: 'numeric', minute: '2-digit' });
+}
+
+export function chatFailureText(status?: number, code?: string, payload?: ChatFailurePayload): string {
+  if (code === 'CHAT_USER_BURST_LIMIT') {
+    const seconds = typeof payload?.retry_after_seconds === 'number' && Number.isFinite(payload.retry_after_seconds)
+      ? Math.max(1, Math.ceil(payload.retry_after_seconds)) : undefined;
+    return `You're sending messages a little too quickly. Please wait${seconds ? ` ${seconds} seconds` : ''} and try again.`;
+  }
+  if (code === 'CHAT_USER_DAILY_LIMIT') {
+    const reset = singaporeTime(payload?.quota?.daily_reset_at) ?? singaporeTime(payload?.retry_at);
+    return `You've reached today's SG Homie AI allowance.${reset ? ` Your AI chat access resets at ${reset} Singapore time.` : ' Your AI chat access resets at the next Singapore day.'}`;
+  }
+  if (code === 'CHAT_COOLDOWN_ACTIVE') {
+    const retry = singaporeTime(payload?.retry_at);
+    return `AI chat has been temporarily paused for this account because of repeated rapid requests.${retry ? ` You can try again at ${retry}.` : ' Please try again later.'}`;
+  }
+  if (code === 'CHAT_GLOBAL_CAPACITY') {
+    const retry = singaporeTime(payload?.retry_at);
+    return `SG Homie's AI service has reached its current capacity.${retry ? ` Please try again at ${retry}.` : ' Please try again later.'} The rest of SG Homie remains available.`;
+  }
   if (code === 'provider_rate_limited') return 'The AI service has reached its request limit. You can use the [listing search](/search) to browse homes while the chat service recovers.';
   if (status === 503) return 'The chat service is temporarily unavailable. You can still browse the [listing search](/search), or try again later.';
   return "I'm sorry, I'm having trouble responding right now. Please try again later.";
