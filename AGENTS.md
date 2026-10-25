@@ -34,6 +34,12 @@ Keep implementation, demo, research, and planned capabilities distinct. Reposito
 8. Clearly label synthetic or placeholder content. Production UI must not present generated market data as verified evidence.
 9. Verify live services and deployments separately from repository code. Describe what was checked and in which environment.
 
+## Installing Agent Skills and Tools
+
+- Before installing or enabling an agent skill, MCP server, plugin, or other developer tool, use NVIDIA SkillSpector to scan its source, package, or repository when a scannable artifact is available. Review the findings and follow its recommendation; do not install a result marked `DO_NOT_INSTALL`.
+- If SkillSpector is unavailable or cannot scan the artifact, inspect the source and install scripts manually and state that the automated scan was unavailable. A clean scan is a risk signal, not proof that a tool is safe.
+- For skills, scan the exact source before installing. For MCP servers and tools, scan the repository or package source before adding or running it.
+
 ## Machine Learning
 
 1. New HDB price work belongs in `MLPricePredictorV2/`; do not build on the leaky legacy directory.
