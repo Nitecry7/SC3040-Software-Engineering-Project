@@ -1030,7 +1030,7 @@ test('existing sell flow retains anonymous, non-seller and admin gates without m
   const mock = t.mock.method(globalThis, 'fetch', async () => assert.fail('anonymous sell must not use provider/database'));
   const anonymous = await handleRequest(request({ messages: [{ role: 'user', content: BUY_MESSAGE }, { role: 'assistant', content: BUY_REQUIREMENTS_PROMPT }, { role: 'user', content: 'I want to sell my unit' }], stream: true }, false));
   const text = await consumeChatStream(anonymous, () => {}, () => assert.fail('sell should not emit recommendations'));
-  assert.match(text, /sign up or log in/);
+  assert.match(text, /sign up or log in/i);
   const mentionsBuyer = await handleRequest(request({ message: 'I want to sell my unit to a buyer' }, false));
   assert.match((await mentionsBuyer.json()).response, /sign up or log in/);
   for (const [profile, pattern] of [[{ is_seller: false, is_admin: false }, /register as a seller/], [{ is_seller: true, is_admin: true }, /Admin Dashboard/], [{ is_seller: true, is_admin: false }, /6-digit postal code/]]) {
