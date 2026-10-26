@@ -3,6 +3,7 @@ import type { ChatQuotaSnapshot } from './quota.ts';
 
 export const CHAT_PROMPT_VERSION = 'chatbot-v1';
 export const SENSITIVE_INPUT_WARNING = 'This message may contain sensitive information. Please remove passwords, API keys, NRIC/FIN, payment-card details, authentication tokens, or other sensitive information before sending it.';
+const SINGAPORE_PHONE = /(?<![\dA-Za-z$])(?:\+?65[ -]?)?[689]\d{3}[ -]?\d{4}(?![\dA-Za-z])/g;
 
 export type SensitiveCategory = 'credential' | 'nric_fin' | 'payment_card';
 export type InteractionStatus = 'success' | 'quota_denied' | 'provider_error' | 'tool_error' | 'internal_error' | 'aborted';
@@ -72,7 +73,7 @@ export function redactTelemetryText(text: string): string {
     .replace(/\b[STFG]\d{7}[A-Z]\b/gi, '[NRIC_REDACTED]')
     .replace(CARD_CANDIDATE, candidate => luhnValid(candidate) ? '[CARD_REDACTED]' : candidate)
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, '[EMAIL_REDACTED]')
-    .replace(/(?<!\d)(?:\+65[ -]?)?[89]\d{3}[ -]?\d{4}(?!\d)/g, '[PHONE_REDACTED]')
+    .replace(SINGAPORE_PHONE, '[PHONE_REDACTED]')
     .replace(/\b(?:api[_ -]?key|access[_ -]?token|auth[_ -]?token|password|passcode|secret)\s*(?::|=|\bis\b)\s*\S+/gi, '[CREDENTIAL_REDACTED]');
 }
 
@@ -124,8 +125,29 @@ export function createChatTelemetry(options: {
   let assistantText: string | null = null;
   const providerRows: ProviderCallRecord[] = [];
 
-  const bestEffort = async (operation: () => Promise<unknown>) => {
-    try { await operation(); } catch { /* telemetry must never affect application behavior */ }
+  const logWrite = (operation: 'start' | 'provider_calls' | 'finalize', outcome: 'retrying' | 'retry_succeeded' | 'failed', attempt: number) => {
+    try {
+      console.warn('Chat telemetry write', {
+        event: 'chat_telemetry_write',
+        interaction_id: options.interactionId,
+        operation,
+        outcome,
+        attempt,
+      });
+    } catch { /* logging must not affect the chatbot */ }
+  };
+
+  const bestEffort = async (operation: 'start' | 'provider_calls' | 'finalize', write: () => Promise<unknown>): Promise<boolean> => {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        await write();
+        if (attempt > 1) logWrite(operation, 'retry_succeeded', attempt);
+        return true;
+      } catch {
+        logWrite(operation, attempt === 1 ? 'retrying' : 'failed', attempt);
+      }
+    }
+    return false;
   };
 
   const start = async () => {
@@ -134,8 +156,7 @@ export function createChatTelemetry(options: {
     started = now();
     startedAt = isoNow();
     if (!options.store) return;
-    await bestEffort(async () => {
-      await options.store!.start({
+    databaseStarted = await bestEffort('start', () => options.store!.start({
       interaction_id: options.interactionId,
       request_id: options.interactionId,
       conversation_id: options.conversationId,
@@ -151,9 +172,7 @@ export function createChatTelemetry(options: {
       user_message_redacted: options.includeUserContent === false
         ? null : redactTelemetryText(options.messages.filter(message => message.role === 'user').at(-1)?.content ?? ''),
       content_expires_at: new Date(Date.parse(startedAt) + 30 * 24 * 60 * 60 * 1000).toISOString(),
-      });
-      databaseStarted = true;
-    });
+    }));
   };
 
   const setQuota = (snapshot: ChatQuotaSnapshot | undefined, result = 'allowed') => {
@@ -253,8 +272,8 @@ export function createChatTelemetry(options: {
     const lastResolved = [...providerRows].reverse().find(row => row.resolved_model)?.resolved_model ?? null;
     const completedAt = isoNow();
     const finalStatus = final.status === 'success' && failure && !fallbackUsed ? failure.status : final.status;
-    if (providerRows.length) await bestEffort(() => options.store!.providerCalls(providerRows));
-    await bestEffort(() => options.store!.finish(options.interactionId, {
+    if (providerRows.length) await bestEffort('provider_calls', () => options.store!.providerCalls(providerRows));
+    await bestEffort('finalize', () => options.store!.finish(options.interactionId, {
         completed_at: completedAt,
         status: finalStatus,
         error_code: final.error_code ?? (finalStatus !== 'success' ? failure?.code ?? null : null),
@@ -288,7 +307,7 @@ export function createChatTelemetry(options: {
 export function createTelemetryStore(client: { from: (table: string) => any }): TelemetryStore {
   return {
     async start(record) {
-      const { error } = await client.from('chat_interactions').insert(record);
+      const { error } = await client.from('chat_interactions').upsert(record, { onConflict: 'interaction_id' });
       if (error) throw error;
     },
     async finish(interactionId, record) {
@@ -296,7 +315,7 @@ export function createTelemetryStore(client: { from: (table: string) => any }): 
       if (error) throw error;
     },
     async providerCalls(records) {
-      const { error } = await client.from('chat_provider_calls').insert(records);
+      const { error } = await client.from('chat_provider_calls').upsert(records, { onConflict: 'interaction_id,sequence' });
       if (error) throw error;
     },
   };

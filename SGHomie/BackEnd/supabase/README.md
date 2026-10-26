@@ -52,6 +52,7 @@ applies incremental migrations for the current application features:
 - `20261026120000_authenticated_enquiry_insert.sql` restricts enquiry creation to authenticated users and binds new enquiry email/status fields to the caller
 - `20261026130000_chatbot_quotas_and_capacity.sql` adds server-authoritative chatbot tiers, user interaction reservations, provider-call capacity reservations and bounded cooldown state
 - `20261026140000_chat_telemetry_privacy_feedback.sql` adds private interaction/provider-call metadata, caller-owned feedback and a service-only 30-day content cleanup function
+- `20261026150000_redact_singapore_phone_feedback.sql` extends best-effort Singapore phone redaction in stored feedback comments; deploy the matching chatbot function code for interaction text redaction
 
 The initial migration creates the full application schema, policies, views, and
 triggers for a fresh Supabase project. Later migrations must be applied in
@@ -131,8 +132,17 @@ cleanup, configure a daily Supabase Dashboard Cron job to run:
 SELECT public.cleanup_chat_content();
 ```
 
-Dashboard scheduling and migration application are deployment-dependent. After
-applying the migration, deploy the `chatbot` Edge Function and verify RPC/table
+Dashboard scheduling and migration application are deployment-dependent.
+Interaction creation is attempted before quota/provider processing. JSON
+responses wait for finalization; SSE finalization runs at stream EOF or
+cancellation and may complete just after the `[DONE]` event. Start, provider-call
+and finalization writes retry once with idempotent keys/updates. Failures emit
+structured logs containing only operation, outcome, attempt and interaction ID;
+they do not block chat or affect quota/security. Persistent start failure can
+leave an interaction unrecorded; persistent finalization failure leaves a
+`started` row for the cleanup function to close after one hour when scheduled.
+After applying both telemetry migrations, deploy the `chatbot` Edge Function
+and verify phone redaction, final status after streamed EOF, RPC/table
 permissions, feedback ownership, denial of direct telemetry reads, and cleanup
 against a synthetic expired fixture in the target project. Do not wait 30 days
 or alter real users' records for this check. No migration, schedule, or function

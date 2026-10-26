@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import {
-  CHAT_PROMPT_VERSION, createChatTelemetry, detectSensitiveInput, observeChatStream, redactTelemetryText,
+  CHAT_PROMPT_VERSION, createChatTelemetry, createTelemetryStore, detectSensitiveInput, observeChatStream, redactTelemetryText,
 } from '../BackEnd/supabase/functions/chatbot/telemetry.ts';
 
 const userMessage = 'I want homes under $500000 near postal code 560123 and block 123';
@@ -36,6 +36,123 @@ test('best-effort redaction masks personal and credential values without changin
   assert.match(result, /\[NRIC_REDACTED\]/);
   assert.match(result, /\[CREDENTIAL_REDACTED\]/);
   assert.match(result, /\$500000 at 560123/);
+});
+
+test('Singapore phone redaction covers fixed-line, mobile and country-code forms without masking housing numbers', () => {
+  for (const phone of ['69304030', '91234567', '81234567', '6930 4030', '9123 4567', '8123 4567', '6930-4030',
+    '+65 6930 4030', '+65 9123 4567', '65 8123 4567', '+65-6930-4030', '65-9123-4567']) {
+    assert.equal(redactTelemetryText(phone), '[PHONE_REDACTED]', `expected synthetic fixture ${phone} to be redacted`);
+  }
+  const housing = 'budget $500000, postal code 560123, Block 123, 4-room, price 600000, year 2026, renovation $69304030';
+  assert.equal(redactTelemetryText(housing), housing);
+});
+
+test('telemetry persistence retries once idempotently and logs only safe operation metadata', async t => {
+  const persisted = { interactions: new Map(), calls: new Map(), finishes: new Map() };
+  const counts = { start: 0, providerCalls: 0, finish: 0 };
+  const store = {
+    async start(row) {
+      counts.start++;
+      if (counts.start === 1) throw new Error('synthetic phone 69304030 must not be logged');
+      persisted.interactions.set(row.interaction_id, row);
+    },
+    async providerCalls(rows) {
+      counts.providerCalls++;
+      if (counts.providerCalls === 1) throw new Error('synthetic phone 69304030 must not be logged');
+      for (const row of rows) persisted.calls.set(`${row.interaction_id}:${row.sequence}`, row);
+    },
+    async finish(id, row) {
+      counts.finish++;
+      if (counts.finish === 1) throw new Error('synthetic phone 69304030 must not be logged');
+      persisted.finishes.set(id, row);
+    },
+  };
+  const logs = [];
+  t.mock.method(console, 'warn', (...args) => logs.push(args));
+  const h = harness({ store });
+  await h.telemetry.start();
+  const provider = { chat: { completions: { async create() {
+    return { model: 'served/model', choices: [{ message: { content: 'Safe answer' } }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } };
+  } } } };
+  await h.telemetry.providerClient(provider, async () => {}).chat.completions.create({ model: 'requested/model', messages: [] });
+  await h.telemetry.finish({ status: 'success' });
+  await h.telemetry.finish({ status: 'success' });
+
+  assert.deepEqual(counts, { start: 2, providerCalls: 2, finish: 2 });
+  assert.equal(persisted.interactions.size, 1);
+  assert.equal(persisted.calls.size, 1);
+  assert.equal(persisted.finishes.size, 1);
+  assert.ok(logs.length >= 3);
+  assert.ok(logs.every(([, metadata]) => metadata.event === 'chat_telemetry_write'
+    && ['start', 'provider_calls', 'finalize'].includes(metadata.operation)));
+  assert.doesNotMatch(JSON.stringify(logs), /69304030|synthetic phone/);
+  assert.equal(h.telemetry.feedbackEligible(), true);
+});
+
+test('persistent interaction-start failure is logged safely and does not block quota or provider use', async t => {
+  let attempts = 0;
+  const logs = [];
+  t.mock.method(console, 'warn', (...args) => logs.push(args));
+  const h = harness({ store: {
+    async start() { attempts++; throw new Error('synthetic phone 69304030 must not be logged'); },
+    async finish() {}, async providerCalls() {},
+  } });
+  await h.telemetry.start();
+  let permits = 0;
+  let providerCalls = 0;
+  const provider = { chat: { completions: { async create() { providerCalls++; return { choices: [{ message: { content: 'answer' } }] }; } } } };
+  await h.telemetry.providerClient(provider, async () => { permits++; }).chat.completions.create({ model: 'fixture', messages: [] });
+  await h.telemetry.finish({ status: 'success' });
+  assert.equal(attempts, 2);
+  assert.equal(permits, 1);
+  assert.equal(providerCalls, 1);
+  assert.equal(h.telemetry.feedbackEligible(), false);
+  assert.equal(logs.at(-1)[1].outcome, 'failed');
+  assert.doesNotMatch(JSON.stringify(logs), /69304030|synthetic phone/);
+});
+
+test('persistent provider-call and finalization write failures are bounded and remain non-authoritative', async t => {
+  let providerWriteAttempts = 0;
+  let finalizeAttempts = 0;
+  const logs = [];
+  t.mock.method(console, 'warn', (...args) => logs.push(args));
+  const h = harness({ store: {
+    async start() {},
+    async providerCalls() { providerWriteAttempts++; throw new Error('private provider write detail'); },
+    async finish() { finalizeAttempts++; throw new Error('private finalization detail'); },
+  } });
+  await h.telemetry.start();
+  const provider = { chat: { completions: { async create() {
+    return { model: 'served/model', choices: [{ message: { content: 'answer' } }] };
+  } } } };
+  await h.telemetry.providerClient(provider, async () => {}).chat.completions.create({ model: 'fixture', messages: [] });
+  await assert.doesNotReject(h.telemetry.finish({ status: 'success' }));
+  assert.equal(providerWriteAttempts, 2);
+  assert.equal(finalizeAttempts, 2);
+  assert.equal(logs.filter(([, meta]) => meta.operation === 'provider_calls' && meta.outcome === 'failed').length, 1);
+  assert.equal(logs.filter(([, meta]) => meta.operation === 'finalize' && meta.outcome === 'failed').length, 1);
+  assert.doesNotMatch(JSON.stringify(logs), /private provider|private finalization/);
+});
+
+test('PostgREST telemetry writes use idempotent interaction and provider-call keys', async () => {
+  const calls = [];
+  const store = createTelemetryStore({ from(table) {
+    return {
+      upsert(value, options) { calls.push({ table, method: 'upsert', value, options }); return Promise.resolve({ error: null }); },
+      update(value) { return { eq(column, id) { calls.push({ table, method: 'update', value, column, id }); return Promise.resolve({ error: null }); } }; },
+    };
+  } });
+  const interaction = { interaction_id: identity.interactionId };
+  const call = { interaction_id: identity.interactionId, sequence: 1 };
+  await store.start(interaction);
+  await store.providerCalls([call]);
+  await store.finish(identity.interactionId, { status: 'success' });
+  assert.deepEqual(calls.map(({ table, method }) => [table, method]), [
+    ['chat_interactions', 'upsert'], ['chat_provider_calls', 'upsert'], ['chat_interactions', 'update'],
+  ]);
+  assert.equal(calls[0].options.onConflict, 'interaction_id');
+  assert.equal(calls[1].options.onConflict, 'interaction_id,sequence');
+  assert.equal(calls[2].column, 'interaction_id');
 });
 
 test('provider calls retain per-call model, usage, status and monotonic latency', async () => {
@@ -174,4 +291,15 @@ test('migration denies direct telemetry access and scopes feedback and cleanup',
   assert.match(component, /Unhelpful response/);
   assert.match(component, /FEEDBACK_REASONS/);
   assert.match(component, /maxLength=\{1000\}/);
+});
+
+test('follow-up migration extends SQL feedback redaction without weakening the original RPC boundary', async () => {
+  const sql = await readFile(new URL('../BackEnd/supabase/migrations/20261026150000_redact_singapore_phone_feedback.sql', import.meta.url), 'utf8');
+  assert.ok(sql.includes('(^|[^[:alnum:]$])((?:\\+?65[ -]?)?[689][0-9]{3}[ -]?[0-9]{4})(?=$|[^[:alnum:]])'));
+  assert.ok(sql.includes("'\\1[PHONE_REDACTED]'"));
+  assert.match(sql, /SECURITY DEFINER/);
+  assert.match(sql, /SET search_path = pg_catalog, pg_temp/);
+  assert.match(sql, /auth\.uid\(\)/);
+  assert.match(sql, /REVOKE ALL ON FUNCTION public\.submit_chat_feedback/);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION public\.submit_chat_feedback\(uuid, text, text\[\], text\) TO authenticated/);
 });

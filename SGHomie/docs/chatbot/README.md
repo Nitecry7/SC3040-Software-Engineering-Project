@@ -60,8 +60,16 @@ provider calls, recorded as child rows. `first_output_event_ms` measures the
 first non-empty application SSE event, not provider TTFT: current provider
 responses are buffered before application streaming. Seller workflow text is
 excluded from telemetry. Other stored user/assistant text and feedback comments
-receive best-effort redaction and expire after 30 days; detection/redaction is
-not guaranteed to find every sensitive fact. Metadata, structured feedback
+receive best-effort redaction and expire after 30 days. The Singapore-focused
+phone matcher masks 8-digit numbers beginning with 6, 8 or 9, with optional
+space/hyphen grouping and optional `65`/`+65` prefix. It is not global phone
+detection and ambiguous 8-digit values may also be masked. Prices, six-digit
+postal codes, block numbers, room counts and years are not matched solely for
+being numeric. Synthetic smoke-test examples include `69304030`, `91234567`,
+`81234567`, `+65 6930 4030`, `+65 9123 4567` and `65 8123 4567`; housing
+examples to preserve include `$500000`, `560123`, `Block 123`, `4-room`,
+`600000` and `2026`. Detection/redaction is not guaranteed to find every
+sensitive fact. Metadata, structured feedback
 reasons and opaque IDs can remain longer without user/conversation linkage after
 content expires. Deleting an account cascades while its telemetry still carries
 the user link.
@@ -83,6 +91,20 @@ automatically RLHF or model training. Failed telemetry writes do not break chat;
 feedback save failures are reported inline. The cleanup function is implemented
 in the repository, while its Supabase Dashboard schedule and hosted behavior
 remain deployment-dependent; see the [deployment runbook](../operations/deployment-runbook.md#phase-4-chatbot-telemetry-and-feedback).
+
+For authenticated AI requests, the server attempts an idempotent interaction
+upsert before quota reservation and provider processing. JSON finalization is
+awaited before the JSON response is sent. SSE finalization runs when the
+application stream reaches EOF or is cancelled; the `[DONE]` event can arrive
+before that final database update finishes, and the frontend drains the stream
+through EOF. Start, provider-call and finalization writes each retry once.
+Structured `chat_telemetry_write` logs include the interaction ID, operation,
+outcome and attempt only; raw messages and database error text are not logged.
+If retries fail, chat and quota enforcement continue. A persistent start failure
+means the interaction may have no row; a persisted `started` row whose final
+update fails is closed as an internal error by the one-hour cleanup when that
+cleanup is scheduled. This is best-effort persistence, not a guarantee during a
+database outage.
 
 ### Property access
 

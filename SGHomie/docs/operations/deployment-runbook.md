@@ -82,9 +82,12 @@ already been verified.
 **Implemented in repository; deployment verification pending.** Migration
 `20261026140000_chat_telemetry_privacy_feedback.sql` adds protected interaction,
 provider-call and feedback tables plus caller-owned feedback and service-only
-content-cleanup RPCs. Apply the migration through the reviewed Supabase process,
-then deploy the `chatbot` Edge Function. Keep the service-role key server-side;
-feedback uses the authenticated caller session.
+content-cleanup RPCs. Follow-up migration
+`20261026150000_redact_singapore_phone_feedback.sql` extends feedback-comment
+phone redaction without editing the earlier migration. Apply both migrations in
+timestamp order through the reviewed Supabase process, then deploy the `chatbot`
+Edge Function for matching interaction-text redaction. Keep the service-role
+key server-side; feedback uses the authenticated caller session.
 
 The cleanup function clears redacted user/assistant text and written feedback
 after 30 days, closes stale `started` interactions after one hour, and removes
@@ -107,6 +110,18 @@ account's interaction; direct Data API access is denied; and an old synthetic
 fixture is cleaned while metadata remains. Check function logs contain no raw
 messages, credentials, authorization headers, or seller/unit details. These are
 post-deployment procedures, not proof of current hosted state.
+
+For phone-redaction smoke checks, submit only the synthetic Singapore test
+fixtures documented in the [chatbot guide](../chatbot/README.md). Wait for the streamed response
+to reach EOF, refresh the table view and sort by `created_at` before deciding an
+interaction is missing. Confirm the single interaction row has redacted phone
+text and a terminal status. Repeat in the same conversation, after Buy, and
+after New Chat; each request ID should have one row regardless of conversation
+ID changes. Structured `chat_telemetry_write` logs distinguish transient retry
+success from persistent start/provider/finalization failures without including
+raw messages or database error text. If start storage remains unavailable after
+retry, chat continues and no row can be guaranteed; a persisted `started` row
+whose final update fails is closed by scheduled cleanup after one hour.
 
 ## Safety and rollback
 
