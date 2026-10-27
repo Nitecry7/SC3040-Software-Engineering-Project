@@ -1,4 +1,4 @@
-# SG Homie chatbot
+# SG Homie Chatbot
 
 The chatbot UI calls the Supabase `chatbot` Edge Function. OpenAI or OpenRouter can provide language responses through server-side configuration; bounded application tools handle listing search and seller draft intake. The model does not have arbitrary SQL access, and trusted application results take precedence over model memory.
 
@@ -17,7 +17,8 @@ The header's **New chat** action clears temporary conversation history, input,
 buyer filters and seller intake. It aborts/invalidates the old request and ignores
 late responses while retaining login, profile preferences and saved application
 data. Requests remain bounded to 20 messages of at most 4,000 characters each;
-no long-term conversation memory is introduced. Authenticated buyer/seller/admin
+chat history is temporary context and no long-term conversation memory is
+introduced. Authenticated buyer/seller/admin
 permissions and database policies are unchanged.
 
 ## AI fair use and provider capacity
@@ -50,7 +51,7 @@ Authenticated AI requests receive a server-generated UUID used as the request
 and interaction identifier. The temporary conversation UUID is created in the
 browser, reused for turns in that chat, and replaced on New Chat or account
 change. It is correlation metadata only. A deliberately maintained prompt
-version (`chatbot-v1`) changes when material system, buyer/seller policy, or
+version (`chatbot-v2`) changes when material system, buyer/seller policy, or
 tool behavior changes; do not substitute a commit hash for the prompt version.
 
 The repository records status/error category, quota outcome, requested provider
@@ -81,6 +82,16 @@ blocked solely because they contain digits. A concise notice in the registered
 chat explains temporary review/storage and third-party provider processing;
 users should not submit passwords, keys, NRIC/FIN, payment details or other
 sensitive information.
+
+Buyer/general chat returns a deterministic privacy reminder for phone numbers
+or email addresses in the latest user message before quota reservation, telemetry
+start, or provider processing. Buyer/general model responses also receive an
+output guard that replaces unsupported persistence or long-term memory claims
+and prevents detected identifiers from being echoed. These checks do not apply
+to the authenticated seller details-intake stage: validated seller contacts are
+handled by that structured workflow, and its saved-draft confirmation is emitted
+only after authorized database writes succeed. Both user and assistant telemetry
+continue to use the same best-effort redactor.
 
 Eligible successful AI answers show 👍 and 👎 controls. A user can change the
 rating on the same interaction. Negative feedback supports multiple structured

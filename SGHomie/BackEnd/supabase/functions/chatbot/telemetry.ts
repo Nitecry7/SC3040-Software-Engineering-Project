@@ -1,9 +1,11 @@
 import type { ChatCompletionCreateParams, ChatCompletionResponse, OpenRouterClient } from '../_shared/openrouter.ts';
 import type { ChatQuotaSnapshot } from './quota.ts';
 
-export const CHAT_PROMPT_VERSION = 'chatbot-v1';
+export const CHAT_PROMPT_VERSION = 'chatbot-v2';
 export const SENSITIVE_INPUT_WARNING = 'This message may contain sensitive information. Please remove passwords, API keys, NRIC/FIN, payment-card details, authentication tokens, or other sensitive information before sending it.';
+export const CONTACT_INPUT_REPLY = "You don't need to share personal contact details with the AI assistant. How can I help with your HDB search?";
 const SINGAPORE_PHONE = /(?<![\dA-Za-z$])(?:\+?65[ -]?)?[689]\d{3}[ -]?\d{4}(?![\dA-Za-z])/g;
+const LABELED_PHONE = /\b(?:phone|mobile|telephone|tel|contact number)\b[^0-9]{0,24}\+?\d(?:[\d ().-]{5,}\d)/i;
 
 export type SensitiveCategory = 'credential' | 'nric_fin' | 'payment_card';
 export type InteractionStatus = 'success' | 'quota_denied' | 'provider_error' | 'tool_error' | 'internal_error' | 'aborted';
@@ -63,6 +65,12 @@ export function detectSensitiveInput(text: string): SensitiveCategory | null {
   for (const [category, pattern] of SENSITIVE_PATTERNS) if (pattern.test(text)) return category;
   for (const match of text.matchAll(CARD_CANDIDATE)) if (luhnValid(match[0])) return 'payment_card';
   return null;
+}
+
+export function containsContactInformation(text: string): boolean {
+  return /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i.test(text)
+    || new RegExp(SINGAPORE_PHONE.source, 'i').test(text)
+    || LABELED_PHONE.test(text);
 }
 
 export function redactTelemetryText(text: string): string {

@@ -11,7 +11,7 @@ import {
   type ListingFilters, type ListingSearchResult,
 } from '../_shared/listings.ts';
 import {
-  BUY_SYSTEM_PROMPT, createBuyStream, generateListingReply, isBareBuyMessage,
+  BUY_SYSTEM_PROMPT, createBuyStream, generateListingReply, guardBuyerAssistantText, isBareBuyMessage,
   isBuyIntent, prepareBuyConversation,
 } from './buy.ts';
 import { parseSellerContext, parseSellerDetails, type SellerContext, type SellerDraftCard, type SellerFlowEvent } from '../_shared/sellerFlow.ts';
@@ -19,7 +19,7 @@ import { sellerDetailsPrompt, useProfileContacts, collectSellerDetails, generate
 import { profileListingFilters } from './buyerRequirements.ts';
 import { buyOnboarding, onboardingAction, REGISTRATION_MESSAGE, SELL_ONBOARDING } from './onboarding.ts';
 import { ChatQuotaError, ChatQuotaUnavailableError, reserveProviderCapacity, reserveUserInteraction, type ChatQuotaSnapshot } from './quota.ts';
-import { createChatTelemetry, createTelemetryStore, detectSensitiveInput, observeChatStream, SENSITIVE_INPUT_WARNING, type InteractionStatus } from './telemetry.ts';
+import { createChatTelemetry, createTelemetryStore, containsContactInformation, CONTACT_INPUT_REPLY, detectSensitiveInput, observeChatStream, SENSITIVE_INPUT_WARNING, type InteractionStatus } from './telemetry.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -50,6 +50,7 @@ SELL FLOW RULES:
 - The server guides verified sellers through postal-code verification, collecting all remaining details together, discussing an optional provisional asking price, and saving a draft. Unknown values stay blank. The seller can accept the suggested price, provide their own, or skip pricing.
 - Only server-confirmed saved drafts have a draft card. Direct the seller to that card or the Seller Dashboard to complete missing fields and upload pictures before submitting for approval.
 - Never claim that a draft was created unless the server explicitly says that it was created or found.
+- Treat supplied chat history as temporary conversation context, not saved account memory. Never claim to save, store, record, remember, note, update, or persist user data unless the corresponding trusted application workflow confirms its database write succeeded. Do not invent side effects or repeat user contact details or other sensitive identifiers in ordinary buyer/general chat.
 
 Do not invent live listings, prices, availability, seller details, policies, or legal/financial facts. Use search_listings for current listing recommendations. For legal, loan, tax, or purchase advice, give only general information and recommend the appropriate qualified professional.
 
@@ -865,6 +866,9 @@ export async function handleRequest(req: Request): Promise<Response> {
     const shouldTrackSeller = sellerCandidate && !startingBuy && request.intent !== 'sell'
       && request.sellerContext?.stage === 'details' && authContext.isSeller && !authContext.isAdmin;
     const shouldTrackBuyer = !sellerCandidate || startingBuy;
+    if (shouldTrackBuyer && containsContactInformation(latestUserMessage)) {
+      return textResponse(CONTACT_INPUT_REPLY, request.stream) as Response;
+    }
     let capacityClient: SupabaseClient | undefined;
     if (shouldTrackBuyer || shouldTrackSeller) {
       const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -978,7 +982,7 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (!completion) throw new OpenRouterError('The model returned no answer', 502);
 
     if (request.stream) {
-      const assistantText = completion instanceof ReadableStream ? '' : getAssistantText(completion);
+      const assistantText = completion instanceof ReadableStream ? '' : guardBuyerAssistantText(getAssistantText(completion));
       telemetry?.setAssistant(assistantText);
       const metadata = telemetry ? { interaction_id: requestId, request_id: requestId, conversation_id: conversationId,
         feedback_eligible: telemetry.feedbackEligible() } : undefined;
@@ -993,10 +997,11 @@ export async function handleRequest(req: Request): Promise<Response> {
     // Keep `response` for the existing frontend, while returning the normal
     // chat-completion fields for OpenAI-style consumers.
     if (completion instanceof ReadableStream) throw new OpenRouterError('Expected a chat completion', 502);
-    if (telemetry) { telemetry.setAssistant(getAssistantText(completion)); telemetry.noteOutput(); await telemetry.finish({ status: 'success' }); }
+    const assistantText = guardBuyerAssistantText(getAssistantText(completion));
+    if (telemetry) { telemetry.setAssistant(assistantText); telemetry.noteOutput(); await telemetry.finish({ status: 'success' }); }
     return jsonResponse({
       ...completion,
-      response: getAssistantText(completion),
+      response: assistantText,
       quota,
       ...(clearedSellerFlow ? { seller_flow: clearedSellerFlow } : {}),
       ...(conversation.search ? { recommendations: conversation.search } : {}),

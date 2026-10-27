@@ -11,7 +11,7 @@ const env = { SUPABASE_URL: 'https://database.example', SUPABASE_ANON_KEY: 'publ
 globalThis.Deno = { env: { get(name) { return env[name]; } }, serve() {} };
 const { handleRequest } = await import('../BackEnd/supabase/functions/chatbot/index.ts');
 
-function buildFetch(calls) {
+function buildFetch(calls, assistantText = 'A concise housing answer.') {
   return async (input, init = {}) => {
     const url = new URL(String(input));
     calls.push({ url, init });
@@ -23,7 +23,7 @@ function buildFetch(calls) {
     if (url.pathname === '/rest/v1/chat_interactions' || url.pathname === '/rest/v1/chat_provider_calls') return new Response(null, { status: 201 });
     if (url.pathname === '/rest/v1/chat_interactions') return new Response(null, { status: 204 });
     if (url.pathname === '/v1/chat/completions') return Response.json({ id: 'provider-id', object: 'chat.completion', created: 1,
-      model: 'gpt-6-luna-served', choices: [{ index: 0, message: { role: 'assistant', content: 'A concise housing answer.' }, finish_reason: 'stop' }],
+      model: 'gpt-6-luna-served', choices: [{ index: 0, message: { role: 'assistant', content: assistantText }, finish_reason: 'stop' }],
       usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 } });
     throw new Error(`Unexpected fetch ${url.pathname}`);
   };
@@ -63,7 +63,7 @@ for (const stream of [false, true]) {
     assert.equal(interactionCalls.length, 2, 'one initial interaction and one finalization');
     const started = JSON.parse(interactionCalls[0].init.body);
     assert.equal(started.request_id, payload.interaction_id);
-    assert.equal(started.prompt_version, 'chatbot-v1');
+    assert.equal(started.prompt_version, 'chatbot-v2');
     assert.equal(started.user_message_redacted, 'Explain the buying process.');
     assert.equal(interactionCalls[0].init.method, 'POST');
     assert.equal(interactionCalls[0].url.searchParams.get('on_conflict'), 'interaction_id');
@@ -72,6 +72,38 @@ for (const stream of [false, true]) {
     assert.equal(finalized.status, 'success');
     assert.equal(calls.filter(call => call.url.pathname === '/v1/chat/completions').length, 1);
     assert.equal(calls.filter(call => call.url.pathname === '/rest/v1/rpc/reserve_chat_provider_call').length, 1);
+  });
+}
+
+for (const stream of [false, true]) {
+  test(`ordinary chat contact details receive a deterministic privacy reminder before AI ${stream ? 'stream' : 'JSON'}`, async t => {
+    const calls = [];
+    t.mock.method(globalThis, 'fetch', buildFetch(calls));
+    const response = await handleRequest(request(stream, {
+      message: 'My phone number is 64321234 and my email is telemetry-test@example.com',
+    }));
+    assert.equal(response.status, 200);
+    const body = stream ? await response.text() : (await response.json()).response;
+    assert.match(body, /don't need to share personal contact details/i);
+    assert.doesNotMatch(body, /64321234|telemetry-test@example\.com|saved|updated your profile/i);
+    assert.equal(calls.filter(call => call.url.pathname.includes('reserve_chat_')).length, 0);
+    assert.equal(calls.filter(call => call.url.pathname === '/v1/chat/completions').length, 0);
+    assert.equal(calls.filter(call => call.url.pathname === '/rest/v1/chat_interactions').length, 0);
+  });
+}
+
+for (const stream of [false, true]) {
+  test(`buyer AI output guard replaces unsupported persistence claims in ${stream ? 'SSE' : 'JSON'}`, async t => {
+    const calls = [];
+    t.mock.method(globalThis, 'fetch', buildFetch(calls, "I've saved your details and I'll remember them for next time."));
+    const response = await handleRequest(request(stream, { message: 'Can you help me plan an HDB search?' }));
+    assert.equal(response.status, 200);
+    const body = stream ? await response.text() : (await response.json()).response;
+    assert.match(body, /I can use details while they're in this conversation/i);
+    assert.doesNotMatch(body, /I've saved|remember them for next time/i);
+    const finish = calls.find(call => call.url.pathname === '/rest/v1/chat_interactions' && call.init.method === 'PATCH');
+    assert.ok(finish);
+    assert.match(JSON.parse(finish.init.body).assistant_message_redacted, /I can use details while they're in this conversation/i);
   });
 }
 
@@ -114,7 +146,7 @@ test('interaction-start storage outage retries safely and does not bypass quota 
     }
     return base(input, init);
   });
-  const response = await handleRequest(request(false, { message: 'My number is 69304030' }));
+  const response = await handleRequest(request(false, { message: 'I am comparing a few housing options.' }));
   assert.equal(response.status, 200);
   assert.equal(startAttempts, 2);
   assert.equal(calls.filter(call => call.url.pathname === '/rest/v1/rpc/reserve_chat_user_interaction').length, 1);
@@ -122,7 +154,7 @@ test('interaction-start storage outage retries safely and does not bypass quota 
   assert.equal(calls.filter(call => call.url.pathname === '/v1/chat/completions').length, 1);
   assert.equal(calls.filter(call => call.url.pathname === '/rest/v1/chat_interactions' && call.init.method === 'PATCH').length, 0);
   assert.ok(logs.some(([, metadata]) => metadata.operation === 'start' && metadata.outcome === 'failed'));
-  assert.doesNotMatch(JSON.stringify(logs), /69304030|synthetic telemetry storage failure/);
+  assert.doesNotMatch(JSON.stringify(logs), /I am comparing|synthetic telemetry storage failure/);
 });
 
 test('sensitive credential input is stopped before user quota and provider calls', async t => {

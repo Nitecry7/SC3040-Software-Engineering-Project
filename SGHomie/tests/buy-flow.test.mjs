@@ -1,12 +1,27 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { buildListingSearchUrl, ListingServiceError, parseListingFilters, SEARCH_LISTINGS_TOOL, searchListings } from '../BackEnd/supabase/functions/_shared/listings.ts';
-import { BUY_SYSTEM_PROMPT, createBuyStream, generateListingReply, listingSearchReply, isBuyIntent, prepareBuyConversation } from '../BackEnd/supabase/functions/chatbot/buy.ts';
+import { BUY_SYSTEM_PROMPT, createBuyStream, generateListingReply, guardBuyerAssistantText, listingSearchReply, isBuyIntent, prepareBuyConversation } from '../BackEnd/supabase/functions/chatbot/buy.ts';
 import { BUY_MESSAGE, chatFailureText, consumeChatStream } from '../FrontEnd/src/lib/chat.ts';
 import { applyExplicitRequirements, explicitBuyerRequirements, profileListingFilters, resolveListingToolFilters } from '../BackEnd/supabase/functions/chatbot/buyerRequirements.ts';
 import { visibleAssistantText } from '../BackEnd/supabase/functions/_shared/chatOutput.ts';
 
 const BUY_REQUIREMENTS_PROMPT = 'What would you like help with as you plan your home purchase?';
+
+test('buyer output guard replaces unsupported persistence and memory claims and avoids echoing PII', () => {
+  for (const claim of [
+    "I've saved your phone number.", "I've noted your email.", "I've stored your details.",
+    "I'll remember your preferences.", "I've updated your profile.", 'Your details have been persisted.',
+    "I've got your contact details noted.",
+  ]) {
+    assert.match(guardBuyerAssistantText(claim), /haven't saved them to your account/i, claim);
+  }
+  const guardedPii = guardBuyerAssistantText('Your number is 64321234 and email is telemetry-test@example.com.');
+  assert.match(guardedPii, /don't need to share personal contact details/i);
+  assert.doesNotMatch(guardedPii, /64321234|telemetry-test@example\.com/);
+  assert.equal(guardBuyerAssistantText('You mentioned a budget of $500000 and postal code 560123.'),
+    'You mentioned a budget of $500000 and postal code 560123.');
+});
 
 const env = { OPENROUTER_API_KEY: 'test-provider-key', SUPABASE_URL: 'https://database.example', SUPABASE_ANON_KEY: 'test-anon-key', SUPABASE_SERVICE_ROLE_KEY: 'test-service-key', OPENROUTER_MODEL: 'test-tool-model' };
 globalThis.Deno = { env: { get: name => env[name] }, serve() {} };

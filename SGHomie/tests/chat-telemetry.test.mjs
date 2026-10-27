@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import {
-  CHAT_PROMPT_VERSION, createChatTelemetry, createTelemetryStore, detectSensitiveInput, observeChatStream, redactTelemetryText,
+  CHAT_PROMPT_VERSION, containsContactInformation, createChatTelemetry, createTelemetryStore, detectSensitiveInput, observeChatStream, redactTelemetryText,
 } from '../BackEnd/supabase/functions/chatbot/telemetry.ts';
 
 const userMessage = 'I want homes under $500000 near postal code 560123 and block 123';
@@ -22,11 +22,20 @@ function harness(options = {}) {
 }
 
 test('sensitive-input blocking catches clear credentials but allows ordinary housing values', () => {
+  assert.equal(CHAT_PROMPT_VERSION, 'chatbot-v2');
   assert.equal(detectSensitiveInput('my API key is sk-proj-abcdefghijklmnop012345'), 'credential');
   assert.equal(detectSensitiveInput('Authorization: Bearer eyJabcdefgh.abcdefgh.abcdefgh'), 'credential');
   assert.equal(detectSensitiveInput('My NRIC is S1234567D'), 'nric_fin');
   assert.equal(detectSensitiveInput('card 4111 1111 1111 1111'), 'payment_card');
   for (const value of ['$500000', 'postal code 560123', 'block 123', 'asking $888000']) assert.equal(detectSensitiveInput(value), null);
+});
+
+test('contact detection catches Singapore phones, labeled international phones and email without matching housing values', () => {
+  assert.equal(containsContactInformation('My phone number is 64321234 and email me at telemetry-test@example.com'), true);
+  assert.equal(containsContactInformation('Call my mobile at +1 (202) 555-0148'), true);
+  for (const text of ['$500000', 'postal code 560123', 'Block 123', '4-room, 3 bedrooms, year 2026']) {
+    assert.equal(containsContactInformation(text), false, text);
+  }
 });
 
 test('best-effort redaction masks personal and credential values without changing housing context', () => {
@@ -266,6 +275,15 @@ test('seller telemetry omits user and assistant conversation text', async () => 
   await telemetry.finish({ status: 'success' });
   assert.equal(h.rows.started[0].user_message_redacted, null);
   assert.equal(h.rows.finished[0].row.assistant_message_redacted, null);
+});
+
+test('assistant telemetry redacts echoed synthetic Singapore phone numbers and email', async () => {
+  const h = harness();
+  await h.telemetry.start();
+  h.telemetry.setAssistant('I see 64321234, +65 6930 4030 and telemetry-test@example.com.');
+  await h.telemetry.finish({ status: 'success' });
+  assert.equal(h.rows.finished[0].row.assistant_message_redacted,
+    'I see [PHONE_REDACTED], [PHONE_REDACTED] and [EMAIL_REDACTED].');
 });
 
 test('migration denies direct telemetry access and scopes feedback and cleanup', async () => {

@@ -27,6 +27,7 @@ Supabase user:
 - Search and sorting are not a deterministic recommendation score or personalized ranking engine. Sort order is price ascending by default, with supported price-descending, area-descending, and newest options.
 - The tool cannot verify MRT distances, schools, floor, lease, or other amenity facts. Nearby demo records are synthetic and are not returned as verified search evidence.
 - The LLM explains tool results but does not create or modify listings in the buyer flow. It must not invent properties, prices, availability, named alternatives, distances, or suitability claims.
+- Chat history is temporary context, not saved account memory. Buyer/general AI responses are screened for unsupported persistence claims and sensitive identifiers; a phone number or email in a buyer message receives a fixed privacy reminder before quota, telemetry, or provider processing.
 - If no listings match, the chatbot reports that result and may ask which filter to change. It does not silently broaden the search. Switching to Sell enters the separate seller flow.
 
 ## Architecture
