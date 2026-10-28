@@ -1,0 +1,233 @@
+TAP version 13
+# (node:72070) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: BE-ENQ-01 preflight is available without authentication or external operations
+ok 1 - BE-ENQ-01 preflight is available without authentication or external operations
+  ---
+  duration_ms: 46.577583
+  type: 'test'
+  ...
+# Subtest: BE-ENQ-02 anonymous callers cannot read enquiries write responses or send email
+not ok 2 - BE-ENQ-02 anonymous callers cannot read enquiries write responses or send email
+  ---
+  duration_ms: 4.066791
+  type: 'test'
+  location: '/Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/enquiry-response-endpoint.test.mjs:42:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    200 !== 401
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 401
+  actual: 200
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/enquiry-response-endpoint.test.mjs:44:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: BE-ENQ-03 invalid sessions and non-admins are denied before enquiry access or email
+not ok 3 - BE-ENQ-03 invalid sessions and non-admins are denied before enquiry access or email
+  ---
+  duration_ms: 1.720667
+  type: 'test'
+  location: '/Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/enquiry-response-endpoint.test.mjs:48:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    200 !== 401
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 401
+  actual: 200
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/enquiry-response-endpoint.test.mjs:51:12)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: BE-ENQ-04 authenticated admin can respond with caller validation before service-role enquiry access
+not ok 4 - BE-ENQ-04 authenticated admin can respond with caller validation before service-role enquiry access
+  ---
+  duration_ms: 1.706959
+  type: 'test'
+  location: '/Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/enquiry-response-endpoint.test.mjs:57:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    + actual - expected
+    
+    + 'fixture-service'
+    - 'fixture-anon'
+               ^
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 'fixture-anon'
+  actual: 'fixture-service'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/enquiry-response-endpoint.test.mjs:61:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: BE-ENQ-05 enquiry read or update failure prevents email and returns failure
+ok 5 - BE-ENQ-05 enquiry read or update failure prevents email and returns failure
+  ---
+  duration_ms: 5.208584
+  type: 'test'
+  ...
+# (node:72071) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: BE-LOC-01 preflight and unsupported methods do not initialize clients or contact providers
+ok 6 - BE-LOC-01 preflight and unsupported methods do not initialize clients or contact providers
+  ---
+  duration_ms: 50.266959
+  type: 'test'
+  ...
+# Subtest: BE-LOC-02 missing session is rejected before SDK or provider access
+ok 7 - BE-LOC-02 missing session is rejected before SDK or provider access
+  ---
+  duration_ms: 4.177625
+  type: 'test'
+  ...
+# Subtest: BE-LOC-03 invalid session and buyer roles fail before address lookup or verification writes
+ok 8 - BE-LOC-03 invalid session and buyer roles fail before address lookup or verification writes
+  ---
+  duration_ms: 7.370833
+  type: 'test'
+  ...
+# Subtest: BE-LOC-04 postal-code equivalence partitions reject malformed inputs before network access
+ok 9 - BE-LOC-04 postal-code equivalence partitions reject malformed inputs before network access
+  ---
+  duration_ms: 16.171792
+  type: 'test'
+  ...
+# Subtest: BE-LOC-05 accepted postal formats normalize and produce seller-bound authoritative verification
+ok 10 - BE-LOC-05 accepted postal formats normalize and produce seller-bound authoritative verification
+  ---
+  duration_ms: 5.128917
+  type: 'test'
+  ...
+# Subtest: BE-LOC-06 fuzzy postal matches are rejected without HDB queries or tokens
+ok 11 - BE-LOC-06 fuzzy postal matches are rejected without HDB queries or tokens
+  ---
+  duration_ms: 1.502958
+  type: 'test'
+  ...
+# Subtest: BE-LOC-07 street abbreviation fallback still requires the same block and street
+ok 12 - BE-LOC-07 street abbreviation fallback still requires the same block and street
+  ---
+  duration_ms: 2.248083
+  type: 'test'
+  ...
+# Subtest: BE-LOC-08 unknown and nonresidential HDB addresses issue no verification token
+ok 13 - BE-LOC-08 unknown and nonresidential HDB addresses issue no verification token
+  ---
+  duration_ms: 2.807958
+  type: 'test'
+  ...
+# Subtest: BE-LOC-09 expired OneMap authentication refreshes once and cached fresh tokens are reused
+ok 14 - BE-LOC-09 expired OneMap authentication refreshes once and cached fresh tokens are reused
+  ---
+  duration_ms: 3.140583
+  type: 'test'
+  ...
+# Subtest: BE-LOC-10 repeated token rejection stops after one refresh and returns service unavailability
+ok 15 - BE-LOC-10 repeated token rejection stops after one refresh and returns service unavailability
+  ---
+  duration_ms: 1.852166
+  type: 'test'
+  ...
+# Subtest: BE-LOC-11 upstream authentication and dataset failures cannot become verified addresses
+ok 16 - BE-LOC-11 upstream authentication and dataset failures cannot become verified addresses
+  ---
+  duration_ms: 3.949958
+  type: 'test'
+  ...
+# Subtest: BE-LOC-12 nonfinite coordinates and verification persistence failure fail closed
+ok 17 - BE-LOC-12 nonfinite coordinates and verification persistence failure fail closed
+  ---
+  duration_ms: 4.087042
+  type: 'test'
+  ...
+# (node:72072) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: BE-IMG-01 preflight and unsupported methods never initialize storage
+ok 18 - BE-IMG-01 preflight and unsupported methods never initialize storage
+  ---
+  duration_ms: 47.332709
+  type: 'test'
+  ...
+# Subtest: BE-IMG-02 anonymous and user-level callers cannot invoke privileged cleanup
+ok 19 - BE-IMG-02 anonymous and user-level callers cannot invoke privileged cleanup
+  ---
+  duration_ms: 2.601959
+  type: 'test'
+  ...
+# Subtest: BE-IMG-03 configured server keys work through apikey and Bearer authentication
+ok 20 - BE-IMG-03 configured server keys work through apikey and Bearer authentication
+  ---
+  duration_ms: 6.221042
+  type: 'test'
+  ...
+# Subtest: BE-IMG-04 public signed encoded and legacy linked paths are preserved while external URLs do not protect unrelated files
+ok 21 - BE-IMG-04 public signed encoded and legacy linked paths are preserved while external URLs do not protect unrelated files
+  ---
+  duration_ms: 4.235209
+  type: 'test'
+  ...
+# Subtest: BE-IMG-05 paginated storage traversal and 100-object deletion batches cover every orphan exactly once
+ok 22 - BE-IMG-05 paginated storage traversal and 100-object deletion batches cover every orphan exactly once
+  ---
+  duration_ms: 2.753917
+  type: 'test'
+  ...
+# Subtest: BE-IMG-06 images linked by properties beyond the first database page are never deleted
+not ok 23 - BE-IMG-06 images linked by properties beyond the first database page are never deleted
+  ---
+  duration_ms: 1.864125
+  type: 'test'
+  location: '/Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/image-cleanup-endpoint.test.mjs:85:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    0 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 0
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/image-cleanup-endpoint.test.mjs:90:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: BE-IMG-07 database and storage listing failures stop before any deletion
+ok 24 - BE-IMG-07 database and storage listing failures stop before any deletion
+  ---
+  duration_ms: 3.705959
+  type: 'test'
+  ...
+# Subtest: BE-IMG-08 failed deletion returns an error rather than a successful cleanup count
+ok 25 - BE-IMG-08 failed deletion returns an error rather than a successful cleanup count
+  ---
+  duration_ms: 1.697208
+  type: 'test'
+  ...
+1..25
+# tests 25
+# suites 0
+# pass 21
+# fail 4
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 154.966959

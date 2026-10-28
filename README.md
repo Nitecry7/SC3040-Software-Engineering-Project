@@ -325,6 +325,9 @@ SC3040-Software-Engineering-Project/
 | 🔍 [Buyer chatbot flow](SGHomie/docs/buy-flow.md) | Buyer search tool and response behavior |
 | 🏠 [Seller chatbot flow](SGHomie/docs/sell-flow.md) | Seller address verification and draft workflow |
 | 🤖 [Valuation research and inference](MLPricePredictorV2/README.md) | Leakage-safe research, evaluation, bundle, and API |
+| 🧪 [Testing report and outcomes](SGHomie/docs/testing/test-report.md) | Coverage, complete case catalogue, confirmed fixes, and unresolved acceptance work |
+| 🔄 [Verification after merging main](SGHomie/docs/testing/merge-verification.md) | Latest merged-run outcomes and preservation of the earlier testing work |
+| ▶️ [Running the tests](SGHomie/tests/README.md) | Application, ML, local database, evidence capture, and CI commands |
 | ⚠️ [Archived migrations](archived_migrations/README.md) | Historical migration notice |
 
 ## 👥 Contributors

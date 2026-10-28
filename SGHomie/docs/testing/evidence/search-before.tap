@@ -1,0 +1,90 @@
+TAP version 13
+# Subtest: FE-SEARCH-01 the initial search reads approved HDB rows and newest first
+ok 1 - FE-SEARCH-01 the initial search reads approved HDB rows and newest first
+  ---
+  duration_ms: 82.020125
+  type: 'test'
+  ...
+# Subtest: FE-SEARCH-02 4 ROOM filters listing room-type text without requiring four bedrooms
+not ok 2 - FE-SEARCH-02 4 ROOM filters listing room-type text without requiring four bedrooms
+  ---
+  duration_ms: 27.009125
+  type: 'test'
+  location: '/Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/search-behavior.test.mjs:45:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+    
+      assert.ok(app.requests[0].some(call => call[0] === 'or' && /title\.imatch/.test(call[1]) && /description\.imatch/.test(call[1]) && call[1].includes('4[-[:space:]]+room')))
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (file:///Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/search-behavior.test.mjs:49:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: FE-SEARCH-03 EXECUTIVE produces a valid text filter rather than a NaN bedroom query
+not ok 3 - FE-SEARCH-03 EXECUTIVE produces a valid text filter rather than a NaN bedroom query
+  ---
+  duration_ms: 14.859917
+  type: 'test'
+  location: '/Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/search-behavior.test.mjs:53:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    The expression evaluated to a falsy value:
+    
+      assert.ok(app.requests[0].some(call => call[0] === 'or' && /executive/.test(call[1])))
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (file:///Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/search-behavior.test.mjs:57:10)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: FE-SEARCH-04 ALL leaves town and room type unrestricted
+ok 4 - FE-SEARCH-04 ALL leaves town and room type unrestricted
+  ---
+  duration_ms: 8.8475
+  type: 'test'
+  ...
+# Subtest: FE-SEARCH-05 explicit town and inclusive price limits are passed to the catalog
+ok 5 - FE-SEARCH-05 explicit town and inclusive price limits are passed to the catalog
+  ---
+  duration_ms: 11.788833
+  type: 'test'
+  ...
+# Subtest: FE-SEARCH-06 a catalog failure shows an alert rather than a false no-match result
+ok 6 - FE-SEARCH-06 a catalog failure shows an alert rather than a false no-match result
+  ---
+  duration_ms: 10.08125
+  type: 'test'
+  ...
+# Subtest: FE-SEARCH-07 an empty successful catalog displays no matches
+ok 7 - FE-SEARCH-07 an empty successful catalog displays no matches
+  ---
+  duration_ms: 6.663375
+  type: 'test'
+  ...
+# Subtest: FE-SEARCH-08 selecting a card updates the map selection and accessible pressed state
+ok 8 - FE-SEARCH-08 selecting a card updates the map selection and accessible pressed state
+  ---
+  duration_ms: 6.348792
+  type: 'test'
+  ...
+1..8
+# tests 8
+# suites 0
+# pass 6
+# fail 2
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 397.509459
