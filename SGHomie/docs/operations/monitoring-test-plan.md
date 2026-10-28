@@ -76,7 +76,7 @@ Repository tests exercise mocked Edge/PostgREST behavior and migration source as
 
 ### Phase 5 — LLM behavioral regression evaluation
 
-**Planned.** Add fixed buyer/seller, tool-use, adversarial/prompt-injection, grounding and response-relevance cases. Compare prompt/model versions with deterministic assertions where possible and small human-reviewed samples where needed. Feed reviewed production failures back into the regression set without exposing secrets or unnecessary personal data. Evaluate stable behavioral invariants—not exact wording—including correct tool/filter choice, authorization, no fabricated listings or secret disclosure, and relevant responses.
+**Implemented in repository; live-model and hosted verification remain unverified.** `SGHomie/evals/chatbot/` contains 24 synthetic cases for buyer intent and filters, follow-up context, grounding, malformed tool calls, prompt/tool-output injection, privacy, seller authorization, draft writes and provisional pricing. Run the deterministic handler harness from the repository root with `node --experimental-strip-types --import ./SGHomie/tests/register-deno-imports.mjs ./SGHomie/evals/chatbot/run.mjs --mode deterministic`. Critical behavior failures exit non-zero; quality samples can be flagged for human review. Optional live mode is explicitly gated, read-only and quota-consuming; see the [evaluation guide](../../evals/chatbot/README.md). Deterministic mocks do not verify PostgreSQL/RLS or hosted behavior, and live or deployment state is not established by repository tests. Convert sanitized and de-identified production issues into synthetic cases only.
 
 ### Phase 6 — Valuation and service monitoring
 

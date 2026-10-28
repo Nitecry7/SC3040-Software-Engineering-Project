@@ -322,6 +322,7 @@ SC3040-Software-Engineering-Project/
 | 🎨 [Design system](DESIGN.md) | Existing product visual language |
 | 🔥 [Supabase backend and valuation serving](SGHomie/BackEnd/supabase/README.md) | Backend setup, migrations, RLS, and serving path |
 | 💬 [Chatbot architecture](SGHomie/docs/chatbot/README.md) | Structured buyer and seller flows |
+| 🧪 [Chatbot behavioral evaluations](SGHomie/evals/chatbot/README.md) | Deterministic regression suite and opt-in live checks |
 | 🔍 [Buyer chatbot flow](SGHomie/docs/buy-flow.md) | Buyer search tool and response behavior |
 | 🏠 [Seller chatbot flow](SGHomie/docs/sell-flow.md) | Seller address verification and draft workflow |
 | ⚙️ [Deployment runbook](SGHomie/docs/operations/deployment-runbook.md) | Service ownership, release boundaries, and safe deployment checks |
