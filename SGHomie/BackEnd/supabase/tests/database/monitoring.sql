@@ -2,7 +2,7 @@
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET LOCAL search_path = public, extensions;
-SELECT plan(64);
+SELECT plan(65);
 
 INSERT INTO auth.users (id, email) VALUES
   ('71000000-0000-4000-8000-000000000001', 'monitoring-admin@example.invalid');
@@ -166,6 +166,13 @@ SELECT is((public.monitoring_duration_stats('valuation_total_edge',now()-interva
   3, 'selected wider range includes only its own valid observations');
 SELECT is((public.monitoring_duration_stats('valuation_authentication',now()-interval '3 days',now())->>'sample_count')::integer,
   2, 'timing fields have independent valid sample counts');
+
+INSERT INTO public.chat_interactions (interaction_id,request_id,created_at,status,prompt_version,streaming)
+VALUES ('77000000-0000-4000-8000-000000000001','77000000-0000-4000-8000-000000000001',now(),'provider_error','chatbot-v2',false);
+INSERT INTO public.chat_provider_calls (interaction_id,sequence,provider,requested_model,started_at,completed_at,status)
+VALUES ('77000000-0000-4000-8000-000000000001',1,'openrouter','synthetic-test-model',now(),now(),'provider_error');
+SELECT is(public.monitoring_dashboard_summary('24h')->'chatbot'->'provider_statuses'->>'provider_error', '1',
+  'provider status aggregation counts the joined provider-call status');
 
 DO $$
 DECLARE
