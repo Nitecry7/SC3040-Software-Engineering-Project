@@ -77,6 +77,25 @@ already been verified.
 6. The Render Blueprint has `autoDeployTrigger: 'off'`; follow the approved Render deployment workflow. Check the expected model version and `/health` after any release. Do not copy secrets into a shell transcript, source file or Vite variable.
 7. Verify the deployed frontend, auth, Edge Functions, database access and valuation path in the intended environment. Record what was actually checked and what remains unverified.
 
+### Phase 6 valuation monitoring and synthetic canary
+
+**Repository monitoring is implemented; hosted configuration and production checks are deployment-dependent.** The valuation Edge Function and Render service write correlated structured timing events to their existing provider logs. No valuation event table or dashboard-specific database access was added. Timings are diagnostic measurements, not a latency target; the Edge `render_fetch_ms` covers the full HTTP fetch and must not be called network latency. Render `/health` confirms that the model bundle loaded, not that Supabase property access or an end-to-end estimate works. The Render `VALUATION_MODEL_VERSION` setting is checked against bundle metadata on startup; the repository Blueprint pins `hdb-catboost-2025-12-v1`.
+
+After a separately approved release, verify the following without changing hosted data:
+
+1. In the target Render service, confirm the deployed commit, `VALUATION_MODEL_VERSION`, required auth configuration and `/health`. Use the authenticated model-info endpoint to verify the loaded model version. `/health` is unauthenticated model readiness only.
+2. Confirm the target Supabase valuation function version and its server-side Render URL/token configuration. If hosted canonical demo valuation is intended, verify `VALUATION_ALLOW_HOSTED_DEMO_INPUTS=true` and that the canonical synthetic seed fixture exists and is approved. Do not enable this gate merely to make the canary pass.
+3. Set `SGHOMIE_CANARY_SUPABASE_URL`, `SGHOMIE_CANARY_SUPABASE_ANON_KEY`, `SGHOMIE_CANARY_USER_TOKEN` for a registered non-production test account, and `SGHOMIE_CANARY_EXPECTED_MODEL_VERSION` in a secure local environment; never put the user token in source, a report, or shell history. Run one read-only canary invocation:
+
+   ```text
+   node SGHomie/scripts/valuation-canary.mjs
+   ```
+
+   It uses one canonical synthetic property from `seed.sql`, times out after 150 seconds, writes no property data and exits nonzero if the path, model version, request ID, response schema or interval check fails. It does not retry and does not run automatically in CI. Its JSON output contains status, safe check results, model labels and correlation ID only.
+4. Search the returned request ID in Supabase Edge Function logs and Render service logs. Confirm matching IDs, nonnegative timing fields, expected model version, prediction sanity passed, and no credentials, property IDs, features or prediction amounts in the events. Record the environment and timestamp; do not describe the result as accuracy validation.
+
+Repository Node/Python tests and GitHub CI do not prove the hosted migration/function version, secrets, model state or canary result. Provider log APIs/export and controlled aggregation for the future Phase 7 dashboard remain to be designed. A canary is a synthetic serving-path check; accuracy and interval coverage need later outcome labels.
+
 ### Phase 4 chatbot telemetry and feedback
 
 **Implemented in repository; deployment verification pending.** Migration

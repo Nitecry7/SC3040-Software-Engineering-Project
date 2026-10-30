@@ -92,6 +92,10 @@ function nonBlank(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function validModelVersion(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value);
+}
+
 export function currentSingaporeMonth(now = new Date()): { year: number; month: number } {
   const parts = new Intl.DateTimeFormat('en', {
     timeZone: 'Asia/Singapore',
@@ -218,7 +222,7 @@ export function validateValuationResponse(value: unknown): Record<string, unknow
       || Math.abs(full - (upper - lower)) > 0.01
       || Math.abs(half - (upper - lower) / 2) > 0.01
       || !SUPPORTED_COVERAGE.includes(value.coverage_target as (typeof SUPPORTED_COVERAGE)[number])) return null;
-  if (!nonBlank(value.model_version) || !nonBlank(value.uncertainty_method)
+  if (!validModelVersion(value.model_version) || !nonBlank(value.uncertainty_method)
       || !nonBlank(value.uncertainty_group) || !Number.isInteger(value.uncertainty_support)
       || (value.uncertainty_support as number) < 0 || typeof value.used_global_fallback !== 'boolean') return null;
   const positions = [null, 'below_estimated_market_range', 'within_estimated_market_range', 'above_estimated_market_range'];
@@ -247,27 +251,46 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
     const requestId = crypto.randomUUID();
     const timings: Record<string, number> = {};
     const elapsedMs = (startedAt: number) => Math.round((performance.now() - startedAt) * 100) / 100;
-    const finish = (response: Response, outcome: string) => {
+    const finish = (
+      response: Response,
+      outcome: string,
+      details: {
+        failureCategory?: string;
+        modelVersion?: string | null;
+        predictionSanity?: 'passed' | 'failed' | 'not_checked';
+      } = {},
+    ) => {
+      const headers = new Headers(response.headers);
+      headers.set('X-Valuation-Request-ID', requestId);
+      headers.set('Access-Control-Expose-Headers', 'X-Valuation-Request-ID');
       console.info(JSON.stringify({
         event: 'valuation_timing',
         request_id: requestId,
         edge_region: dependencies.edgeRegion ?? null,
         outcome,
+        status_code: response.status,
+        failure_category: details.failureCategory ?? null,
+        model_version: details.modelVersion ?? null,
+        prediction_sanity: details.predictionSanity ?? 'not_checked',
         timings_ms: timings,
         total_ms: elapsedMs(requestStartedAt),
       }));
-      return response;
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
     };
     const authorization = request.headers.get('Authorization') ?? '';
     const authorizationHeaderStartedAt = performance.now();
     if (!/^Bearer\s+\S+$/i.test(authorization)) {
       timings.authentication_ms = elapsedMs(authorizationHeaderStartedAt);
-      return finish(fail(401, 'UNAUTHORIZED', 'Authentication required.'), 'unauthorized');
+      return finish(fail(401, 'UNAUTHORIZED', 'Authentication required.'), 'unauthorized', { failureCategory: 'AUTH_FAILURE' });
     }
     if (!dependencies.supabaseUrl || !dependencies.supabaseAnonKey) {
       console.error(JSON.stringify({ requestId, stage: 'configuration', message: 'Supabase auth configuration missing' }));
       timings.authentication_ms = elapsedMs(authorizationHeaderStartedAt);
-      return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'configuration_error');
+      return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'configuration_error', { failureCategory: 'EDGE_UNAVAILABLE' });
     }
     let body: unknown;
     const requestValidationStartedAt = performance.now();
@@ -275,12 +298,12 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
       body = await request.json();
     } catch {
       timings.request_validation_ms = elapsedMs(requestValidationStartedAt);
-      return finish(fail(400, 'INVALID_REQUEST', 'A JSON request body is required.'), 'invalid_request');
+      return finish(fail(400, 'INVALID_REQUEST', 'A JSON request body is required.'), 'invalid_request', { failureCategory: 'INVALID_REQUEST' });
     }
     if (!isRecord(body) || Object.keys(body).length !== 1 || typeof body.property_id !== 'string'
         || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.property_id)) {
       timings.request_validation_ms = elapsedMs(requestValidationStartedAt);
-      return finish(fail(400, 'INVALID_REQUEST', 'Provide a valid property_id.'), 'invalid_request');
+      return finish(fail(400, 'INVALID_REQUEST', 'Provide a valid property_id.'), 'invalid_request', { failureCategory: 'INVALID_REQUEST' });
     }
     timings.request_validation_ms = elapsedMs(requestValidationStartedAt);
     let client: UserClient;
@@ -290,11 +313,11 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
       const { data: authData, error: authError } = await client.auth.getUser();
       if (authError || !authData.user) {
         timings.authentication_ms = elapsedMs(authenticationStartedAt);
-        return finish(fail(401, 'UNAUTHORIZED', 'Authentication required.'), 'unauthorized');
+        return finish(fail(401, 'UNAUTHORIZED', 'Authentication required.'), 'unauthorized', { failureCategory: 'AUTH_FAILURE' });
       }
     } catch {
       timings.authentication_ms = elapsedMs(authenticationStartedAt);
-      return finish(fail(401, 'UNAUTHORIZED', 'Authentication required.'), 'unauthorized');
+      return finish(fail(401, 'UNAUTHORIZED', 'Authentication required.'), 'unauthorized', { failureCategory: 'AUTH_FAILURE' });
     }
     timings.authentication_ms = elapsedMs(authenticationStartedAt);
     let property: PropertyRecord | null;
@@ -304,13 +327,13 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
         'id,area_sqft,price,town,block_number,street_name,flat_type,flat_model,storey_range,storey_mid,remaining_lease_months,remaining_lease_as_of_month,valuation_inputs_source,hdb_verified,demo_batch_id,status',
       ).eq('id', body.property_id).maybeSingle();
       timings.database_lookup_ms = elapsedMs(databaseStartedAt);
-      if (query.error) return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'database_error');
+      if (query.error) return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'database_error', { failureCategory: 'PROPERTY_LOOKUP_FAILURE' });
       property = query.data;
     } catch {
       timings.database_lookup_ms = elapsedMs(databaseStartedAt);
-      return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'database_error');
+      return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'database_error', { failureCategory: 'PROPERTY_LOOKUP_FAILURE' });
     }
-    if (!property) return finish(fail(404, 'PROPERTY_NOT_FOUND', 'Property not found.'), 'property_not_found');
+    if (!property) return finish(fail(404, 'PROPERTY_NOT_FOUND', 'Property not found.'), 'property_not_found', { failureCategory: 'PROPERTY_NOT_FOUND' });
 
     const requestConstructionStartedAt = performance.now();
     const localSupabase = isLocalSupabaseUrl(dependencies.supabaseUrl);
@@ -338,7 +361,7 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
       && property.demo_batch_id == null;
     if (!isLocalDemo && !isHostedDemo && !isSellerSupplied) {
       timings.request_construction_ms = elapsedMs(requestConstructionStartedAt);
-      return finish(fail(409, VALUATION_UNAVAILABLE, 'This property does not have verified, complete valuation inputs.'), 'valuation_unavailable');
+      return finish(fail(409, VALUATION_UNAVAILABLE, 'This property does not have verified, complete valuation inputs.'), 'valuation_unavailable', { failureCategory: 'FEATURE_PREPARATION_FAILURE' });
     }
     const singaporeMonth = currentSingaporeMonth(dependencies.now?.() ?? new Date());
     let valuationRequest: ReturnType<typeof buildValuationRequest>;
@@ -346,15 +369,16 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
       valuationRequest = buildValuationRequest(property, singaporeMonth);
     } catch {
       timings.request_construction_ms = elapsedMs(requestConstructionStartedAt);
-      return finish(fail(409, VALUATION_UNAVAILABLE, 'This property does not have complete valid valuation inputs.'), 'valuation_unavailable');
+      return finish(fail(409, VALUATION_UNAVAILABLE, 'This property does not have complete valid valuation inputs.'), 'valuation_unavailable', { failureCategory: 'FEATURE_PREPARATION_FAILURE' });
     }
     timings.request_construction_ms = elapsedMs(requestConstructionStartedAt);
     if (!dependencies.renderApiUrl || !dependencies.renderServiceToken) {
       console.error(JSON.stringify({ requestId, stage: 'configuration', message: 'Valuation upstream configuration missing' }));
-      return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'configuration_error');
+      return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'configuration_error', { failureCategory: 'EDGE_UNAVAILABLE' });
     }
     const fetcher = dependencies.fetcher ?? fetch;
     let upstream: Response;
+    const renderSignal = AbortSignal.timeout(dependencies.timeoutMs ?? 120_000);
     try {
       const renderFetchStartedAt = performance.now();
       upstream = await fetcher(dependencies.renderApiUrl, {
@@ -369,16 +393,22 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
           coverage: 0.9,
           ...(valuationRequest.asking_price === undefined ? {} : { asking_price: valuationRequest.asking_price }),
         }),
-        signal: AbortSignal.timeout(dependencies.timeoutMs ?? 120_000),
+        signal: renderSignal,
       });
       timings.render_fetch_ms = elapsedMs(renderFetchStartedAt);
-    } catch {
+    } catch (error) {
       console.error(JSON.stringify({ requestId, stage: 'upstream', message: 'Valuation request failed' }));
-      return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'upstream_error');
+      const timedOut = renderSignal.aborted || (error instanceof Error
+        && ['AbortError', 'TimeoutError'].includes(error.name));
+      return finish(
+        fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'),
+        timedOut ? 'timeout' : 'upstream_error',
+        { failureCategory: timedOut ? 'TIMEOUT' : 'RENDER_UNAVAILABLE' },
+      );
     }
     if (!upstream.ok) {
       console.error(JSON.stringify({ requestId, stage: 'upstream', status: upstream.status }));
-      return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'upstream_error');
+      return finish(fail(503, 'VALUATION_UNAVAILABLE', 'Valuation is temporarily unavailable.'), 'upstream_error', { failureCategory: 'RENDER_UNAVAILABLE' });
     }
     let upstreamBody: unknown;
     const responseParseStartedAt = performance.now();
@@ -386,11 +416,43 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
       upstreamBody = await upstream.json();
     } catch {
       timings.render_response_parse_ms = elapsedMs(responseParseStartedAt);
-      return finish(fail(502, 'INVALID_VALUATION_RESPONSE', 'The valuation service returned an invalid response.'), 'invalid_upstream_response');
+      return finish(fail(502, 'INVALID_VALUATION_RESPONSE', 'The valuation service returned an invalid response.'), 'invalid_upstream_response', { failureCategory: 'INVALID_PREDICTION_SCHEMA', predictionSanity: 'failed' });
     }
     timings.render_response_parse_ms = elapsedMs(responseParseStartedAt);
     const safeResult = validateValuationResponse(upstreamBody);
-    if (!safeResult) return finish(fail(502, 'INVALID_VALUATION_RESPONSE', 'The valuation service returned an invalid response.'), 'invalid_upstream_response');
-    return finish(jsonResponse({ data: safeResult, request_id: requestId }), 'success');
+    if (!safeResult) {
+      const hasNumericInterval = isRecord(upstreamBody)
+        && ['estimated_value', 'lower_bound', 'upper_bound', 'interval_half_width', 'interval_full_width']
+          .every((key) => finiteNumber(upstreamBody[key]));
+      const invalidInterval = hasNumericInterval && isRecord(upstreamBody)
+        && ((upstreamBody.estimated_value as number) <= 0
+          || (upstreamBody.lower_bound as number) < 0
+          || (upstreamBody.lower_bound as number) > (upstreamBody.estimated_value as number)
+          || (upstreamBody.estimated_value as number) > (upstreamBody.upper_bound as number)
+          || (upstreamBody.interval_half_width as number) < 0
+          || (upstreamBody.interval_full_width as number) < 0
+          || Math.abs((upstreamBody.interval_full_width as number)
+            - ((upstreamBody.upper_bound as number) - (upstreamBody.lower_bound as number))) > 0.01
+          || Math.abs((upstreamBody.interval_half_width as number)
+            - ((upstreamBody.upper_bound as number) - (upstreamBody.lower_bound as number)) / 2) > 0.01);
+      const invalidModelVersion = isRecord(upstreamBody)
+        && typeof upstreamBody.model_version === 'string'
+        && !validModelVersion(upstreamBody.model_version);
+      return finish(
+        fail(502, 'INVALID_VALUATION_RESPONSE', 'The valuation service returned an invalid response.'),
+        'invalid_upstream_response',
+        {
+          failureCategory: invalidModelVersion ? 'MODEL_VERSION_MISMATCH'
+            : invalidInterval ? 'INVALID_INTERVAL' : 'INVALID_PREDICTION_SCHEMA',
+          modelVersion: isRecord(upstreamBody) && validModelVersion(upstreamBody.model_version)
+            ? upstreamBody.model_version : null,
+          predictionSanity: 'failed',
+        },
+      );
+    }
+    return finish(jsonResponse({ data: safeResult, request_id: requestId }), 'success', {
+      modelVersion: safeResult.model_version as string,
+      predictionSanity: 'passed',
+    });
   };
 }

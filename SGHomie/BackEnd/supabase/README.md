@@ -322,6 +322,23 @@ shared incident notes. See [Supabase Function logs](https://supabase.com/docs/gu
 and [Render service logs](https://render.com/docs/logging) for the respective
 log views.
 
+The repository now emits one structured `valuation_timing` event per handled
+POST at each service boundary. The Edge event includes its status, stable
+failure category, returned model version when valid, prediction sanity result,
+region, stage timings and total duration. The Render event includes the
+configured/loaded model version, safe returned model version, status,
+prediction sanity result, request ID and existing stage timings. Neither event
+contains property or user IDs, feature values, prediction amounts, tokens,
+authorization headers or raw exception text. `render_fetch_ms` is the total
+outbound HTTP fetch duration, not isolated network latency. Error responses
+also carry `X-Valuation-Request-ID` for log correlation; it is not an access
+credential. No valuation table or hosted log export is configured by this
+repository.
+
+The optional manual hosted synthetic canary and exact post-deployment checks
+are documented in the [deployment runbook](../../docs/operations/deployment-runbook.md)
+and [monitoring plan](../../docs/operations/monitoring-test-plan.md).
+
 The following is one user-provided, live-verified request from 2026-10-18, not
 an independently rechecked deployment or a benchmark:
 
