@@ -112,9 +112,10 @@ export async function runValuationCanary(config, fetcher = fetch, timeoutMs = TI
       const responseRequestId = response.headers.get('X-Valuation-Request-ID');
       requestId = responseRequestId && REQUEST_ID_PATTERN.test(responseRequestId) ? responseRequestId : null;
       if (!response.ok) {
-        failureCode = response.status === 401 || response.status === 403 ? 'AUTH_FAILURE'
-          : response.status === 409 ? 'SYNTHETIC_FIXTURE_UNAVAILABLE'
-            : 'EDGE_UNAVAILABLE';
+        if (response.status === 401 || response.status === 403) failureCode = 'AUTH_FAILURE';
+        else if (response.status === 404) failureCode = 'PROPERTY_NOT_FOUND';
+        else if (response.status === 409) failureCode = 'FEATURE_PREPARATION_FAILURE';
+        else failureCode = 'EDGE_UNAVAILABLE';
       } else {
         let body;
         try {

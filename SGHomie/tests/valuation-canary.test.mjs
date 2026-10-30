@@ -110,14 +110,19 @@ test('deterministic canary fails closed on interval, schema, model and request I
   }
 });
 
-test('deterministic canary reports only safe auth, service and timeout failure categories', async () => {
+test('deterministic canary reports safe auth, property, feature, service and timeout failure categories', async () => {
   for (const scenario of [
     { response: new Response('private details', { status: 401 }), code: 'AUTH_FAILURE' },
+    { response: new Response('private details', { status: 404, headers: { 'X-Valuation-Request-ID': requestId } }), code: 'PROPERTY_NOT_FOUND' },
+    { response: new Response('private details', { status: 409, headers: { 'X-Valuation-Request-ID': requestId } }), code: 'FEATURE_PREPARATION_FAILURE' },
     { response: new Response('private details', { status: 503 }), code: 'EDGE_UNAVAILABLE' },
   ]) {
     const result = await runValuationCanary(canaryConfig, async () => scenario.response, 1000);
     assert.equal(result.failure_code, scenario.code);
     assert.equal(result.exit_code, 1);
+    if (scenario.response.status === 404 || scenario.response.status === 409) {
+      assert.equal(result.request_id, requestId);
+    }
     assert.equal(JSON.stringify(result).includes('private details'), false);
   }
   const timeout = await runValuationCanary(canaryConfig, async () => {
