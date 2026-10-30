@@ -191,6 +191,92 @@ test('Edge timing logs correlate to the returned request ID without logging requ
   }
 });
 
+test('valuation telemetry is sanitized, asynchronous and cannot change the response', async () => {
+  const scheduled = [];
+  const persisted = [];
+  const { deps } = dependencies({
+    persistMonitoring: async (event, alert) => { persisted.push({ event, alert }); },
+    scheduleBackgroundTask: task => scheduled.push(task),
+  });
+  const response = await createValuationHandler(deps)(makeRequest());
+  const result = await response.json();
+  await Promise.all(scheduled);
+  assert.equal(response.status, 200);
+  assert.equal(persisted.length, 1);
+  const [{ event, alert }] = persisted;
+  assert.equal(event.request_id, result.request_id);
+  assert.equal(event.status, 'success');
+  assert.equal(event.prediction_sanity, 'passed');
+  assert.equal(alert, undefined);
+  assert.equal(typeof event.total_edge_ms, 'number');
+  assert.equal(typeof event.authentication_ms, 'number');
+  assert.equal(typeof event.database_lookup_ms, 'number');
+  assert.equal(typeof event.request_construction_ms, 'number');
+  assert.equal(typeof event.render_fetch_ms, 'number');
+  for (const privateValue of [property.id, 'user-1', property.town, property.block_number, 'server-secret-value']) {
+    assert.equal(JSON.stringify(event).includes(privateValue), false);
+  }
+});
+
+test('telemetry write rejection logs safe metadata and leaves valuation response unchanged', async () => {
+  const { deps } = dependencies({
+    persistMonitoring: async () => { throw new Error('private database exception'); },
+    scheduleBackgroundTask: task => { void task; },
+  });
+  const lines = [];
+  const originalError = console.error;
+  console.error = (...args) => lines.push(args.join(' '));
+  try {
+    const response = await createValuationHandler(deps)(makeRequest());
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).data.model_version, upstreamResult.model_version);
+    await new Promise(resolve => setImmediate(resolve));
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /telemetry_persist_failed/);
+  assert.match(lines[0], /valuation_events/);
+  assert.doesNotMatch(lines[0], /private database exception|property.id|server-secret-value/);
+});
+
+test('invalid optional monitoring durations are null and confirmed response defects map to safe alerts', async () => {
+  const scheduled = [];
+  const records = [];
+  const { deps } = dependencies({
+    persistMonitoring: async (event, alert) => records.push({ event, alert }),
+    scheduleBackgroundTask: task => scheduled.push(task),
+  });
+  const response = await createValuationHandler(deps)(makeRequest());
+  await response.arrayBuffer();
+  await Promise.all(scheduled);
+  assert.equal(records[0].event.status, 'success');
+  assert.equal(records[0].alert, undefined);
+
+  for (const [change, category, severity] of [
+    [body => { body.upper_bound = body.lower_bound - 1; }, 'prediction_interval_invalid', 'warning'],
+    [body => { delete body.model_version; }, 'prediction_schema_invalid', 'critical'],
+  ]) {
+    const pending = [];
+    const events = [];
+    const fixture = dependencies({
+      async fetcher() {
+        const body = structuredClone(upstreamResult);
+        change(body);
+        return Response.json(body);
+      },
+      persistMonitoring: async (event, alert) => events.push({ event, alert }),
+      scheduleBackgroundTask: task => pending.push(task),
+    });
+    const rejected = await createValuationHandler(fixture.deps)(makeRequest());
+    assert.equal(rejected.status, 502);
+    await Promise.all(pending);
+    assert.equal(events[0].alert.category, category);
+    assert.equal(events[0].alert.severity, severity);
+    assert.equal(events[0].event.prediction_sanity, 'failed');
+  }
+});
+
 test('deterministic synthetic canary exercises the valuation Edge handler without writes', async () => {
   const seed = await readFile(new URL('../BackEnd/supabase/seed.sql', import.meta.url), 'utf8');
   const fixture = [...seed.matchAll(/^-- fixture: batch=(\S+) id=([0-9a-f-]{36})\b/gm)]
@@ -306,7 +392,7 @@ test('valuation timing logs classify upstream failures without storing response 
       overrides: { fetcher: async () => Response.json({ ...upstreamResult, model_version: '../unexpected' }) },
       status: 502,
       outcome: 'invalid_upstream_response',
-      failureCategory: 'MODEL_VERSION_MISMATCH',
+      failureCategory: 'INVALID_PREDICTION_SCHEMA',
       sanity: 'failed',
     },
   ];
@@ -326,6 +412,8 @@ test('valuation timing logs classify upstream failures without storing response 
       assert.equal(event.failure_category, scenario.failureCategory, scenario.name);
       assert.equal(event.prediction_sanity, scenario.sanity, scenario.name);
       assert.equal(event.model_version, scenario.modelVersion ?? null, scenario.name);
+      assert.equal(typeof event.timings_ms.render_fetch_ms, 'number', `${scenario.name} records the complete Render fetch attempt`);
+      assert.ok(Number.isFinite(event.timings_ms.render_fetch_ms) && event.timings_ms.render_fetch_ms >= 0, scenario.name);
       assert.equal(response.headers.get('X-Valuation-Request-ID'), event.request_id, scenario.name);
       assert.equal(logLines.join(' ').includes('private'), false, scenario.name);
       assert.equal(logLines.join(' ').includes(property.id), false, scenario.name);

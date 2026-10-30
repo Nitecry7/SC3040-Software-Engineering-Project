@@ -60,6 +60,8 @@ export type ValuationDependencies = {
   fetcher?: typeof fetch;
   now?: () => Date;
   timeoutMs?: number;
+  persistMonitoring?: (event: Record<string, unknown>, alert?: { severity: string; source: string; category: string; requestId: string }) => Promise<void>;
+  scheduleBackgroundTask?: (task: Promise<void>) => void;
 };
 
 const corsHeaders = {
@@ -243,11 +245,27 @@ export function validateValuationResponse(value: unknown): Record<string, unknow
   };
 }
 
+function hasValuationResponseSchema(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) return false;
+  const numericKeys = ['estimated_value', 'lower_bound', 'upper_bound', 'interval_half_width', 'interval_full_width', 'coverage_target'];
+  if (!numericKeys.every((key) => finiteNumber(value[key]))) return false;
+  const positions = [null, 'below_estimated_market_range', 'within_estimated_market_range', 'above_estimated_market_range'];
+  return validModelVersion(value.model_version)
+    && nonBlank(value.uncertainty_method)
+    && nonBlank(value.uncertainty_group)
+    && Number.isInteger(value.uncertainty_support)
+    && (value.uncertainty_support as number) >= 0
+    && typeof value.used_global_fallback === 'boolean'
+    && positions.includes(value.price_position as null | string)
+    && SUPPORTED_COVERAGE.includes(value.coverage_target as (typeof SUPPORTED_COVERAGE)[number]);
+}
+
 export function createValuationHandler(dependencies: ValuationDependencies) {
   return async (request: Request): Promise<Response> => {
     if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
     if (request.method !== 'POST') return fail(405, 'METHOD_NOT_ALLOWED', 'Use POST for valuation.');
     const requestStartedAt = performance.now();
+    const requestCreatedAt = new Date().toISOString();
     const requestId = crypto.randomUUID();
     const timings: Record<string, number> = {};
     const elapsedMs = (startedAt: number) => Math.round((performance.now() - startedAt) * 100) / 100;
@@ -258,6 +276,7 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
         failureCategory?: string;
         modelVersion?: string | null;
         predictionSanity?: 'passed' | 'failed' | 'not_checked';
+        alertCategory?: 'prediction_schema_invalid' | 'prediction_interval_invalid';
       } = {},
     ) => {
       const headers = new Headers(response.headers);
@@ -275,6 +294,47 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
         timings_ms: timings,
         total_ms: elapsedMs(requestStartedAt),
       }));
+      if (dependencies.persistMonitoring) {
+        const safeDuration = (value: unknown): number | null =>
+          typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+        const failureCategory = details.failureCategory && [
+          'AUTH_FAILURE', 'PROPERTY_NOT_FOUND', 'PROPERTY_LOOKUP_FAILURE', 'FEATURE_PREPARATION_FAILURE',
+          'TIMEOUT', 'RENDER_UNAVAILABLE', 'INVALID_PREDICTION_SCHEMA', 'INVALID_INTERVAL',
+          'MODEL_VERSION_MISMATCH', 'EDGE_UNAVAILABLE', 'INVALID_REQUEST',
+        ].includes(details.failureCategory) ? details.failureCategory : null;
+        const event = {
+          request_id: requestId,
+          created_at: requestCreatedAt,
+          completed_at: new Date().toISOString(),
+          status: response.ok ? 'success' : 'failure',
+          failure_category: failureCategory,
+          model_version: details.modelVersion && validModelVersion(details.modelVersion) ? details.modelVersion : null,
+          prediction_sanity: details.predictionSanity ?? 'not_checked',
+          canary: false,
+          total_edge_ms: safeDuration(elapsedMs(requestStartedAt)),
+          authentication_ms: safeDuration(timings.authentication_ms),
+          database_lookup_ms: safeDuration(timings.database_lookup_ms),
+          request_construction_ms: safeDuration(timings.request_construction_ms),
+          render_fetch_ms: safeDuration(timings.render_fetch_ms),
+        };
+        const alert = details.alertCategory ? {
+          severity: details.alertCategory === 'prediction_schema_invalid' ? 'critical' : 'warning',
+          source: 'valuation',
+          category: details.alertCategory,
+          requestId,
+        } : undefined;
+        const task = Promise.resolve().then(() => dependencies.persistMonitoring!(event, alert)).catch(() => {
+          console.error(JSON.stringify({ event: 'telemetry_persist_failed', request_id: requestId,
+            telemetry_sink: 'valuation_events', failure_class: 'write_failed' }));
+        });
+        try {
+          if (dependencies.scheduleBackgroundTask) dependencies.scheduleBackgroundTask(task);
+          else void task;
+        } catch {
+          console.error(JSON.stringify({ event: 'telemetry_persist_failed', request_id: requestId,
+            telemetry_sink: 'valuation_events', failure_class: 'scheduler_unavailable' }));
+        }
+      }
       return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,
@@ -379,8 +439,8 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
     const fetcher = dependencies.fetcher ?? fetch;
     let upstream: Response;
     const renderSignal = AbortSignal.timeout(dependencies.timeoutMs ?? 120_000);
+    const renderFetchStartedAt = performance.now();
     try {
-      const renderFetchStartedAt = performance.now();
       upstream = await fetcher(dependencies.renderApiUrl, {
         method: 'POST',
         headers: {
@@ -397,6 +457,7 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
       });
       timings.render_fetch_ms = elapsedMs(renderFetchStartedAt);
     } catch (error) {
+      timings.render_fetch_ms = elapsedMs(renderFetchStartedAt);
       console.error(JSON.stringify({ requestId, stage: 'upstream', message: 'Valuation request failed' }));
       const timedOut = renderSignal.aborted || (error instanceof Error
         && ['AbortError', 'TimeoutError'].includes(error.name));
@@ -416,15 +477,17 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
       upstreamBody = await upstream.json();
     } catch {
       timings.render_response_parse_ms = elapsedMs(responseParseStartedAt);
-      return finish(fail(502, 'INVALID_VALUATION_RESPONSE', 'The valuation service returned an invalid response.'), 'invalid_upstream_response', { failureCategory: 'INVALID_PREDICTION_SCHEMA', predictionSanity: 'failed' });
+      return finish(fail(502, 'INVALID_VALUATION_RESPONSE', 'The valuation service returned an invalid response.'), 'invalid_upstream_response', {
+        failureCategory: 'INVALID_PREDICTION_SCHEMA', predictionSanity: 'failed', alertCategory: 'prediction_schema_invalid',
+      });
     }
     timings.render_response_parse_ms = elapsedMs(responseParseStartedAt);
     const safeResult = validateValuationResponse(upstreamBody);
     if (!safeResult) {
-      const hasNumericInterval = isRecord(upstreamBody)
+      const hasNumericInterval = hasValuationResponseSchema(upstreamBody)
         && ['estimated_value', 'lower_bound', 'upper_bound', 'interval_half_width', 'interval_full_width']
           .every((key) => finiteNumber(upstreamBody[key]));
-      const invalidInterval = hasNumericInterval && isRecord(upstreamBody)
+      const invalidInterval = hasNumericInterval
         && ((upstreamBody.estimated_value as number) <= 0
           || (upstreamBody.lower_bound as number) < 0
           || (upstreamBody.lower_bound as number) > (upstreamBody.estimated_value as number)
@@ -442,8 +505,8 @@ export function createValuationHandler(dependencies: ValuationDependencies) {
         fail(502, 'INVALID_VALUATION_RESPONSE', 'The valuation service returned an invalid response.'),
         'invalid_upstream_response',
         {
-          failureCategory: invalidModelVersion ? 'MODEL_VERSION_MISMATCH'
-            : invalidInterval ? 'INVALID_INTERVAL' : 'INVALID_PREDICTION_SCHEMA',
+          failureCategory: invalidInterval ? 'INVALID_INTERVAL' : 'INVALID_PREDICTION_SCHEMA',
+          alertCategory: invalidInterval ? 'prediction_interval_invalid' : 'prediction_schema_invalid',
           modelVersion: isRecord(upstreamBody) && validModelVersion(upstreamBody.model_version)
             ? upstreamBody.model_version : null,
           predictionSanity: 'failed',

@@ -79,7 +79,7 @@ already been verified.
 
 ### Phase 6 valuation monitoring and synthetic canary
 
-**Repository monitoring is implemented; hosted configuration and production checks are deployment-dependent.** The valuation Edge Function and Render service write correlated structured timing events to their existing provider logs. No valuation event table or dashboard-specific database access was added. Timings are diagnostic measurements, not a latency target; the Edge `render_fetch_ms` covers the full HTTP fetch and must not be called network latency. Render `/health` confirms that the model bundle loaded, not that Supabase property access or an end-to-end estimate works. The Render `VALUATION_MODEL_VERSION` setting is checked against bundle metadata on startup; the repository Blueprint pins `hdb-catboost-2025-12-v1`.
+**Repository monitoring is implemented; hosted configuration and production checks are deployment-dependent.** At Phase 6, the valuation Edge Function and Render service wrote correlated structured timing events to their existing provider logs. Phase 7B later adds privacy-limited queryable Edge observations; Render-only timing history remains log-only and unavailable in dashboard aggregates. Timings are diagnostic measurements, not a latency target; the Edge `render_fetch_ms` covers the full HTTP fetch and must not be called network latency. Render `/health` confirms that the model bundle loaded, not that Supabase property access or an end-to-end estimate works. The Render `VALUATION_MODEL_VERSION` setting is checked against bundle metadata on startup; the repository Blueprint pins `hdb-catboost-2025-12-v1`.
 
 After a separately approved release, verify the following without changing hosted data:
 
@@ -96,12 +96,32 @@ After a separately approved release, verify the following without changing hoste
 
 Repository Node/Python tests and GitHub CI do not prove the hosted migration/function version, secrets, model state or canary result. Provider log APIs/export and controlled valuation-log aggregation still require a separate design. A canary is a synthetic serving-path check; accuracy and interval coverage need later outcome labels.
 
-### Admin monitoring dashboard deployment boundary
+### Admin monitoring dashboard deployment boundary (Phase 7A)
 
-The repository now contains an admin-only `admin-monitoring` Edge Function and a System Monitoring tab under the existing `/admin` page. Deploy the function explicitly after the application and database checks pass; the frontend tab must be deployed separately through the project's actual hosting workflow. The function uses Supabase's `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` on the server. It also reads the existing `VALUATION_API_URL` and `VALUATION_SERVICE_TOKEN` function secrets for live Render probes. `VALUATION_EXPECTED_MODEL_VERSION` is optional: set it to the reviewed deployed version if operators want a version comparison; if absent, the dashboard reports the comparison as unknown. Do not place any of these server secrets in the frontend environment. Confirm actual hosted secrets and function version in Supabase before interpreting the dashboard.
+The repository contains an admin-only `admin-monitoring` Edge Function and a System Monitoring tab under the existing `/admin` page. The function uses Supabase `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` server-side, plus `VALUATION_API_URL`, `VALUATION_SERVICE_TOKEN`, and optional `VALUATION_EXPECTED_MODEL_VERSION`. Keep these server settings out of frontend variables. The function independently verifies the user session and admin profile; repository configuration also sets `verify_jwt = true`.
 
-From `SGHomie/BackEnd`, the explicit function command is `npx.cmd supabase functions deploy admin-monitoring --project-ref "<PROJECT_REF>"` after the CLI is authenticated. This document does not establish that the command has run. No Phase 7 migration is required. The function independently verifies the user's session and admin profile before querying protected telemetry or calling Render; `verify_jwt = true` is also configured in the repository. In a non-production deployment, confirm an anonymous request and a registered non-admin request are denied, then sign in as an admin and load System Monitoring. Check the displayed check time and Render version, and verify that unavailable history and the not-recorded canary remain explicit. Inspect the response to ensure it contains no message text, comments, user/property IDs, tokens or raw exceptions. The Render probe checks model readiness only; compare a manually run hosted canary and correlated logs separately when that verification is authorized.
+The Phase 7A no-body request and response fields remain supported. Phase 7B adds a versioned `dashboard_v2` contract and requires its database migration; it does not deploy automatically. Deployment commands below are instructions only and have not been run.
 
+### Phase 7B monitoring data and API
+
+**Implemented in repository; hosted migration, functions, and cleanup scheduling are unverified.** Migration `20261031120000_phase7_monitoring_data_api.sql` creates service-only `valuation_events`, `service_health_checks`, and `system_alerts`, protects them with RLS and restricted grants, provides the bounded aggregate/request-detail API support, and adds a service-only cleanup function. `valuation_events.request_id` is unique and duplicate writes are ignored. Alert uniqueness covers unresolved active/acknowledged incidents; resolved alerts can recur as a new incident. Alert resolution is manual. Recovery observations never silently resolve an incident.
+
+The valuation Edge Function records safe operational metadata and measured Edge timings with best-effort background persistence. Failed writes emit `telemetry_persist_failed` with safe metadata only. Such signals are currently logs, not dashboard data; all dashboard counts mean recorded events and may undercount. The admin health check stores on-demand observations with source `admin_view`; an unavailable probe remains unknown and does not itself create an alert. The 90-day cleanup target applies to valuation events, health observations, and resolved alerts aged from `resolved_at`; unresolved alerts remain. Until a hosted schedule is verified, treat cleanup scheduling as **not verified**.
+
+Percentiles use PostgreSQL `percentile_cont` on valid nonnegative finite values in the selected range. P50/P95/P99 require 5/20/100 valid samples independently for each timing and bucket. `1h` and `24h` are rolling ranges; `7d` is today so far plus six complete `Asia/Singapore` days; `30d` is today so far plus twenty-nine. Daily buckets begin at Singapore midnight and end their current-day bucket at query time. The Edge's Render fetch timer is the full outbound HTTP request duration, not network latency. Render internal, CatBoost, and conformal timing history remains unavailable. Monitoring is operational evidence, not model accuracy evidence.
+
+For an approved future hosted rollout, preserve this order:
+
+1. Review and apply the migration to the intended non-production Supabase project.
+2. Verify all three tables, indexes, RLS/grants, functions, percentile/range behavior, alert lifecycle, and cleanup permissions in that project.
+3. Deploy the updated `valuation` Edge Function.
+4. Deploy the updated `admin-monitoring` Edge Function.
+5. Verify Phase 7A no-body compatibility and authenticated Phase 7B actions/ranges/request detail.
+6. Deploy the Phase 7C frontend only after the Phase 7B API is verified.
+7. Generate controlled real traffic, then verify recorded valuation/chat metrics, safe request correlation, and percentile states.
+8. Verify alert lifecycle with safe controlled conditions and verify cleanup scheduling separately; never infer scheduling from the function's presence.
+
+No migration, function, frontend deployment, hosted schedule, or hosted state change is part of this implementation. Telegram and outside-in monitor integrations remain later phases; the hosted synthetic valuation canary remains deferred.
 ### Phase 4 chatbot telemetry and feedback
 
 **Implemented in repository; deployment verification pending.** Migration

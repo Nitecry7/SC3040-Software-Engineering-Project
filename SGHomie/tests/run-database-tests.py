@@ -7,6 +7,7 @@ uses a linked/hosted project. Requires Docker and a running local Supabase stack
 
 from pathlib import Path
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import re
 import subprocess
 import uuid
@@ -60,6 +61,23 @@ def main():
         for migration in migrations:
             psql(migration.read_text())
         print(f"Applied {len(migrations)} repository migrations in an isolated local test database.")
+        # Exercise the partial unique index and upsert under real overlapping
+        # PostgreSQL transactions, not only a sequential pgTAP approximation.
+        def record_concurrent_alert(index):
+            request_id = str(uuid.UUID(int=0x73000000000040008000000000000000 + index))
+            sql = ("SELECT public.record_monitoring_alert('critical','render_model',"
+                   f"'model_not_ready','{request_id}');")
+            result = subprocess.run(
+                ["docker", "exec", "-i", args.container, "psql", "-X", "-U", "postgres",
+                 "-d", database, "-v", "ON_ERROR_STOP=1", "-At"],
+                input=sql, capture_output=True, text=True,
+            )
+            if result.returncode:
+                raise RuntimeError(result.stderr.strip() or "Concurrent alert observation failed")
+
+        with ThreadPoolExecutor(max_workers=24) as executor:
+            list(executor.map(record_concurrent_alert, range(1, 25)))
+        print("Recorded 24 overlapping alert observations through independent PostgreSQL sessions.")
         output = []
         for case_file in sorted((supabase / "tests" / "database").glob("*.sql")):
             result = psql(case_file.read_text())
