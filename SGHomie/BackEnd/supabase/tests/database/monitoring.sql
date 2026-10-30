@@ -168,9 +168,9 @@ SELECT is((public.monitoring_duration_stats('valuation_authentication',now()-int
   2, 'timing fields have independent valid sample counts');
 
 INSERT INTO public.chat_interactions (interaction_id,request_id,created_at,status,prompt_version,streaming)
-VALUES ('77000000-0000-4000-8000-000000000001','77000000-0000-4000-8000-000000000001',now(),'provider_error','chatbot-v2',false);
+VALUES ('77000000-0000-4000-8000-000000000001','77000000-0000-4000-8000-000000000001',now()-interval '3 seconds','provider_error','chatbot-v2',false);
 INSERT INTO public.chat_provider_calls (interaction_id,sequence,provider,requested_model,started_at,completed_at,status)
-VALUES ('77000000-0000-4000-8000-000000000001',1,'openrouter','synthetic-test-model',now(),now(),'provider_error');
+VALUES ('77000000-0000-4000-8000-000000000001',1,'openrouter','synthetic-test-model',now()-interval '2 seconds',now()-interval '1 second','provider_error');
 SELECT is(public.monitoring_dashboard_summary('24h')->'chatbot'->'provider_statuses'->>'provider_error', '1',
   'provider status aggregation counts the joined provider-call status');
 
@@ -241,8 +241,9 @@ SELECT ok(public.monitoring_dashboard_summary('30d')->'retention' ? 'oldest_valu
   'dashboard exposes oldest-record retention metadata');
 SELECT is((public.monitoring_dashboard_summary('30d')->'retention'->>'oldest_valuation_event_at')::timestamptz,
   (SELECT min(created_at) FROM public.valuation_events), 'oldest valuation event metadata matches retained records');
-SELECT is(public.monitoring_dashboard_summary('30d')->'retention'->>'oldest_service_health_check_at', NULL,
-  'oldest health metadata is null when no observations remain');
+SELECT is((public.monitoring_dashboard_summary('30d')->'retention'->>'oldest_service_health_check_at')::timestamptz,
+  (SELECT min(checked_at) FROM public.service_health_checks),
+  'oldest health metadata matches observations retained after cleanup');
 
 SELECT * FROM finish();
 ROLLBACK;
