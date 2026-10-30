@@ -1,13 +1,14 @@
 // Import React and its hooks used for state management, side effects, and navigation.
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 // Import custom auth context to check authenticated user details.
 import { useAuth } from '../contexts/AuthContext';
 // Import Supabase client to perform database operations.
 import { supabase } from '../lib/supabase';
+import { parseMonitoringBadge } from '../lib/monitoringDashboard';
 // Import various icons from lucide-react for UI elements such as buttons and status indicators.
 import { Users, Home, Mail, Send, Trash2, Store, CheckCircle, XCircle, Clock, Activity } from 'lucide-react';
-import AdminMonitoring from '../components/AdminMonitoring';
+const AdminMonitoring = lazy(() => import('../components/AdminMonitoringV2'));
 // Import toast for displaying notifications to the user.
 import toast from 'react-hot-toast';
 
@@ -69,6 +70,17 @@ const AdminDashboard = () => {
   const [enquiries, setEnquiries] = useState<Enquiry[]>([]);
   // State to determine if the current user is an admin.
   const [isAdmin, setIsAdmin] = useState(false);
+  const [monitoringBadge, setMonitoringBadge] = useState<number | null>(null);
+  const refreshMonitoringBadge = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-monitoring', { body: { action: 'badge' } });
+      setMonitoringBadge(error ? null : parseMonitoringBadge(data));
+    } catch { setMonitoringBadge(null); }
+  }, []);
+  useEffect(() => {
+    if (isAdmin) void refreshMonitoringBadge();
+    else setMonitoringBadge(null);
+  }, [isAdmin, refreshMonitoringBadge]);
   // State to hold a selected enquiry that the admin wants to respond to.
   const [selectedEnquiry, setSelectedEnquiry] = useState<Enquiry | null>(null);
   // State to hold the admin's response text for an enquiry.
@@ -367,7 +379,7 @@ const AdminDashboard = () => {
         </div>}
 
         {/* Tabs for managing Users, Properties, and Enquiries */}
-        <div className="bg-white rounded-lg shadow-md overflow-hidden mb-8">
+        <div className={`bg-white rounded-lg shadow-md mb-8 ${activeTab === 'monitoring' ? 'overflow-visible' : 'overflow-hidden'}`}>
           {/* Tab navigation */}
           <div className="border-b border-gray-200">
             <nav className="flex -mb-px flex-wrap" aria-label="Admin sections">
@@ -392,6 +404,7 @@ const AdminDashboard = () => {
               >
                 <Home className="h-5 w-5 inline-block mr-2" />
                 Manage Properties
+                {pendingProperties.length > 0 && <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-800">{pendingProperties.length}</span>}
               </button>
               <button
                 onClick={() => setActiveTab('enquiries')}
@@ -403,6 +416,7 @@ const AdminDashboard = () => {
               >
                 <Mail className="h-5 w-5 inline-block mr-2" />
                 Manage Enquiries
+                {enquiries.filter((enquiry) => enquiry.status === 'PENDING').length > 0 && <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-800">{enquiries.filter((enquiry) => enquiry.status === 'PENDING').length}</span>}
               </button>
               <button
                 onClick={() => setActiveTab('monitoring')}
@@ -415,13 +429,14 @@ const AdminDashboard = () => {
               >
                 <Activity className="h-5 w-5 inline-block mr-2" aria-hidden="true" />
                 System Monitoring
+                {monitoringBadge !== null && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">{monitoringBadge}</span>}
               </button>
             </nav>
           </div>
 
           {/* Tab content rendering based on the active tab */}
           <div className="p-6">
-            {activeTab === 'monitoring' && <AdminMonitoring />}
+            {activeTab === 'monitoring' && <Suspense fallback={<div role="status" className="rounded-xl bg-gray-100 p-6 text-sm text-gray-600">Loading System Monitoring…</div>}><AdminMonitoring onBadgeChanged={() => void refreshMonitoringBadge()} /></Suspense>}
             {/* Users Tab Content */}
             {activeTab === 'users' && (
               <div>

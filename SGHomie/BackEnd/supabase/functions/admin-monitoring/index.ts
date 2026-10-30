@@ -15,6 +15,12 @@ const SAFE_ERROR_CODES = new Set([
   'client_cancelled', 'incomplete_timeout', 'CHAT_QUOTA_UNAVAILABLE',
   'CHAT_USER_BURST_LIMIT', 'CHAT_USER_DAILY_LIMIT', 'CHAT_COOLDOWN_ACTIVE', 'CHAT_GLOBAL_CAPACITY',
 ]);
+const SAFE_VALUATION_FAILURES = new Set([
+  'AUTH_FAILURE', 'PROPERTY_NOT_FOUND', 'PROPERTY_LOOKUP_FAILURE',
+  'FEATURE_PREPARATION_FAILURE', 'TIMEOUT', 'RENDER_UNAVAILABLE',
+  'INVALID_PREDICTION_SCHEMA', 'INVALID_INTERVAL', 'MODEL_VERSION_MISMATCH',
+  'EDGE_UNAVAILABLE', 'INVALID_REQUEST',
+]);
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { ...corsHeaders, 'Cache-Control': 'no-store' } });
@@ -115,7 +121,15 @@ Deno.serve(async (request) => {
       }
     }
     const action = input.action === undefined ? 'summary' : input.action;
-    if (!['summary', 'detail', 'acknowledge', 'resolve'].includes(String(action))) return json({ error: 'Invalid monitoring action' }, 400);
+    if (!['summary', 'read_summary', 'health_check', 'badge', 'detail', 'acknowledge', 'resolve'].includes(String(action))) return json({ error: 'Invalid monitoring action' }, 400);
+
+    if (action === 'badge') {
+      if (Object.keys(input).some((key) => key !== 'action')) return json({ error: 'Invalid monitoring request' }, 400);
+      const { count, error } = await service.from('system_alerts').select('id', { count: 'exact', head: true })
+        .eq('state', 'active').in('severity', ['warning', 'critical']);
+      if (error || !Number.isSafeInteger(count) || (count as number) < 0) return json({ error: 'Monitoring badge unavailable' }, 503);
+      return json({ dashboard_v2: { version: 2, active_unacknowledged_alert_count: count } });
+    }
 
     if (action === 'detail') {
       if (typeof input.request_id !== 'string' || !UUID.test(input.request_id)
@@ -149,6 +163,47 @@ Deno.serve(async (request) => {
     const selectedRange = input.range === undefined ? '24h' : input.range;
     if (!['1h', '24h', '7d', '30d'].includes(String(selectedRange))
         || Object.keys(input).some((key) => !['action', 'range'].includes(key))) return json({ error: 'Invalid monitoring range' }, 400);
+
+    const dashboard = async () => {
+      const { data, error } = await service.rpc('monitoring_dashboard_summary', { p_range: selectedRange });
+      if (error || !data || typeof data !== 'object' || Array.isArray(data)) return null;
+      const rangeInfo = (data as Record<string, unknown>).range;
+      if (!rangeInfo || typeof rangeInfo !== 'object' || Array.isArray(rangeInfo)) return null;
+      const { start, end } = rangeInfo as Record<string, unknown>;
+      if (typeof start !== 'string' || typeof end !== 'string'
+          || !Number.isFinite(Date.parse(start)) || !Number.isFinite(Date.parse(end))) return null;
+      let requests: { data: Record<string, unknown>[] | null; error: unknown } = { data: null, error: true };
+      let alerts: { data: Record<string, unknown>[] | null; error: unknown } = { data: null, error: true };
+      let unresolvedCount: number | null = null;
+      try { [requests, alerts] = await Promise.all([
+        service.from('valuation_events').select('request_id,created_at,status,failure_category,total_edge_ms')
+          .gte('created_at', start).lt('created_at', end)
+          .order('created_at', { ascending: false }).limit(10),
+        service.from('system_alerts').select('id,severity,source,category,state,first_detected_at,last_detected_at,occurrence_count,latest_request_id,acknowledged_at,resolved_at')
+          .in('state', ['active', 'acknowledged']).order('last_detected_at', { ascending: false }).limit(30),
+      ]);
+        const total = await service.from('system_alerts').select('id', { count: 'exact', head: true })
+          .in('state', ['active', 'acknowledged']);
+        unresolvedCount = total.error ? null : total.count;
+      } catch { /* Supplemental records can be unavailable without changing the legacy response. */ }
+      return {
+        ...(data as Record<string, unknown>),
+        recent_valuation_requests: requests.error ? null : (requests.data ?? []).map((row: Record<string, unknown>) => ({
+          request_id: typeof row.request_id === 'string' && UUID.test(row.request_id) ? row.request_id : null,
+          created_at: row.created_at, status: row.status,
+          failure_category: typeof row.failure_category === 'string' && SAFE_VALUATION_FAILURES.has(row.failure_category)
+            ? row.failure_category : null,
+          total_edge_ms: nonnegative(row.total_edge_ms),
+        })),
+        unresolved_alerts: alerts.error ? null : (alerts.data ?? []).map((row: Record<string, unknown>) => boundedSafeAlert(row)),
+        unresolved_alert_count: unresolvedCount,
+      };
+    };
+
+    if (action === 'read_summary') {
+      const summary = await dashboard();
+      return summary ? json({ dashboard_v2: summary }) : json({ error: 'Monitoring data unavailable' }, 503);
+    }
 
     const checkedAt = new Date().toISOString();
     const sample = async (table: string, columns: string, timeColumn: string, start: string) => {
@@ -210,11 +265,13 @@ Deno.serve(async (request) => {
     const healthStatus = renderState === 'ready' && !versionMismatch ? 'healthy'
       : renderState === 'not_ready' || versionMismatch ? 'critical' : 'unknown';
     const healthFailure = probeFailure ?? (versionMismatch ? 'MODEL_VERSION_MISMATCH' : null);
+    let healthRecorded = false;
     try {
       const healthWrite = await service.from('service_health_checks').insert({
         service: 'render_model', status: healthStatus, source: 'admin_view', duration_ms: probeDuration,
         expected_model_version: expectedVersion, loaded_model_version: loadedVersion, failure_category: healthFailure,
       });
+      healthRecorded = !healthWrite.error;
       if (healthWrite.error) console.error(JSON.stringify({ event: 'telemetry_persist_failed', telemetry_sink: 'service_health_checks', failure_class: 'write_failed' }));
     } catch {
       console.error(JSON.stringify({ event: 'telemetry_persist_failed', telemetry_sink: 'service_health_checks', failure_class: 'write_failed' }));
@@ -232,8 +289,7 @@ Deno.serve(async (request) => {
     if (probeFailure) await recordConfirmedAlert('model_not_ready');
     if (versionMismatch) await recordConfirmedAlert('model_version_mismatch');
 
-    const summaryResponse = await service.rpc('monitoring_dashboard_summary', { p_range: selectedRange });
-    const summary = summaryResponse.error ? null : summaryResponse.data;
+    const summary = await dashboard();
     const safeInteractions = interactions?.map((row) => ({
       request_id: typeof row.request_id === 'string' && UUID.test(row.request_id) ? row.request_id : null,
       created_at: typeof row.created_at === 'string' ? row.created_at : null,
@@ -266,7 +322,11 @@ Deno.serve(async (request) => {
         feedback: feedback === null ? null : { sampled: feedback.length, ratings: countBy(feedback, 'rating') },
       },
     };
-    return json({ ...legacy, dashboard_v2: summary ?? { version: 2, state: 'unavailable', reason: 'monitoring_data_unavailable' } });
+    return action === 'health_check'
+      ? (summary ? json({ dashboard_v2: { ...summary, health_check_result: {
+        status: healthStatus, observed_at: checkedAt, recorded: healthRecorded,
+      } } }) : json({ error: 'Monitoring data unavailable' }, 503))
+      : json({ ...legacy, dashboard_v2: summary ?? { version: 2, state: 'unavailable', reason: 'monitoring_data_unavailable' } });
   } catch {
     return json({ error: 'Monitoring unavailable' }, 503);
   }

@@ -1,0 +1,178 @@
+export type MonitoringRange = '1h' | '24h' | '7d' | '30d';
+export type Percentile = { state: 'available' | 'insufficient_samples'; value_ms: number | null };
+export type DurationStats = { sample_count: number; p50: Percentile; p95: Percentile; p99: Percentile };
+export type MonitoringAlert = {
+  id: number; severity: 'warning' | 'critical'; source: string; category: string;
+  state: 'active' | 'acknowledged' | 'resolved'; first_detected_at: string;
+  last_detected_at: string; occurrence_count: number; latest_request_id: string | null;
+  acknowledged_at: string | null; resolved_at: string | null;
+};
+export type MonitoringRequest = {
+  request_id: string; created_at: string; status: string;
+  failure_category: string | null; total_edge_ms: number | null;
+};
+export type MonitoringDetail = MonitoringRequest & {
+  completed_at: string | null; model_version: string | null; prediction_sanity: string | null;
+  authentication_ms: number | null; database_lookup_ms: number | null;
+  request_construction_ms: number | null; render_fetch_ms: number | null;
+};
+export type MonitoringBucket = {
+  bucket_start: string; label: string | null; request_count: number; success_count: number;
+  failure_count: number; chatbot_request_count: number; chatbot_success_count: number;
+  chatbot_failure_count: number; total_edge: DurationStats; chatbot_total_interaction: DurationStats;
+};
+export type MonitoringDashboard = {
+  version: 2; generated_at: string; range: { start: string; end: string; range: MonitoringRange };
+  aggregation_timezone: 'Asia/Singapore'; metrics: Record<string, DurationStats | { state: 'unavailable' }>;
+  valuation: { recorded_events: number; successful_events: number; failed_events: number;
+    failure_categories: Record<string, number>; prediction_sanity_failures: number; series: MonitoringBucket[] };
+  chatbot: { recorded_interactions: number; successful_interactions: number;
+    failure_categories: Record<string, number>; quota_outcomes: Record<string, number>;
+    provider_calls: number; provider_statuses: Record<string, number>;
+    feedback_count: number; feedback_ratings: Record<string, number> };
+  alerts: MonitoringAlert[]; unresolved_alerts: MonitoringAlert[] | null;
+  unresolved_alert_count: number | null;
+  active_unacknowledged_alert_count: number;
+  health: Array<{ checked_at: string; service: string; status: string; source: string;
+    duration_ms: number | null; expected_model_version: string | null;
+    loaded_model_version: string | null; failure_category: string | null }>;
+  retention: { target_days: number; cleanup_scheduling: string;
+    oldest_valuation_event_at: string | null; oldest_service_health_check_at: string | null;
+    oldest_resolved_alert_at: string | null };
+  recent_valuation_requests: MonitoringRequest[] | null;
+};
+
+const object = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+const date = (value: unknown): value is string =>
+  typeof value === 'string' && Number.isFinite(Date.parse(value));
+const count = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+const duration = (value: unknown): value is number | null =>
+  value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
+const counts = (value: unknown): value is Record<string, number> =>
+  object(value) && Object.values(value).every(count);
+const nullableDate = (value: unknown) => value === null || date(value);
+const nullableText = (value: unknown) => value === null || typeof value === 'string';
+const ranges: MonitoringRange[] = ['1h', '24h', '7d', '30d'];
+const requiredMetrics = ['valuation_total_edge', 'valuation_authentication', 'valuation_database_lookup',
+  'valuation_request_construction', 'valuation_render_fetch', 'chat_total_interaction',
+  'chat_provider', 'chat_tool', 'chat_first_output', 'provider_call',
+  'render_total', 'catboost_prediction', 'conformal_interval'];
+const validStats = (value: unknown): value is DurationStats =>
+  object(value) && count(value.sample_count) && ['p50', 'p95', 'p99'].every((key) => {
+    const percentile = value[key];
+    return object(percentile) && ['available', 'insufficient_samples'].includes(String(percentile.state))
+      && duration(percentile.value_ms)
+      && (percentile.state === 'available' ? typeof percentile.value_ms === 'number' : percentile.value_ms === null);
+  });
+const validAlert = (value: unknown): value is MonitoringAlert =>
+  object(value) && count(value.id) && ['warning', 'critical'].includes(String(value.severity))
+  && typeof value.source === 'string' && typeof value.category === 'string'
+  && ['active', 'acknowledged', 'resolved'].includes(String(value.state))
+  && date(value.first_detected_at) && date(value.last_detected_at) && count(value.occurrence_count)
+  && nullableText(value.latest_request_id) && nullableDate(value.acknowledged_at) && nullableDate(value.resolved_at);
+const validRequest = (value: unknown): value is MonitoringRequest & Record<string, unknown> =>
+  object(value) && typeof value.request_id === 'string' && date(value.created_at)
+  && typeof value.status === 'string' && nullableText(value.failure_category) && duration(value.total_edge_ms);
+
+export function parseMonitoringDetail(value: unknown, requestedId: string): MonitoringDetail | null {
+  if (!object(value) || !object(value.dashboard_v2) || value.dashboard_v2.version !== 2
+    || !object(value.dashboard_v2.request_detail)) return null;
+  const detail = value.dashboard_v2.request_detail;
+  if (!validRequest(detail) || detail.request_id !== requestedId || !nullableDate(detail.completed_at)
+    || !nullableText(detail.model_version) || !nullableText(detail.prediction_sanity)
+    || !duration(detail.authentication_ms) || !duration(detail.database_lookup_ms)
+    || !duration(detail.request_construction_ms) || !duration(detail.render_fetch_ms)) return null;
+  return {
+    request_id: detail.request_id, created_at: detail.created_at,
+    status: detail.status, failure_category: detail.failure_category,
+    total_edge_ms: detail.total_edge_ms, completed_at: detail.completed_at,
+    model_version: detail.model_version, prediction_sanity: detail.prediction_sanity,
+    authentication_ms: detail.authentication_ms, database_lookup_ms: detail.database_lookup_ms,
+    request_construction_ms: detail.request_construction_ms, render_fetch_ms: detail.render_fetch_ms,
+  } as MonitoringDetail;
+}
+
+export function parseDashboard(value: unknown): MonitoringDashboard | 'upgrade_required' | null {
+  if (!object(value) || !object(value.dashboard_v2)) return 'upgrade_required';
+  const data = value.dashboard_v2;
+  if (data.version !== 2 || data.state === 'unavailable') return 'upgrade_required';
+  if (!('recent_valuation_requests' in data) || !('unresolved_alerts' in data)
+    || !('unresolved_alert_count' in data)) return 'upgrade_required';
+  if (!date(data.generated_at) || !object(data.range) || !ranges.includes(data.range.range as MonitoringRange)
+    || !date(data.range.start) || !date(data.range.end) || data.aggregation_timezone !== 'Asia/Singapore'
+    || !object(data.metrics) || !object(data.valuation) || !object(data.chatbot)
+    || !object(data.retention) || !Array.isArray(data.health) || !Array.isArray(data.alerts)
+    || !count(data.active_unacknowledged_alert_count)) return null;
+  const valuation = data.valuation;
+  const chatbot = data.chatbot;
+  const metrics = data.metrics as Record<string, unknown>;
+  if (!Object.values(metrics).every((metric) => validStats(metric)
+      || (object(metric) && metric.state === 'unavailable'))
+    || !requiredMetrics.every((key) => key in metrics)
+    || !['recorded_events', 'successful_events', 'failed_events', 'prediction_sanity_failures']
+      .every((key) => count(valuation[key]))
+    || !counts(valuation.failure_categories) || !Array.isArray(valuation.series)
+    || !valuation.series.every((bucket: unknown) => object(bucket) && date(bucket.bucket_start)
+      && nullableText(bucket.label) && ['request_count', 'success_count', 'failure_count',
+        'chatbot_request_count', 'chatbot_success_count', 'chatbot_failure_count'].every((key) => count(bucket[key]))
+      && validStats(bucket.total_edge) && validStats(bucket.chatbot_total_interaction))
+    || !['recorded_interactions', 'successful_interactions', 'provider_calls', 'feedback_count']
+      .every((key) => count(chatbot[key]))
+    || !['failure_categories', 'quota_outcomes', 'provider_statuses', 'feedback_ratings']
+      .every((key) => counts(chatbot[key]))
+    || !data.alerts.every(validAlert)
+    || !(data.unresolved_alerts === null || (Array.isArray(data.unresolved_alerts) && data.unresolved_alerts.every(validAlert)))
+    || !(data.unresolved_alert_count === null || count(data.unresolved_alert_count))
+    || !(data.recent_valuation_requests === null
+      || (Array.isArray(data.recent_valuation_requests) && data.recent_valuation_requests.every(validRequest)))
+    || !data.health.every((item: unknown) => object(item) && date(item.checked_at)
+      && typeof item.service === 'string' && typeof item.status === 'string'
+      && typeof item.source === 'string' && duration(item.duration_ms)
+      && nullableText(item.expected_model_version) && nullableText(item.loaded_model_version)
+      && nullableText(item.failure_category))
+    || !count(data.retention.target_days) || typeof data.retention.cleanup_scheduling !== 'string'
+    || !nullableDate(data.retention.oldest_valuation_event_at)
+    || !nullableDate(data.retention.oldest_service_health_check_at)
+    || !nullableDate(data.retention.oldest_resolved_alert_at)) return null;
+  return data as MonitoringDashboard;
+}
+
+export function parseMonitoringBadge(value: unknown): number | null {
+  if (!object(value) || !object(value.dashboard_v2) || value.dashboard_v2.version !== 2) return null;
+  const amount = value.dashboard_v2.active_unacknowledged_alert_count;
+  return count(amount) && amount > 0 ? amount : null;
+}
+
+export function isUnsupportedMonitoringAction(error: unknown): boolean {
+  return object(error) && object(error.context) && error.context.status === 400;
+}
+
+export function parseHealthCheckResult(value: unknown): { status: 'healthy' | 'critical' | 'unknown'; recorded: boolean } | null {
+  if (!object(value) || !object(value.dashboard_v2) || !object(value.dashboard_v2.health_check_result)) return null;
+  const result = value.dashboard_v2.health_check_result;
+  if (!['healthy', 'critical', 'unknown'].includes(String(result.status))
+    || typeof result.recorded !== 'boolean' || !date(result.observed_at)) return null;
+  return { status: result.status as 'healthy' | 'critical' | 'unknown', recorded: result.recorded };
+}
+
+export function formatDuration(value: number | null): string {
+  if (value === null || !Number.isFinite(value) || value < 0) return 'Unavailable';
+  return value < 1000 ? `${Math.round(value)} ms` : `${(value / 1000).toFixed(1)} s`;
+}
+export function formatCount(value: number): string {
+  return value < 1000 ? String(value) : `${(value / 1000).toFixed(1)}k`;
+}
+export function formatSgt(value: string | null): string {
+  if (!value || !date(value)) return 'Unavailable';
+  return new Intl.DateTimeFormat('en-SG', {
+    timeZone: 'Asia/Singapore', day: 'numeric', month: 'short', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  }).format(new Date(value));
+}
+export function percentileLabel(stats: DurationStats | { state: 'unavailable' } | undefined,
+  key: 'p50' | 'p95' | 'p99'): string {
+  if (!stats || 'state' in stats) return 'Unavailable';
+  const item = stats[key];
+  return item.state === 'available' ? formatDuration(item.value_ms) : 'Insufficient samples';
+}

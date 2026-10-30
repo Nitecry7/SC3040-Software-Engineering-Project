@@ -94,7 +94,7 @@ Repository tests and CI establish deterministic behavior only. They do not prove
 
 ### Phase 7 — Admin system-monitoring dashboard
 
-**Phase 7A and 7B are implemented in the repository; hosted migration, function deployment, cleanup scheduling and behavior remain unverified. Phase 7C dashboard work is not started.** The `admin-monitoring` function independently verifies the caller session and `user_profiles.is_admin` before every action. It preserves the Phase 7A no-body fields and adds the versioned `dashboard_v2` contract. Browser clients receive only bounded safe data and never receive service-role or Render tokens.
+**Phase 7A, 7B and 7C are implemented in the repository; hosted migration, function/frontend deployment, cleanup scheduling and behavior remain unverified.** The `admin-monitoring` function independently verifies the caller session and `user_profiles.is_admin` before every action. It preserves the Phase 7A no-body fields and adds the versioned `dashboard_v2` contract. Browser clients receive only bounded safe data and never receive service-role or Render tokens.
 
 | Signal | Source and persistence | Limits |
 | --- | --- | --- |
@@ -112,7 +112,11 @@ All stored timestamps use UTC semantics and dashboard presentation uses `Asia/Si
 
 Retention targets 90 days for valuation events, health checks, and resolved alerts measured from `resolved_at`; unresolved alerts remain. The service-only cleanup function exists, but hosted scheduling is **not yet verified**. Summary metadata exposes oldest retained records. These records and counts do not prove monitoring completeness, predictive accuracy, or continuous service health.
 
-**Phase 7C planned:** modern dashboard sections, charts, percentile cards, alert controls, badges, freshness and retention presentation, loading/error/empty states, accessibility and responsive behavior. **Phase 8 planned:** Telegram. **Phase 9 planned:** outside-in checks. Opening the dashboard must not acknowledge alerts; viewing evidence must not silently change lifecycle state.
+**Phase 7C repository behavior:** `read_summary` reads persisted data only, including bounded recent safe valuation requests and unresolved incidents; changing ranges and selecting Refresh data never probe Render or change alerts. `health_check` is the explicit, range-aware on-demand probe and may write a health observation and confirmed incident. Its response identifies the just-run check's outcome and whether that observation was recorded, so an older healthy row cannot be mistaken for a fresh result. The lightweight `badge` action reads the active unacknowledged warning/critical count; a failed badge request hides the badge without blocking navigation. All actions repeat server-side admin authorization. The legacy no-body action retains its Phase 7A behavior.
+
+The dashboard defaults to `7d`, keeps the chosen range during monitoring interactions, and ignores responses from superseded requests. Initial loading uses skeletons; later reads retain previous values and freshness while pending or after a read error. An older backend yields an upgrade-required state. Charts use the recorded bucket series and provide accessible data tables; sparse percentile points remain gaps. The valuation stage table distinguishes unavailable Render-only history from insufficient samples. Request-ID detail exposes only safe operational fields. Opening the dashboard does not acknowledge or resolve alerts.
+
+**Phase 8 planned:** Telegram. **Phase 9 planned:** outside-in checks.
 ### Phase 8 — Alerting and Telegram
 
 **Planned.** Send warning/critical incidents and recovery messages, with links to the Admin Dashboard, compact summaries, unresolved alert counts, useful pending-property/unread-enquiry counts and a daily digest. Avoid sending every low-level event. Use a dedicated monitoring bot and store its token only in server/GitHub secrets.

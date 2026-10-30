@@ -24,6 +24,11 @@ export function componentHarness(file, dependencies = {}, props = {}, globals = 
       if (!(slot in state)) state[slot] = typeof initial === 'function' ? initial() : initial;
       return [state[slot], next => { state[slot] = typeof next === 'function' ? next(state[slot]) : next; }];
     },
+    useRef(initial) {
+      const slot = cursor++;
+      if (!(slot in state)) state[slot] = { current: initial };
+      return state[slot];
+    },
     useEffect(callback, dependencies) {
       const slot = cursor++;
       if (!state[slot] || !dependencies || dependencies.some((value, index) => value !== state[slot][index])) {
@@ -54,7 +59,7 @@ export function componentHarness(file, dependencies = {}, props = {}, globals = 
     return match;
   }
   return {
-    render, find,
+    render, find, exports,
     async effects() { for (const effect of effects.splice(0)) await effect(); },
   };
 }

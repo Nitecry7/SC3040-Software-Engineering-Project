@@ -102,6 +102,8 @@ The repository contains an admin-only `admin-monitoring` Edge Function and a Sys
 
 The Phase 7A no-body request and response fields remain supported. Phase 7B adds a versioned `dashboard_v2` contract and requires its database migration; it does not deploy automatically. Deployment commands below are instructions only and have not been run.
 
+Phase 7C adds an explicit `read_summary` action for persisted monitoring history without a Render probe, a range-aware `health_check` action for deliberate on-demand probing and incident evaluation, and a lightweight read-only `badge` action. Deploy the updated `admin-monitoring` function before the Phase 7C frontend. The frontend detects an older backend and displays an upgrade-required state. Verify that chart refreshes and range changes create no new `service_health_checks` records, while one deliberate health check creates one observation with source `admin_view`. Check the selected range is retained. The no-body Phase 7A request must remain compatible.
+
 ### Phase 7B monitoring data and API
 
 **Implemented in repository; hosted migration, functions, and cleanup scheduling are unverified.** Migration `20261031120000_phase7_monitoring_data_api.sql` creates service-only `valuation_events`, `service_health_checks`, and `system_alerts`, protects them with RLS and restricted grants, provides the bounded aggregate/request-detail API support, and adds a service-only cleanup function. `valuation_events.request_id` is unique and duplicate writes are ignored. Alert uniqueness covers unresolved active/acknowledged incidents; resolved alerts can recur as a new incident. Alert resolution is manual. Recovery observations never silently resolve an incident.
@@ -120,6 +122,8 @@ For an approved future hosted rollout, preserve this order:
 6. Deploy the Phase 7C frontend only after the Phase 7B API is verified.
 7. Generate controlled real traffic, then verify recorded valuation/chat metrics, safe request correlation, and percentile states.
 8. Verify alert lifecycle with safe controlled conditions and verify cleanup scheduling separately; never infer scheduling from the function's presence.
+
+For Phase 7C verification, inspect Overview, Services, Chatbot, Valuation, Security and Feedback at desktop and narrow widths. Confirm recorded-event labels, Singapore timestamps and Today-so-far buckets; accessible chart tables; insufficient-sample and unavailable states; safe request-ID details; manual acknowledgement/resolution; and a hidden monitoring badge on badge-read failure. Test a slow or failed refresh: previously displayed values and their original freshness time must remain visible. The hosted canary remains deferred. These are post-deployment checks, not evidence that the repository implementation is already hosted.
 
 No migration, function, frontend deployment, hosted schedule, or hosted state change is part of this implementation. Telegram and outside-in monitor integrations remain later phases; the hosted synthetic valuation canary remains deferred.
 ### Phase 4 chatbot telemetry and feedback

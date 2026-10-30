@@ -37,7 +37,7 @@ async function fixture(options = {}) {
           rpcCalls.push({ name, args });
           if (name === 'monitoring_dashboard_summary') return options.summaryError
             ? { data: null, error: new Error('private-summary-error') }
-            : { data: { version: 2, range: { range: args.p_range }, metrics: {}, valuation: {}, chatbot: {}, alerts: [], health: [], retention: { target_days: 90 } }, error: null };
+            : { data: { version: 2, range: { range: args.p_range, start: '2026-10-30T00:00:00Z', end: '2026-10-31T00:00:00Z' }, metrics: {}, valuation: {}, chatbot: {}, alerts: [], health: [], retention: { target_days: 90 } }, error: null };
           if (name === 'record_monitoring_alert') return { data: null, error: null };
           if (name === 'transition_monitoring_alert') return options.transitionError
             ? { data: null, error: { code: 'P0002' } }
@@ -57,6 +57,13 @@ async function fixture(options = {}) {
                   return { maybeSingle: async () => ({ data: options.nonAdmin ? { is_admin: false } : { is_admin: true }, error: options.roleError ? new Error('private-role-error') : null }) };
                 },
               };
+              if (table === 'system_alerts') return {
+                eq() { return { in: async () => ({ count: options.badgeError ? null : 2, error: options.badgeError ? new Error('private') : null }) }; },
+                in() { if (columns === 'id') return Promise.resolve({ count: 2, error: null }); return { order() { return { async limit(limit) {
+                  reads.push({ type: 'alerts', table, columns, limit });
+                  return { data: [], error: null };
+                } }; } }; },
+              };
               return {
                 eq(column, value) {
                   reads.push({ type: 'detail', table, columns, column, value });
@@ -72,12 +79,15 @@ async function fixture(options = {}) {
                 },
                 gte(column, start) {
                   return {
+                    lt() { return this; },
                     order(orderColumn) {
                       return {
                         async limit(limit) {
                           reads.push({ type: 'monitoring', table, columns, column, start, orderColumn, limit });
                           if (options.failedTable === table) return { data: null, error: new Error('private-database-error') };
-                          const data = table === 'chat_interactions'
+                          const data = table === 'valuation_events'
+                            ? [{ request_id: interactionId, created_at: '2026-10-31T00:00:00Z', status: 'failure', failure_category: 'RENDER_UNAVAILABLE', total_edge_ms: 18, property_id: 'private' }]
+                            : table === 'chat_interactions'
                             ? [{ request_id: interactionId, created_at: '2026-10-31T00:00:00Z', status: 'provider_error', error_code: 'provider_http_503', total_latency_ms: 840, user_id: 'private-user', user_message_redacted: 'secret@example.invalid' }]
                             : table === 'chat_provider_calls' ? [{ status: 'provider_error', error_code: 'private-error-detail', latency_ms: 600 }]
                               : [{ rating: 'negative', comment_redacted: 'secret@example.invalid' }];
@@ -142,7 +152,8 @@ test('admin monitoring returns only safe bounded samples and readiness with vers
   assert.equal(writes[0].record.source, 'admin_view');
   assert.equal(writes[0].record.status, 'healthy');
   assert.equal(rpcCalls.some(call => call.name === 'record_monitoring_alert'), false);
-  assert.ok(reads.filter((item) => item.type === 'monitoring').every((item) => item.limit === 100 && !item.columns.includes('message') && !item.columns.includes('user_id') && !item.columns.includes('comment')));
+  assert.ok(reads.filter((item) => item.type === 'monitoring').every((item) => item.limit <= 100 && !item.columns.includes('message') && !item.columns.includes('user_id') && !item.columns.includes('comment')));
+  assert.equal(reads.find((item) => item.table === 'valuation_events' && item.type === 'monitoring')?.limit, 10);
   assert.equal(reads.find((item) => item.type === 'role').id, 'synthetic-admin');
   assert.equal(probes.length, 2);
   assert.equal(probes[0].authorization, null);
@@ -211,6 +222,9 @@ test('Render uncertainty stays unknown; only explicit not-ready and confirmed ve
 test('every admin action is independently authorized before reads, probes or writes', async () => {
   for (const body of [
     { action: 'summary', range: '1h' },
+    { action: 'read_summary', range: '7d' },
+    { action: 'health_check', range: '7d' },
+    { action: 'badge' },
     { action: 'detail', request_id: interactionId },
     { action: 'acknowledge', alert_id: 1 },
     { action: 'resolve', alert_id: 1 },
@@ -224,6 +238,49 @@ test('every admin action is independently authorized before reads, probes or wri
     assert.equal(nonAdmin.probes.length, 0);
     assert.equal(nonAdmin.writes.length, 0);
   }
+});
+
+test('read-only summaries and badge never probe or write; selected-range health check does', async () => {
+  const state = await fixture();
+  const read = await (await state.handler(request({ action: 'read_summary', range: '7d' }))).json();
+  assert.equal(read.dashboard_v2.range.range, '7d');
+  assert.equal(read.dashboard_v2.recent_valuation_requests[0].request_id, interactionId);
+  assert.equal(read.dashboard_v2.recent_valuation_requests[0].failure_category, 'RENDER_UNAVAILABLE');
+  assert.equal(read.dashboard_v2.unresolved_alert_count, 2);
+  assert.equal(state.probes.length, 0);
+  assert.equal(state.writes.length, 0);
+  assert.equal(state.rpcCalls.filter((call) => call.name === 'record_monitoring_alert').length, 0);
+  const badge = await (await state.handler(request({ action: 'badge' }))).json();
+  assert.equal(badge.dashboard_v2.active_unacknowledged_alert_count, 2);
+  assert.equal(state.probes.length, 0);
+  assert.equal(state.writes.length, 0);
+  assert.equal((await state.handler(request({ action: 'badge', range: '1h' }))).status, 400);
+  assert.equal((await state.handler(request({ action: 'health_check', range: 'invalid' }))).status, 400);
+  const checked = await (await state.handler(request({ action: 'health_check', range: '30d' }))).json();
+  assert.equal(checked.dashboard_v2.range.range, '30d');
+  assert.deepEqual({ status: checked.dashboard_v2.health_check_result.status, recorded: checked.dashboard_v2.health_check_result.recorded },
+    { status: 'healthy', recorded: true });
+  assert.equal(state.probes.length, 2);
+  assert.equal(state.writes.filter((write) => write.table === 'service_health_checks').length, 1);
+  assert.doesNotMatch(JSON.stringify(checked), /private-user|property_id|synthetic-render-secret/);
+});
+
+test('health action reports uncertainty and persistence failure without reusing an old healthy observation', async () => {
+  const unknown = await fixture({ networkError: true });
+  const unknownBody = await (await unknown.handler(request({ action: 'health_check', range: '7d' }))).json();
+  assert.equal(unknownBody.dashboard_v2.health_check_result.status, 'unknown');
+  const failedWrite = await fixture({ failedTable: 'service_health_checks' });
+  const failedBody = await (await failedWrite.handler(request({ action: 'health_check', range: '7d' }))).json();
+  assert.equal(failedBody.dashboard_v2.health_check_result.recorded, false);
+  assert.equal(failedBody.dashboard_v2.range.range, '7d');
+});
+
+test('lightweight badge failure stays separate from summary and admin authorization', async () => {
+  const state = await fixture({ badgeError: true });
+  assert.equal((await state.handler(request({ action: 'badge' }))).status, 503);
+  assert.equal(state.probes.length, 0);
+  assert.equal(state.writes.length, 0);
+  assert.equal((await state.handler(request({ action: 'read_summary', range: '1h' }))).status, 200);
 });
 
 test('range, request detail and alert actions validate input and return safe metadata', async () => {
@@ -281,7 +338,8 @@ test('monitoring tab has loading, error, unknown and safe request ID views', asy
   const { handler } = await fixture();
   const body = await (await handler(request())).json();
   const routeSource = readFileSync(new URL('../FrontEnd/src/pages/AdminDashboard.tsx', import.meta.url), 'utf8');
-  assert.match(routeSource, /activeTab === 'monitoring' && <AdminMonitoring \/>/);
+  assert.match(routeSource, /activeTab === 'monitoring' && <Suspense/);
+  assert.match(routeSource, /lazy\(\(\) => import\('\.\.\/components\/AdminMonitoringV2'\)\)/);
   assert.match(routeSource, /error && activeTab !== 'monitoring'/);
 
   let result = { data: body, error: null };
