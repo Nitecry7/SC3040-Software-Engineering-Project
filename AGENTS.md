@@ -40,7 +40,8 @@
 - When browser verification materially improves confidence, use Playwright or the available browser/computer tooling rather than inferring UI behavior only from source code.
 - Clearly distinguish source/test evidence from automated browser verification and manual hosted verification.
 - Do not claim browser behavior was verified unless the browser check actually ran.
-- For UI work, use Impeccable where appropriate for focused accessibility, responsive-layout, and visual review.
+- Use Taste Skill (`design-taste-frontend`) for frontend UI work, including new screens, redesigns, restyling, and reviews. Preserve the established SG Homie design system and product/data constraints; use the skill's direction within those requirements.
+- Use Impeccable where appropriate for focused accessibility, responsive-layout, and visual review.
 - Preserve the existing SG Homie design system unless the task explicitly calls for a redesign.
 
 ### Git and Workspace Safety
