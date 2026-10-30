@@ -328,6 +328,9 @@ SC3040-Software-Engineering-Project/
 | ⚙️ [Deployment runbook](SGHomie/docs/operations/deployment-runbook.md) | Service ownership, release boundaries, and safe deployment checks |
 | 📈 [Monitoring and test plan](SGHomie/docs/operations/monitoring-test-plan.md) | Current signals, production checks, and phased roadmap |
 | 🤖 [Valuation research and inference](MLPricePredictorV2/README.md) | Leakage-safe research, evaluation, bundle, and API |
+| 🧪 [Testing report and outcomes](SGHomie/docs/testing/test-report.md) | Coverage, complete case catalogue, confirmed fixes, and unresolved acceptance work |
+| 🔄 [Verification after merging main](SGHomie/docs/testing/merge-verification.md) | Latest merged-run outcomes and preservation of the earlier testing work |
+| ▶️ [Running the tests](SGHomie/tests/README.md) | Application, ML, local database, evidence capture, and CI commands |
 | ⚠️ [Archived migrations](archived_migrations/README.md) | Historical migration notice |
 
 ## 👥 Contributors

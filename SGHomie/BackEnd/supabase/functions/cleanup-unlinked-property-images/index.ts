@@ -130,18 +130,25 @@ async function cleanupUnlinkedImages() {
   });
   const storage = adminClient.storage.from(BUCKET_NAME);
 
-  const { data: properties, error: propertyError } = await adminClient
-    .from('properties')
-    .select('image_url, photos');
-
-  if (propertyError) throw propertyError;
-
   const linkedPaths = new Set<string>();
-  for (const property of properties || []) {
-    addLinkedPath(linkedPaths, property.image_url);
-    if (Array.isArray(property.photos)) {
-      property.photos.forEach((photo: unknown) => addLinkedPath(linkedPaths, photo));
+  // The Data API caps individual responses. Collect every property's references
+  // before deleting anything, otherwise later-page listing images look orphaned.
+  const pageSize = 1000;
+  for (let offset = 0; ; offset += pageSize) {
+    const { data: properties, error: propertyError } = await adminClient
+      .from('properties')
+      .select('image_url, photos')
+      .order('id', { ascending: true })
+      .range(offset, offset + pageSize - 1);
+
+    if (propertyError) throw propertyError;
+    for (const property of properties || []) {
+      addLinkedPath(linkedPaths, property.image_url);
+      if (Array.isArray(property.photos)) {
+        property.photos.forEach((photo: unknown) => addLinkedPath(linkedPaths, photo));
+      }
     }
+    if (!properties || properties.length < pageSize) break;
   }
 
   const allObjectPaths = await listAllObjectPaths(storage);

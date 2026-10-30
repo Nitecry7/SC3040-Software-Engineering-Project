@@ -244,8 +244,12 @@ def build_uncertainty_state(
     if missing:
         raise ValueError("Residual history is missing columns: " + ", ".join(sorted(missing)))
     years = pd.to_numeric(residual_history["year"], errors="coerce")
-    if years.isna().any() or not np.isfinite(years.to_numpy(dtype=float)).all():
-        raise ValueError("Calibration residual years must be finite")
+    if (
+        years.isna().any()
+        or not np.isfinite(years.to_numpy(dtype=float)).all()
+        or not np.equal(years, np.floor(years)).all()
+    ):
+        raise ValueError("Calibration residual years must be finite integers")
     if (years > cutoff.year).any():
         raise ValueError("Calibration residuals contain rows after calibration cutoff 2025-12")
     if set(years.astype(int).unique()) != set(CALIBRATION_YEARS):

@@ -1,0 +1,61 @@
+{
+  "evidence_id": "SGH-TEST-20261028-01",
+  "execution_date": "2026-10-28",
+  "timezone": "Asia/Singapore",
+  "base_revision": "cb3f7431d5299d45043176476dcbd2a577a8032c",
+  "checks": [
+    {
+      "name": "lint",
+      "command": "npm run lint",
+      "cwd": "/Users/glenn/Desktop/NTU/SC3040/SGHomie/FrontEnd",
+      "exit_code": 0,
+      "result": "PASS",
+      "output_file": "lint.txt"
+    },
+    {
+      "name": "wrapper_typecheck",
+      "command": "npx tsc --noEmit",
+      "cwd": "/Users/glenn/Desktop/NTU/SC3040/SGHomie/FrontEnd",
+      "exit_code": 0,
+      "result": "PASS",
+      "output_file": "wrapper_typecheck.txt"
+    },
+    {
+      "name": "app_typecheck",
+      "command": "npm run typecheck",
+      "cwd": "/Users/glenn/Desktop/NTU/SC3040/SGHomie/FrontEnd",
+      "exit_code": 2,
+      "result": "FAIL",
+      "output_file": "app_typecheck.txt"
+    },
+    {
+      "name": "build",
+      "command": "npm run build",
+      "cwd": "/Users/glenn/Desktop/NTU/SC3040/SGHomie/FrontEnd",
+      "exit_code": 0,
+      "result": "PASS",
+      "output_file": "build.txt"
+    },
+    {
+      "name": "whitespace",
+      "command": "git diff --check",
+      "cwd": "/Users/glenn/Desktop/NTU/SC3040",
+      "exit_code": 0,
+      "result": "PASS",
+      "output_file": "whitespace.txt"
+    }
+  ],
+  "notes": [
+    "wrapper_typecheck checks an empty wrapper project; app_typecheck is the meaningful app gate.",
+    "Existing test files preserved; two current Node assertions fail.",
+    "GitHub Actions workflow added but not executed on hosted CI.",
+    "No hosted deployments, provider requests or emails performed."
+  ],
+  "environment": {
+    "node": "22.22.2",
+    "npm": "10.9.7",
+    "python": "3.12.14 (isolated ML venv)",
+    "postgres": "17.6 (local Docker)",
+    "docker": "29.2.1"
+  }
+}

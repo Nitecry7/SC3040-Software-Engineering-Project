@@ -1,0 +1,11 @@
+
+> vite-react-typescript-starter@0.0.0 typecheck
+> tsc --noEmit -p tsconfig.app.json
+
+src/App.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/components/FeaturedListings.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/components/Footer.tsx(1,1): error TS6133: 'React' is declared but its value is never read.
+src/components/NotificationPanel.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/components/WhyChooseUs.tsx(1,1): error TS6133: 'React' is declared but its value is never read.
+src/lib/valuation.ts(121,8): error TS18046: 'value.uncertainty_support' is of type 'unknown'.
+src/pages/AdminDashboard.tsx(2,8): error TS6133: 'React' is declared but its value is never read.

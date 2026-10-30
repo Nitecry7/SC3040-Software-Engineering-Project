@@ -1,0 +1,35 @@
+Name                                        Stmts   Miss Branch BrPart  Cover   Missing
+---------------------------------------------------------------------------------------
+src/__init__.py                                 0      0      0      0   100%
+src/api/__init__.py                             0      0      0      0   100%
+src/api/app.py                                145      2     34      2    98%   80, 83
+src/api/schemas.py                             66      1     10      1    97%   47
+src/baselines/__init__.py                       0      0      0      0   100%
+src/baselines/common.py                        35      6     14      6    76%   22, 26, 29, 36, 46, 48
+src/baselines/comparable_sales.py              95      8     28      8    87%   27, 29, 31, 33, 35, 37, 58, 92
+src/baselines/global_median.py                  7      0      0      0   100%
+src/baselines/grouped_median.py                17      0      4      0   100%
+src/data/__init__.py                            0      0      0      0   100%
+src/data/load.py                               14      0      4      0   100%
+src/data/validate.py                            6      0      2      0   100%
+src/evaluation/__init__.py                      0      0      0      0   100%
+src/evaluation/configuration_selection.py      27      2      6      2    88%   48, 51
+src/evaluation/diagnostics.py                  37      2      8      2    91%   38, 40
+src/evaluation/frozen_history.py               45      8     22      8    76%   34, 36, 38, 40, 45, 48, 52, 58
+src/evaluation/metrics.py                      35      1      6      0    98%   21
+src/evaluation/robustness.py                  129     16     38     15    81%   60, 62, 64, 67, 75, 94, 96, 149, 152, 156, 163-164, 196, 216, 218, 237
+src/evaluation/uncertainty.py                 197     27     90     27    81%   75, 77, 79, 101, 108, 118, 123, 125, 127, 142, 144, 146, 150, 154, 199, 201, 203, 208, 210, 234, 236, 270, 272, 286, 289, 324, 332
+src/evaluation/walk_forward.py                 87     12     34     12    80%   31, 33, 35, 44, 54, 56, 91, 96, 98, 100, 104, 109
+src/inference/__init__.py                       2      0      0      0   100%
+src/inference/bundle.py                       467     36    224     35    90%   185, 197, 204, 213, 219, 241, 245, 256, 260, 263, 313, 316, 319, 324->337, 339, 359, 366, 437, 488, 548, 588, 598-599, 624, 672, 675, 680, 689, 696, 701, 717, 725, 727, 745, 750, 769, 775
+src/models/__init__.py                          6      0      0      0   100%
+src/models/boosted.py                         290    106     86     21    59%   61, 63, 79, 85, 105, 158, 183, 193, 202, 237->236, 239, 243-247, 262-263, 276, 278, 280, 285, 305-318, 367, 383, 398-403, 421, 446-453, 458-470, 475, 480-514, 519-580
+src/models/linear.py                           80     11     26      9    79%   86, 98, 100-102, 112, 114, 116, 167, 169, 187
+src/models/tree.py                            178     23     62     21    82%   48, 99, 105, 120, 122, 130, 138, 150, 180, 184, 191-196, 201-202, 213, 215, 217, 231, 294, 308, 310, 320, 325
+src/preprocessing/__init__.py                   0      0      0      0   100%
+src/preprocessing/base.py                      47      3      8      3    89%   43, 46, 66
+src/preprocessing/parsers.py                   26      0     10      0   100%
+src/splitting/__init__.py                       0      0      0      0   100%
+src/splitting/chronological.py                 69      4     30      4    92%   89-90, 106->105, 108, 114
+---------------------------------------------------------------------------------------
+TOTAL                                        2107    268    746    176    83%

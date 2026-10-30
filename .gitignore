@@ -18,6 +18,9 @@ MLPricePredictorV2/artifacts/
 .venv/
 __pycache__/
 .pytest_cache/
+.test-results/
+.coverage
+coverage.xml
 *.pyc
 
 # Local listing seeding data, generated images, and helper scripts
