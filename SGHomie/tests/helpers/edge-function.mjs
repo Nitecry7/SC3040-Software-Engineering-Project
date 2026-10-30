@@ -17,7 +17,7 @@ export async function loadEdgeFunction(name, { env = {}, createClient, fetch, SM
     fetch: fetch ?? (() => { throw new Error('Unexpected network call'); }),
     Deno: { env: { get: key => env[key] }, serve: callback => { handler = callback; } },
     console: Object.fromEntries(['log', 'warn', 'error'].map(level => [level, (...args) => logs.push({ level, args })])),
-    Request, Response, Headers, URL, URLSearchParams, crypto, Error, Date,
+    Request, Response, Headers, URL, URLSearchParams, crypto, Error, Date, AbortSignal,
   });
   vm.runInContext(stripTypeScriptTypes(source), context, { filename: path.pathname });
   if (typeof handler !== 'function') throw new Error(`No handler registered by ${name}`);

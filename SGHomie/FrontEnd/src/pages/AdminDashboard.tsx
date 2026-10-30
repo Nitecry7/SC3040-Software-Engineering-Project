@@ -6,7 +6,8 @@ import { useAuth } from '../contexts/AuthContext';
 // Import Supabase client to perform database operations.
 import { supabase } from '../lib/supabase';
 // Import various icons from lucide-react for UI elements such as buttons and status indicators.
-import { Users, Home, Mail, Send, Trash2, Store, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { Users, Home, Mail, Send, Trash2, Store, CheckCircle, XCircle, Clock, Activity } from 'lucide-react';
+import AdminMonitoring from '../components/AdminMonitoring';
 // Import toast for displaying notifications to the user.
 import toast from 'react-hot-toast';
 
@@ -49,7 +50,7 @@ interface Enquiry {
 }
 
 // Define a type for tab selection to manage which dashboard section is shown.
-type TabType = 'users' | 'enquiries' | 'properties';
+type TabType = 'users' | 'enquiries' | 'properties' | 'monitoring';
 
 // The main AdminDashboard component encapsulates all the functionality for the admin panel.
 const AdminDashboard = () => {
@@ -288,7 +289,7 @@ const AdminDashboard = () => {
   }
 
   // Display an error message if the dashboard fails to load.
-  if (error) {
+  if (error && activeTab !== 'monitoring') {
     return (
       <div className="pt-16 min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -299,6 +300,12 @@ const AdminDashboard = () => {
             className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
             Retry
+          </button>
+          <button
+            onClick={() => setActiveTab('monitoring')}
+            className="ml-3 mt-4 px-4 py-3 rounded-lg border border-blue-600 text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+          >
+            Open System Monitoring
           </button>
         </div>
       </div>
@@ -320,7 +327,7 @@ const AdminDashboard = () => {
         </div>
 
         {/* Dashboard Stats: Displays counts for users, properties, and enquiries */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        {!error && <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <div className="bg-white rounded-lg shadow-md p-6">
             <div className="flex items-center">
               <Users className="h-8 w-8 text-blue-600" />
@@ -357,13 +364,13 @@ const AdminDashboard = () => {
               </div>
             </div>
           </div>
-        </div>
+        </div>}
 
         {/* Tabs for managing Users, Properties, and Enquiries */}
         <div className="bg-white rounded-lg shadow-md overflow-hidden mb-8">
           {/* Tab navigation */}
           <div className="border-b border-gray-200">
-            <nav className="flex -mb-px">
+            <nav className="flex -mb-px flex-wrap" aria-label="Admin sections">
               <button
                 onClick={() => setActiveTab('users')}
                 className={`py-4 px-6 text-center border-b-2 font-medium text-sm ${
@@ -397,11 +404,24 @@ const AdminDashboard = () => {
                 <Mail className="h-5 w-5 inline-block mr-2" />
                 Manage Enquiries
               </button>
+              <button
+                onClick={() => setActiveTab('monitoring')}
+                aria-pressed={activeTab === 'monitoring'}
+                className={`py-4 px-6 text-center border-b-2 font-medium text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 ${
+                  activeTab === 'monitoring'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                <Activity className="h-5 w-5 inline-block mr-2" aria-hidden="true" />
+                System Monitoring
+              </button>
             </nav>
           </div>
 
           {/* Tab content rendering based on the active tab */}
           <div className="p-6">
+            {activeTab === 'monitoring' && <AdminMonitoring />}
             {/* Users Tab Content */}
             {activeTab === 'users' && (
               <div>
