@@ -19,6 +19,7 @@ MLPricePredictorV2/artifacts/
 __pycache__/
 .pytest_cache/
 .test-results/
+/test-results/
 .coverage
 coverage.xml
 *.pyc

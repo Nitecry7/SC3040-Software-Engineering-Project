@@ -8,8 +8,8 @@ export interface IdleSessionDependencies {
   now?: () => number;
   readActivity: () => number | null;
   writeActivity: (timestamp: number) => void;
-  schedule: (callback: () => void, delay: number) => ReturnType<typeof setTimeout>;
-  cancel: (timer: ReturnType<typeof setTimeout>) => void;
+  schedule: (callback: () => void, delay: number) => ReturnType<typeof window.setTimeout>;
+  cancel: (timer: ReturnType<typeof window.setTimeout>) => void;
   onWarning: (visible: boolean, expiresAt: number) => void;
   onExpire: () => void;
   idleTimeoutMs?: number;
@@ -52,7 +52,7 @@ export function createIdleSession(dependencies: IdleSessionDependencies): IdleSe
   let warningVisible = false;
   let expired = false;
   let stopped = true;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let timer: ReturnType<typeof window.setTimeout> | undefined;
   let lastPersistedAt = 0;
 
   const setWarning = (visible: boolean) => {

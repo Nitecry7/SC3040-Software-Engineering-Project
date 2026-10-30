@@ -107,7 +107,7 @@ test('registration keeps a persistent verification confirmation and returns to s
   assert.deepEqual(app.errors, []);
   assert.equal(app.requests.length, 1);
   assert.equal(app.requests[0].method, 'register');
-  app.click('Back to Sign In');
+  app.click('Go to Sign In');
   assert.match(content(app.render()), /Sign in to your account/);
   assert.equal(app.value('email'), 'buyer@example.invalid');
   assert.equal(app.value('password'), '');

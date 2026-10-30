@@ -1,4 +1,3 @@
-import React from 'react';
 import { Shield, Clock, Award, Users } from 'lucide-react';
 
 const WhyChooseUs = () => {

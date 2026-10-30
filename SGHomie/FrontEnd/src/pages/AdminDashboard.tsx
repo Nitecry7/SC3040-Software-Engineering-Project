@@ -1,5 +1,5 @@
 // Import React and its hooks used for state management, side effects, and navigation.
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 // Import custom auth context to check authenticated user details.
 import { useAuth } from '../contexts/AuthContext';

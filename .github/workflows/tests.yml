@@ -22,8 +22,8 @@ jobs:
         working-directory: SGHomie/FrontEnd
       - name: All existing and new application tests
         run: |
-          mkdir -p .test-results
-          node --experimental-strip-types --import ./SGHomie/tests/register-deno-imports.mjs --test --test-reporter=junit --test-reporter-destination=.test-results/application.xml SGHomie/tests/*.test.mjs
+          mkdir -p test-results
+          node --experimental-strip-types --import ./SGHomie/tests/register-deno-imports.mjs --test --test-reporter=junit --test-reporter-destination=test-results/application.xml SGHomie/tests/*.test.mjs
       - name: Lint
         if: always()
         run: npm run lint
@@ -40,7 +40,7 @@ jobs:
         if: always()
         with:
           name: application-test-results
-          path: .test-results/
+          path: test-results/
 
   valuation:
     runs-on: ubuntu-latest

@@ -127,6 +127,10 @@ test('malformed success responses are rejected instead of rendered', async () =>
     { data: { ...valuation, interval_half_width: 1 }, request_id: 'request-1' },
     { data: { ...valuation, interval_full_width: 1 }, request_id: 'request-1' },
     { data: { ...valuation, uncertainty_group: ' ' }, request_id: 'request-1' },
+    ...[undefined, null, '2209', -1, 2.5].map(uncertainty_support => ({
+      data: { ...valuation, uncertainty_support },
+      request_id: 'request-1',
+    })),
   ];
 
   for (const invocation of malformedResponses) {
