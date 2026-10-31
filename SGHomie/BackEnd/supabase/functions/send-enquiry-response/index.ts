@@ -12,13 +12,31 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Parse request body
-    const { enquiryId, response } = await req.json();
+    const authorization = req.headers.get('Authorization');
+    if (!authorization) {
+      return Response.json({ error: 'Authentication required' }, { status: 401, headers: corsHeaders });
+    }
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceKey) {
+      throw new Error('Missing required environment variables');
+    }
+
+    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authorization } },
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data: authData, error: authError } = await authClient.auth.getUser();
+    if (authError || !authData.user) {
+      return Response.json({ error: 'Invalid authentication' }, { status: 401, headers: corsHeaders });
+    }
 
     // Initialize Supabase client
     const supabaseClient = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
+      supabaseUrl,
+      supabaseServiceKey,
       {
         auth: {
           autoRefreshToken: false,
@@ -26,6 +44,20 @@ Deno.serve(async (req) => {
         },
       }
     );
+
+    // A valid JWT alone does not authorize sending replies. Match the existing
+    // admin-user endpoint's server-side role check before reading private data.
+    const { data: adminProfile, error: adminError } = await supabaseClient
+      .from('user_profiles')
+      .select('is_admin')
+      .eq('id', authData.user.id)
+      .maybeSingle();
+    if (adminError) throw adminError;
+    if (!adminProfile?.is_admin) {
+      return Response.json({ error: 'Admin privileges required' }, { status: 403, headers: corsHeaders });
+    }
+
+    const { enquiryId, response } = await req.json();
 
     // Get enquiry details
     const { data: enquiry, error: enquiryError } = await supabaseClient

@@ -41,7 +41,15 @@ const fetchProperties = async (filters: SearchFilters): Promise<SearchProperty[]
     .eq('status', 'approved');
 
   if (filters.location !== 'ALL') query = query.eq('location', filters.location);
-  if (filters.roomType !== 'ALL') query = query.eq('bedrooms', parseInt(filters.roomType.split(' ')[0], 10));
+  if (filters.roomType !== 'ALL') {
+    if (!ROOM_TYPES.includes(filters.roomType)) throw new Error('Unsupported flat size');
+    // HDB flat size is distinct from bedroom count. Match the same controlled
+    // title/description patterns used by the chatbot's listing search.
+    const pattern = filters.roomType === 'EXECUTIVE'
+      ? '(^|[^[:alpha:]])executive([^[:alpha:]]|$)'
+      : `(^|[^0-9])${filters.roomType[0]}[-[:space:]]+room([^[:alpha:]]|$)`;
+    query = query.or(`title.imatch."${pattern}",description.imatch."${pattern}"`);
+  }
   if (filters.minPrice) query = query.gte('price', Number(filters.minPrice));
   if (filters.maxPrice) query = query.lte('price', Number(filters.maxPrice));
 
@@ -239,7 +247,7 @@ const Search = () => {
                       </div>
                       <p className="mt-2 flex items-center gap-1.5 text-sm text-slate-600"><MapPin className="h-4 w-4 shrink-0 text-slate-400" />{property.location}</p>
                       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-500">
-                        <span className="inline-flex items-center gap-1"><BedDouble className="h-3.5 w-3.5" />{property.bedrooms} rooms</span>
+                        <span className="inline-flex items-center gap-1"><BedDouble className="h-3.5 w-3.5" />{property.bedrooms} bedrooms</span>
                         <span className="inline-flex items-center gap-1"><Bath className="h-3.5 w-3.5" />{property.bathrooms} baths</span>
                         <span className="inline-flex items-center gap-1"><Ruler className="h-3.5 w-3.5" />{property.area_sqft.toLocaleString()} sqft</span>
                       </div>

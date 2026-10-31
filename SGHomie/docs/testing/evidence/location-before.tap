@@ -1,0 +1,106 @@
+TAP version 13
+# (node:72181) ExperimentalWarning: stripTypeScriptTypes is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: BE-LOC-01 preflight and unsupported methods do not initialize clients or contact providers
+ok 1 - BE-LOC-01 preflight and unsupported methods do not initialize clients or contact providers
+  ---
+  duration_ms: 46.881709
+  type: 'test'
+  ...
+# Subtest: BE-LOC-02 missing session is rejected before SDK or provider access
+ok 2 - BE-LOC-02 missing session is rejected before SDK or provider access
+  ---
+  duration_ms: 2.142666
+  type: 'test'
+  ...
+# Subtest: BE-LOC-03 invalid session and buyer roles fail before address lookup or verification writes
+ok 3 - BE-LOC-03 invalid session and buyer roles fail before address lookup or verification writes
+  ---
+  duration_ms: 3.65025
+  type: 'test'
+  ...
+# Subtest: BE-LOC-04 postal-code equivalence partitions reject malformed inputs before network access
+ok 4 - BE-LOC-04 postal-code equivalence partitions reject malformed inputs before network access
+  ---
+  duration_ms: 12.630375
+  type: 'test'
+  ...
+# Subtest: BE-LOC-05 accepted postal formats normalize and produce seller-bound authoritative verification
+ok 5 - BE-LOC-05 accepted postal formats normalize and produce seller-bound authoritative verification
+  ---
+  duration_ms: 10.284
+  type: 'test'
+  ...
+# Subtest: BE-LOC-06 fuzzy postal matches are rejected without HDB queries or tokens
+ok 6 - BE-LOC-06 fuzzy postal matches are rejected without HDB queries or tokens
+  ---
+  duration_ms: 1.78525
+  type: 'test'
+  ...
+# Subtest: BE-LOC-07 street abbreviation fallback still requires the same block and street
+ok 7 - BE-LOC-07 street abbreviation fallback still requires the same block and street
+  ---
+  duration_ms: 6.61625
+  type: 'test'
+  ...
+# Subtest: BE-LOC-08 unknown and nonresidential HDB addresses issue no verification token
+ok 8 - BE-LOC-08 unknown and nonresidential HDB addresses issue no verification token
+  ---
+  duration_ms: 3.267958
+  type: 'test'
+  ...
+# Subtest: BE-LOC-09 expired OneMap authentication refreshes once and cached fresh tokens are reused
+ok 9 - BE-LOC-09 expired OneMap authentication refreshes once and cached fresh tokens are reused
+  ---
+  duration_ms: 1.845375
+  type: 'test'
+  ...
+# Subtest: BE-LOC-10 repeated token rejection stops after one refresh and returns service unavailability
+ok 10 - BE-LOC-10 repeated token rejection stops after one refresh and returns service unavailability
+  ---
+  duration_ms: 1.662
+  type: 'test'
+  ...
+# Subtest: BE-LOC-11 upstream authentication and dataset failures cannot become verified addresses
+ok 11 - BE-LOC-11 upstream authentication and dataset failures cannot become verified addresses
+  ---
+  duration_ms: 3.868
+  type: 'test'
+  ...
+# Subtest: BE-LOC-12 nonfinite coordinates and verification persistence failure fail closed
+ok 12 - BE-LOC-12 nonfinite coordinates and verification persistence failure fail closed
+  ---
+  duration_ms: 2.819416
+  type: 'test'
+  ...
+# Subtest: BE-LOC-13 missing blank zero or geographically invalid coordinates cannot be verified as an HDB location
+not ok 13 - BE-LOC-13 missing blank zero or geographically invalid coordinates cannot be verified as an HDB location
+  ---
+  duration_ms: 2.962959
+  type: 'test'
+  location: '/Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/hdb-location-endpoint.test.mjs:178:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    {"LATITUDE":"","LONGITUDE":""}
+    
+    200 !== 503
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 503
+  actual: 200
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (file:///Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/hdb-location-endpoint.test.mjs:186:12)
+    async Test.run (node:internal/test_runner/test:1054:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+1..13
+# tests 13
+# suites 0
+# pass 12
+# fail 1
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 135.365625

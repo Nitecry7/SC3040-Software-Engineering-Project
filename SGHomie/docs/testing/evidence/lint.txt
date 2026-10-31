@@ -1,0 +1,13 @@
+
+> vite-react-typescript-starter@0.0.0 lint
+> eslint .
+
+
+/Users/glenn/Desktop/NTU/SC3040/SGHomie/FrontEnd/src/contexts/AuthContext.tsx
+  24:14  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+/Users/glenn/Desktop/NTU/SC3040/SGHomie/FrontEnd/src/main.tsx
+  6:10  warning  Fast refresh only works when a file has exports. Move your component(s) to a separate file  react-refresh/only-export-components
+
+✖ 2 problems (0 errors, 2 warnings)
+
