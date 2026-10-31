@@ -32,3 +32,5 @@ coverage.xml
 .branches/
 /SGHomie/BackEnd/supabase/fixtures/sghomie-demo-listings-2026-10-07.csv
 /SGHomie/evals/chatbot/results/
+
+/AGENTS.md

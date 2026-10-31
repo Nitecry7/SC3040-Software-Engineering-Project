@@ -6,10 +6,33 @@
 
 | Service | Source and expected owner | Repository evidence | Hosted status |
 | --- | --- | --- | --- |
-| Frontend | `SGHomie/FrontEnd/` → Netlify; expected production branch `main` | React/Vite frontend; this repository has no Netlify deployment configuration | **Deployment-dependent / not verified.** Confirm the linked repository, production branch, build command, publish directory and environment variables in Netlify. |
+| Frontend | `SGHomie/FrontEnd/` → Netlify; production settings are managed outside this repository | React/Vite frontend; this repository has no Netlify deployment configuration | **Team-reported reachability and login check on 2026-11-01.** Confirm the linked repository, production branch, build command, publish directory and environment variables in Netlify; the manual check does not verify those settings. |
 | Auth and PostgreSQL/RLS | Supabase project | `SGHomie/BackEnd/supabase/config.toml`, migrations and Edge Functions | **Deployment-dependent.** Repository state does not show which project is linked, which migrations are applied, or which policies are hosted. |
 | Edge Functions | Supabase Functions | `SGHomie/BackEnd/supabase/functions/` | **Explicit deployment required.** A Git merge does not deploy function code. Verify each function version in Supabase. |
-| Valuation API | Render FastAPI service | Root `render.yaml` points to `MLPricePredictorV2/`, uses `/health`, pins the research bundle, sets `branch: faheem`, and has automatic deployment off | **Deployment-dependent.** The checked-in branch differs from the requested Netlify production branch expectation. Confirm Render’s linked branch and deployed commit in its dashboard. |
+| Valuation API | Render FastAPI service | Root `render.yaml` points to `MLPricePredictorV2/`, uses `/health`, pins the research bundle, sets `branch: main`, and has automatic deployment off | **Deployment-dependent.** The Blueprint source branch is `main`; confirm Render’s linked branch and deployed commit in its dashboard. |
+
+## Release verification snapshot: 1 November 2026
+
+The following are team-supplied, point-in-time observations for the final `main`
+release candidate at `db1385e1caab3f090eb95fcbf39c77bee6ce6711`:
+
+- The project owner supplied [the live frontend URL](https://sghomie.netlify.app/).
+  The team reports that frontend reachability and login were manually verified
+  on 1 November 2026.
+- The GitHub Actions `Repository tests` workflow passed its Application,
+  Valuation, and Database jobs on the final integration merge to `main`.
+- The hosted Chatbot synthetic-canary authentication issue remains deferred due
+  to the service-to-service authentication integration. No successful hosted
+  Chatbot authentication or availability check is claimed.
+- One hosted Valuation synthetic check was previously observed succeeding with
+  expected and observed model `hdb-catboost-2025-12-v1`. This is a single
+  point-in-time serving-path result, not continuous availability or model
+  accuracy evidence.
+- Continuous outside-in availability monitoring is not implemented.
+
+These supplied observations do not establish hosted Supabase migration or
+function versions, scheduler state, or future service availability. Verify each
+hosting control plane separately before relying on deployment state.
 
 The valuation API is a research/demo service, not an approved production valuation system. Its `/health` endpoint reports minimal model readiness only; do not interpret it as an end-to-end application health check. See the [valuation service documentation](../../../MLPricePredictorV2/README.md) and the [Supabase serving notes](../../BackEnd/supabase/README.md).
 
@@ -100,7 +123,7 @@ Repository Node/Python tests and GitHub CI do not prove the hosted migration/fun
 
 The repository contains an admin-only `admin-monitoring` Edge Function and a System Monitoring tab under the existing `/admin` page. The function uses Supabase `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` server-side, plus `VALUATION_API_URL`, `VALUATION_SERVICE_TOKEN`, and optional `VALUATION_EXPECTED_MODEL_VERSION`. Keep these server settings out of frontend variables. The function independently verifies the user session and admin profile; repository configuration also sets `verify_jwt = true`.
 
-The Phase 7A no-body request and response fields remain supported. Phase 7B adds a versioned `dashboard_v2` contract and requires its database migration; it does not deploy automatically. Deployment commands below are instructions only and have not been run.
+The Phase 7A no-body request and response fields remain supported. Phase 7B adds a versioned `dashboard_v2` contract and requires its database migration; it does not deploy automatically. The commands below are operational instructions, not evidence of deployment; check the intended project's control plane and the release snapshot above.
 
 Phase 7C adds an explicit `read_summary` action for persisted monitoring history without a Render probe, a range-aware `health_check` action for deliberate on-demand probing and incident evaluation, and a lightweight read-only `badge` action. Deploy the updated `admin-monitoring` function before the Phase 7C frontend. The frontend detects an older backend and displays an upgrade-required state. Verify that chart refreshes and range changes create no new `service_health_checks` records, while one deliberate health check creates one observation with source `admin_view`. Check the selected range is retained. The no-body Phase 7A request must remain compatible.
 
@@ -123,9 +146,9 @@ For an approved future hosted rollout, preserve this order:
 7. Generate controlled real traffic, then verify recorded valuation/chat metrics, safe request correlation, and percentile states.
 8. Verify alert lifecycle with safe controlled conditions and verify cleanup scheduling separately; never infer scheduling from the function's presence.
 
-For Phase 7C verification, inspect Overview, Services, Chatbot, Valuation, Security and Feedback at desktop and narrow widths. Confirm recorded-event labels, Singapore timestamps and Today-so-far buckets; accessible chart tables; insufficient-sample and unavailable states; safe request-ID details; manual acknowledgement/resolution; and a hidden monitoring badge on badge-read failure. Test a slow or failed refresh: previously displayed values and their original freshness time must remain visible. The hosted canary remains deferred. These are post-deployment checks, not evidence that the repository implementation is already hosted.
+For Phase 7C verification, inspect Overview, Services, Chatbot, Valuation, Security and Feedback at desktop and narrow widths. Confirm recorded-event labels, Singapore timestamps and Today-so-far buckets; accessible chart tables; insufficient-sample and unavailable states; safe request-ID details; manual acknowledgement/resolution; and a hidden monitoring badge on badge-read failure. Test a slow or failed refresh: previously displayed values and their original freshness time must remain visible. Chatbot synthetic-canary authentication remains deferred; one point-in-time hosted Valuation check is recorded in the release snapshot above. These are post-deployment checks, not evidence that the repository implementation is already hosted.
 
-No migration, function, frontend deployment, hosted schedule, or hosted state change is part of this implementation. Telegram and outside-in monitor integrations remain later phases; the hosted synthetic valuation canary remains deferred.
+The original Phase 7C repository implementation did not itself apply migrations, deploy functions or the frontend, or configure hosted schedules. The final release observations are summarized above; verify current hosted state separately. Telegram and continuous outside-in monitor integrations remain later phases.
 ### Phase 4 chatbot telemetry and feedback
 
 **Implemented in repository; deployment verification pending.** Migration
@@ -212,7 +235,7 @@ For an approved deployment, verify each migration and function version in the in
 For each release, record date, environment, source commit, services changed, migration/function/model versions, checks performed, observed result, rollback decision and unresolved follow-up. Redact project credentials, user data and request secrets from the record.
 ### Phase 7D on-demand synthetic checks
 
-**Implemented in the repository; no hosted migration or function deployment has been performed.** The System Monitoring Services tab offers separate admin-triggered Chatbot and Valuation checks. They are never run on page load, Refresh Data, range changes, or the Render/model Health Check. Results are stored in `synthetic_canary_runs` and displayed as the latest point-in-time result independently of the selected history range. Single failures do not create monitoring alerts.
+**Implemented in the repository.** The System Monitoring Services tab offers separate admin-triggered Chatbot and Valuation checks. They are never run on page load, Refresh Data, range changes, or the Render/model Health Check. Results are stored in `synthetic_canary_runs` and displayed as the latest point-in-time result independently of the selected history range. Single failures do not create monitoring alerts. This runbook does not determine whether the migration or function versions are deployed in a hosted project; verify the intended target separately.
 
 #### Safe hosted rollout order
 
@@ -230,4 +253,4 @@ deployed.
 
 Synthetic results have a 90-day retention target. The migration extends `cleanup_monitoring_data()` but does not schedule it. Configure and verify a daily hosted invocation using the approved project scheduler before treating the target as operational. Maintain the same caution for the existing valuation events, health checks and resolved-alert cleanup.
 
-No synthetic check runs during this repository task. Hosted secrets/configuration, canonical fixture state, migration application, function versions, provider reachability and scheduler state remain deployment-dependent and must be verified separately.
+The release snapshot above records one previously observed hosted Valuation check; the hosted Chatbot check remains deferred. Hosted secrets/configuration, canonical fixture state, migration application, function versions, provider reachability and scheduler state remain deployment-dependent and must be verified separately. A point-in-time check is not continuous monitoring.

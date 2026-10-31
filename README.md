@@ -156,7 +156,7 @@ and buyer/seller context while preserving login, saved preferences and drafts.
 
 | Status | Capability in this repository |
 | --- | --- |
-| ✅ **Implemented** | Buyer listing search, property details, enquiries, seller drafts, admin listing workflows, structured buyer chatbot search, and repository support for admin monitoring, bounded feedback inspection, and on-demand synthetic checks. This describes repository code, not current hosted deployment. |
+| ✅ **Implemented** | Buyer listing search, property details, enquiries, seller drafts, admin listing workflows, structured buyer chatbot search, and the repository synthetic-check framework with bounded feedback inspection. Hosted Chatbot synthetic-check authentication remains deferred; no continuous availability monitoring is implemented. This describes repository code, not hosted deployment. |
 | 🧪 **Research/demo** | Buyer valuation uses a research model and serving path. Its estimate and conformal target coverage do not provide an official valuation or a property-specific probability guarantee. |
 | 🏷️ **Demo data** | Nearby amenity records are synthetic demo data, not verified facilities. Market analytics include generated or hardcoded values; they are not verified market evidence. HDB address verification does not prove that every listing fact is genuine. |
 | 🛠️ **Planned** | Explainable personalized ranking, real amenity ingestion, historical transaction analytics, and CatBoost-based seller pricing guidance are not implemented. Search and sorting are not personalized recommendation ranking. |
@@ -358,8 +358,8 @@ SC3040-Software-Engineering-Project/
 | 📈 [Monitoring and test plan](SGHomie/docs/operations/monitoring-test-plan.md) | Current signals, production checks, and phased roadmap |
 | 🤖 [Valuation research and inference](MLPricePredictorV2/README.md) | Leakage-safe research, evaluation, bundle, and API |
 | 🧪 [Historical testing report](SGHomie/docs/testing/test-report.md) | Original pre-merge results and preserved evidence |
-| 🔄 [Historical main merge verification](SGHomie/docs/testing/merge-verification.md) | 28 October 2026 `main` snapshot; not the current `faheem` result |
-| ▶️ [Running the tests](SGHomie/tests/README.md) | Current `faheem` verification summary, application, ML, local database, evidence capture, and CI commands |
+| 🔄 [Historical main merge verification](SGHomie/docs/testing/merge-verification.md) | 28 October 2026 `main` snapshot, retained as historical evidence |
+| ▶️ [Running the tests](SGHomie/tests/README.md) | Final `main` release verification, application, ML, local database, evidence capture, and CI commands |
 | ⚠️ [Archived migrations](archived_migrations/README.md) | Historical migration notice |
 
 ## 👥 Contributors

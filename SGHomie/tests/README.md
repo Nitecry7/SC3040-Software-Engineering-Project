@@ -1,10 +1,10 @@
 # Running SG Homie tests
 
-## Current verification snapshot
+## Final `main` release verification
 
-At `faheem` commit `5358d5a298ae03105cf34502639462d2a06fc407`, the supplied verification results are: **439 local Node test cases passed**; the GitHub Actions application job passed; **324 Python valuation tests passed in CI**; and the disposable database suite passed **128 pgTAP assertions** (47 access-control, 65 monitoring, 16 synthetic canary). The CI lint completed with **0 errors and 2 existing warnings**; the actual app TypeScript project (`tsconfig.app.json`) and production build passed.
+Following the final integration merge to `main` at `db1385e1caab3f090eb95fcbf39c77bee6ce6711`, the supplied GitHub Actions `Repository tests` run passed all three jobs: Application, Valuation, and Database. Final local verification passed **439 Node tests**. CI passed **324 Python valuation tests** and **128 database pgTAP assertions**: 47 access-control/Storage, 65 monitoring, and 16 synthetic-canary persistence/security assertions. The disposable CI database applied all **24 repository migrations**; monitoring concurrency coverage passed **24 concurrent monitoring alert observations**. CI lint reported **0 errors and 2 existing non-blocking Fast Refresh warnings**; the actual app TypeScript project (`tsconfig.app.json`) and production build passed.
 
-These results describe repository tests and an isolated CI database. They do not verify a hosted Supabase migration, live Edge Function, provider availability, Netlify deployment, browser journey, or production authentication. The hosted chatbot synthetic-canary authentication issue remains deferred. The [October 28 `main` merge report](../docs/testing/merge-verification.md) and [initial pre-merge report](../docs/testing/test-report.md) are historical snapshots; their original counts and evidence remain unchanged.
+Local Node tests and GitHub Actions are separate evidence. The database job uses an isolated disposable CI database; it does not verify hosted Supabase migrations or Edge Function versions. A separate team report says the live frontend and login were manually verified on 1 November 2026; see the [deployment runbook](../docs/operations/deployment-runbook.md#release-verification-snapshot-1-november-2026). The hosted Chatbot synthetic-canary authentication issue remains deferred. No CI result establishes continuous availability or chatbot production authentication. The [October 28 `main` merge report](../docs/testing/merge-verification.md) and [initial pre-merge report](../docs/testing/test-report.md) remain historical snapshots; their original counts and evidence are unchanged.
 
 ## Application tests
 
