@@ -336,11 +336,10 @@ test('protected authorization remains loading through profile and role lookup', 
   cleanup();
 });
 
-test('auth events deduplicate startup lookup and refresh roles after it resolves', async () => {
+test('same-user session recovery and auth events preserve resolved profile and protected routes', async () => {
   const startupProfile = deferred();
-  const refreshedProfile = deferred();
   const harness = authHarness();
-  harness.profileResponses.push(startupProfile, refreshedProfile);
+  harness.profileResponses.push(startupProfile);
   const cleanup = harness.start();
   const session = { user: { id: 'seller-1' } };
 
@@ -359,21 +358,64 @@ test('auth events deduplicate startup lookup and refresh roles after it resolves
   assert.equal(harness.value().loading, false);
   assert.equal(harness.value().isSeller, true);
 
-  harness.authEvent('TOKEN_REFRESHED', session);
-  assert.equal(harness.queries.length, 2);
+  const route = protectedRouteHarness(harness.value());
+  assert.equal(route.render('AdminDashboard').props.children, 'AdminDashboard');
+  route.flushEffects();
+  let expectedUser = harness.value().user;
+  for (const event of [
+    'SIGNED_IN',
+    'TOKEN_REFRESHED',
+    'USER_UPDATED',
+    'PASSWORD_RECOVERY',
+    'MFA_CHALLENGE_VERIFIED',
+    'INITIAL_SESSION',
+  ]) {
+    const eventSession = { user: { id: 'seller-1', event } };
+    harness.authEvent(event, eventSession);
+    if (event === 'USER_UPDATED') expectedUser = eventSession.user;
+    assert.strictEqual(harness.value().user, expectedUser, `${event} does not replace the User object unless user details changed`);
+    assert.equal(harness.queries.length, 1, `${event} does not query profile data again`);
+    assert.equal(harness.value().profileLoading, false, `${event} does not restart profile loading`);
+    assert.equal(harness.value().loading, false, `${event} does not activate the route loading fallback`);
+    assert.equal(harness.value().isSeller, true, `${event} preserves resolved role state`);
+    route.setAuth(harness.value());
+    assert.equal(route.render('AdminDashboard').props.children, 'AdminDashboard', `${event} keeps protected content mounted`);
+  }
+  cleanup();
+});
+
+test('a different registered account still blocks protected routes until its roles resolve', async () => {
+  const firstProfile = deferred();
+  const secondProfile = deferred();
+  const harness = authHarness();
+  harness.profileResponses.push(firstProfile, secondProfile);
+  harness.start();
+  harness.authEvent('SIGNED_IN', { user: { id: 'seller-1' } });
+  firstProfile.resolve({ data: { ...completeBuyerProfile.data, is_seller: true }, error: null });
+  await setImmediate();
+
+  const route = protectedRouteHarness(harness.value());
+  assert.equal(route.render('AdminDashboard').props.children, 'AdminDashboard');
+  harness.authEvent('SIGNED_IN', { user: { id: 'buyer-2' } });
+  assert.equal(harness.queries.length, 2, 'a new account receives its own profile and role check');
+  assert.equal(harness.value().user.id, 'buyer-2');
   assert.equal(harness.value().profileLoading, true);
-  refreshedProfile.resolve({ data: { ...completeBuyerProfile.data, is_seller: true }, error: null });
+  assert.equal(harness.value().loading, true);
+  assert.equal(harness.value().isSeller, false, 'old-account role state is cleared');
+  route.setAuth(harness.value());
+  assert.equal(route.render('AdminDashboard').props.children.props.children, 'Loading...', 'protected content waits for the new account check');
+
+  secondProfile.resolve(completeBuyerProfile);
   await setImmediate();
   assert.equal(harness.value().loading, false);
-  cleanup();
+  assert.equal(harness.value().isSeller, false);
 });
 
 test('seller registration refreshes the current profile role before protected navigation', async () => {
   const initialProfile = deferred();
-  const pendingTokenRefresh = deferred();
   const updatedProfile = deferred();
   const harness = authHarness();
-  harness.profileResponses.push(initialProfile, pendingTokenRefresh, updatedProfile);
+  harness.profileResponses.push(initialProfile, updatedProfile);
   const cleanup = harness.start();
   const session = { user: { id: 'new-seller-1' } };
   harness.authEvent('SIGNED_IN', session);
@@ -382,11 +424,10 @@ test('seller registration refreshes the current profile role before protected na
   assert.equal(harness.value().isSeller, false);
 
   harness.authEvent('TOKEN_REFRESHED', session);
-  assert.equal(harness.queries.length, 2);
+  assert.equal(harness.queries.length, 1, 'token refresh alone preserves existing role state');
   const refreshed = harness.value().refreshProfile();
-  assert.equal(harness.queries.length, 3, 'seller registration refresh bypasses an older in-flight role lookup');
+  assert.equal(harness.queries.length, 2, 'explicit role refresh still reads updated registration state');
   assert.equal(harness.value().profileLoading, true);
-  pendingTokenRefresh.resolve({ data: { ...completeBuyerProfile.data, is_seller: false }, error: null });
   updatedProfile.resolve({ data: { ...completeBuyerProfile.data, is_seller: true }, error: null });
   assert.equal((await refreshed).isSeller, true);
   assert.equal(harness.value().isSeller, true);
