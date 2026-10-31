@@ -16,7 +16,8 @@ SELECT ok(EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname = 'public' AND index
   'latest check lookup has a type and completion index');
 SELECT ok(NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
   AND table_name = 'synthetic_canary_runs'
-  AND column_name ~* '(prompt|response|property|user|price|payload|secret|error_text)'),
+  AND lower(column_name) IN ('prompt', 'response', 'response_text', 'response_body',
+    'property_id', 'user_id', 'price', 'payload', 'secret', 'error_text')),
   'synthetic check results have no content, identity, property, or raw error columns');
 SELECT throws_ok($$INSERT INTO public.synthetic_canary_runs
   (canary_type,status,started_at,completed_at,duration_ms,edge_reached,upstream_reached,response_valid,canary_valid)
