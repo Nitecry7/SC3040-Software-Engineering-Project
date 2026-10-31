@@ -37,23 +37,148 @@ documented in [Chatbot sell flow](../../docs/sell-flow.md).
 
 For visual overviews of both structured chatbot paths, see the [chatbot guide](../../docs/chatbot/README.md).
 
-The active migration path starts with one complete initial migration and then
-applies incremental migrations for the current application features:
+The active migration path contains **24 SQL migrations**: one complete initial
+schema followed by timestamp-ordered incremental changes.
 
-- `20250328092626_sghomie_initial.sql`
-- HDB postal-code validation, property image storage, chatbot drafts, and
-  admin-role constraints
-- `20260917120000_hdb_verification_tokens.sql` for server-enforced HDB writes
-- `20260917130000_remove_chatbot_rate_limits.sql` removes the chatbot counter
-- `20261008120000_deterministic_demo_property_amenities.sql` adds provenance and deterministic demo nearby amenities
-- `20261012120000_property_valuation_inputs.sql` adds nullable, provenance-labelled valuation inputs
-- `20261013140000_property_demo_batch_provenance.sql` adds canonical synthetic demo batch provenance and database-enforced eligibility invariants
-- `20261013150000_require_approved_demo_valuations.sql` replaces the demo completeness check to require approved listings while preserving fixture owner IDs
-- `20261026120000_authenticated_enquiry_insert.sql` restricts enquiry creation to authenticated users and binds new enquiry email/status fields to the caller
+1. `20250328092626_sghomie_initial.sql` — initial application schema and policies.
+2. `20260916120000_hdb_postal_lookup.sql` — HDB postal-code lookup support.
+3. `20260916133000_property_image_storage.sql` — property image storage policies.
+4. `20260916140000_remove_vault_image_cleanup.sql` — removes Vault-based image cleanup.
+5. `20260917090000_chatbot_sell_drafts.sql` — seller chatbot draft support.
+6. `20260917100000_admin_role_exclusivity.sql` — admin-role constraints.
+7. `20260917110000_chatbot_rate_limits.sql` — initial chatbot rate limits.
+8. `20260917120000_hdb_verification_tokens.sql` — server-enforced HDB write verification.
+9. `20260917130000_remove_chatbot_rate_limits.sql` — removes the chatbot counter.
+10. `20261008120000_deterministic_demo_property_amenities.sql` — amenity provenance and deterministic demo records.
+11. `20261012120000_property_valuation_inputs.sql` — nullable, provenance-labelled valuation inputs.
+12. `20261013120000_property_storey_range.sql` — property storey-range support.
+13. `20261013130000_preserve_explicit_property_coordinates.sql` — preserves explicitly supplied coordinates.
+14. `20261013140000_property_demo_batch_provenance.sql` — canonical demo-batch provenance and eligibility invariants.
+15. `20261013150000_require_approved_demo_valuations.sql` — requires approved listings for demo valuations.
+16. `20261026120000_authenticated_enquiry_insert.sql` — binds enquiry inserts to the authenticated caller.
+17. `20261026130000_chatbot_quotas_and_capacity.sql` — user quotas, provider capacity, and bounded cooldown state.
+18. `20261026140000_chat_telemetry_privacy_feedback.sql` — private interaction metadata, caller-owned feedback, and service-only cleanup.
+19. `20261026150000_redact_singapore_phone_feedback.sql` — best-effort Singapore phone redaction in feedback comments.
+20. `20261031120000_phase7_monitoring_data_api.sql` — restricted monitoring data access.
+21. `20261031130000_phase7_monitoring_recent_feedback.sql` — recent feedback summaries for monitoring.
+22. `20261031140000_phase7_feedback_inspection.sql` — bounded admin feedback inspection.
+23. `20261031141000_phase7_feedback_access_audit.sql` — audit records for feedback inspection.
+24. `20261031150000_phase7_synthetic_canary_runs.sql` — privacy-safe persisted synthetic-check results.
 
 The initial migration creates the full application schema, policies, views, and
 triggers for a fresh Supabase project. Later migrations must be applied in
 timestamp order with the initial schema.
+
+### Chatbot quotas and provider capacity
+
+The chatbot quota migration defines configurable `standard`, `tester` and
+`privileged` policy rows, protected tier assignments, bounded per-user state and
+a singleton project provider-capacity state. Initial application defaults are
+2/5 interactions per minute/day for standard, 10/25 for tester, and 20/minute
+with no per-user daily cap for privileged. A repeated burst-denial policy starts
+a 15-minute chatbot cooldown after five denials within ten minutes. The initial
+project reserve is 18 provider calls per minute and 45 per Singapore calendar
+day. These values are application settings, not guarantees about upstream
+provider capacity. PostgreSQL calculates the next Singapore calendar-day reset
+and returns its timestamp in quota snapshots; the frontend displays that
+server-provided weekday, date and time instead of estimating when access will
+return.
+
+The authenticated `reserve_chat_user_interaction()` RPC derives the user from
+`auth.uid()`. The `service_role`-only `reserve_chat_provider_call()` RPC protects
+the global reserve and cannot be called by ordinary authenticated users. Both
+functions serialize updates with row locks. Tier assignments and settings are
+trusted database operations; users cannot read or write those tables through
+the Data API. Admin or seller status does not grant a quota tier. To assign an
+authorized test account, confirm the target Supabase project, copy the account's
+Auth UUID from the Dashboard, then run this in the trusted SQL Editor:
+
+```sql
+INSERT INTO public.chat_quota_assignments (user_id, tier)
+VALUES ('<auth-user-uuid>'::uuid, 'privileged')
+ON CONFLICT (user_id) DO UPDATE SET tier = EXCLUDED.tier, updated_at = now();
+```
+
+Verify the account's next authenticated quota response reports `tier: privileged`,
+`minute_limit: 20`, `daily_limit: null` and `daily_remaining: null`. Privileged
+accounts still share the project-wide 18 provider calls/minute and 45/day caps,
+and remain subject to burst-abuse cooldowns. To assign `tester`, replace
+`'privileged'` above with `'tester'` and verify the returned tier and limits.
+
+Delete the assignment to restore the default `standard` tier:
+
+```sql
+DELETE FROM public.chat_quota_assignments WHERE user_id = '<auth-user-uuid>'::uuid;
+```
+
+Only a trusted database operator should run these statements or update the
+configuration tables. Do not grant table access or expose a tier-assignment RPC
+to authenticated users. After
+applying the migration, deploy the `chatbot` Edge Function and verify both the
+migration and function version in the target Supabase project. The function
+requires the platform-provided `SUPABASE_SERVICE_ROLE_KEY` only in its server
+environment; do not copy it to frontend configuration. No migration or
+function deployment is performed by this guide.
+
+### Chatbot telemetry, feedback and retention
+
+The Phase 4 migration stores one row for each authenticated AI interaction and
+one child row per outbound provider attempt. Anonymous onboarding and
+deterministic seller steps are excluded. User/assistant text is best-effort
+redacted before insert; seller workflow text is omitted. Redaction is not
+guaranteed to find every sensitive value. Normal Data API roles have no direct
+access to telemetry tables. `submit_chat_feedback()` derives ownership from
+`auth.uid()`, accepts only completed successful interactions, validates
+structured reasons and upserts one rating per interaction. Written feedback is
+redacted in the function before storage.
+
+`cleanup_chat_content()` clears redacted conversation text and written feedback
+after 30 days, closes stale `started` records after one hour, and drops
+user/conversation linkage when content expires while retaining metadata and
+structured reasons. Account deletion cascades while the user linkage remains.
+The cleanup function is granted only to `service_role`. To enable recurring
+cleanup, configure a daily Supabase Dashboard Cron job to run:
+
+```sql
+SELECT public.cleanup_chat_content();
+```
+
+Dashboard scheduling and migration application are deployment-dependent.
+Interaction creation is attempted before quota/provider processing. JSON
+responses wait for finalization; SSE finalization runs at stream EOF or
+cancellation and may complete just after the `[DONE]` event. Start, provider-call
+and finalization writes retry once with idempotent keys/updates. Failures emit
+structured logs containing only operation, outcome, attempt and interaction ID;
+they do not block chat or affect quota/security. Persistent start failure can
+leave an interaction unrecorded; persistent finalization failure leaves a
+`started` row for the cleanup function to close after one hour when scheduled.
+After applying both telemetry migrations, deploy the `chatbot` Edge Function
+and verify phone redaction, final status after streamed EOF, RPC/table
+permissions, feedback ownership, denial of direct telemetry reads, and cleanup
+against a synthetic expired fixture in the target project. Do not wait 30 days
+or alter real users' records for this check. No migration, schedule, or function
+deployment is performed by this guide.
+
+### Phase 7 monitoring, feedback inspection and synthetic results
+
+The five Phase 7 migrations add restricted monitoring data access, recent
+feedback summaries, bounded admin feedback inspection, an access-audit record,
+and persisted chatbot/valuation synthetic-check results. Feedback content is
+served through the authorized Edge Function path; ordinary users do not receive
+direct telemetry-table access. Inspection is bounded and audited before content
+is returned. The `synthetic_canary_runs` table stores safe status and operational
+metadata under service-only access, with cleanup support in the monitoring
+cleanup function. These tables and policies are covered by the repository's
+disposable database tests.
+
+Repository implementation and local/CI database tests do not show that these
+migrations, schedules or Edge Function versions are present in a hosted project.
+The hosted chatbot synthetic-canary authentication issue remains deferred. The
+internal fixed-marker check does not exercise user authentication, quotas,
+streaming, tools or the full user journey; no successful hosted chatbot
+authentication or production availability check is claimed. See the
+[deployment runbook](../../docs/operations/deployment-runbook.md#phase-7d-on-demand-synthetic-checks)
+for the separately controlled rollout procedure.
 
 Enquiry submission is registered-user only. The latest enquiry policy permits
 authenticated inserts only when the enquiry email matches the caller's Auth
@@ -62,7 +187,7 @@ authenticated email-scoped reads and admin management policies are preserved.
 
 ## Deterministic demo amenities
 
-The latest migration adds a `source` column to `public.property_amenities`,
+Migration `20261008120000_deterministic_demo_property_amenities.sql` adds a `source` column to `public.property_amenities`,
 defaulting existing and unspecified rows to `legacy`. Generated rows use
 `source = 'demo'` and one deterministic record per property for each category:
 Transport, School, Shopping, Healthcare, Food, Park, and Community. Distance and
@@ -211,6 +336,9 @@ sequenceDiagram
 
 ### Hosted serving observation and log correlation
 
+**Historical user-reported observation from 2026-10-18; not independently
+rechecked and not a current service or latency claim.**
+
 The buyer valuation path has been live-verified by the user with an
 authenticated request to the hosted function. The function response wraps the
 estimate and interval in `data`; it also returns a request ID. The Edge Function
@@ -228,6 +356,23 @@ credentials, property features, or raw private request headers into logs or
 shared incident notes. See [Supabase Function logs](https://supabase.com/docs/guides/functions/logging)
 and [Render service logs](https://render.com/docs/logging) for the respective
 log views.
+
+The repository now emits one structured `valuation_timing` event per handled
+POST at each service boundary. The Edge event includes its status, stable
+failure category, returned model version when valid, prediction sanity result,
+region, stage timings and total duration. The Render event includes the
+configured/loaded model version, safe returned model version, status,
+prediction sanity result, request ID and existing stage timings. Neither event
+contains property or user IDs, feature values, prediction amounts, tokens,
+authorization headers or raw exception text. `render_fetch_ms` is the total
+outbound HTTP fetch duration, not isolated network latency. Error responses
+also carry `X-Valuation-Request-ID` for log correlation; it is not an access
+credential. No valuation table or hosted log export is configured by this
+repository.
+
+The optional manual hosted synthetic canary and exact post-deployment checks
+are documented in the [deployment runbook](../../docs/operations/deployment-runbook.md)
+and [monitoring plan](../../docs/operations/monitoring-test-plan.md).
 
 The following is one user-provided, live-verified request from 2026-10-18, not
 an independently rechecked deployment or a benchmark:

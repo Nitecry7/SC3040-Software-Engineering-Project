@@ -1,5 +1,5 @@
-import React, { useEffect } from 'react';
-import { Navigate } from 'react-router-dom';
+import React, { useEffect, useRef } from 'react';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 
@@ -16,19 +16,27 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   signInMessage = 'Please sign in to access this feature',
   requiredRole,
 }) => {
-  const { user, needsProfileSetup, isSeller, isAdmin, loading } = useAuth();
+  const { user, authTransition, needsProfileSetup, isSeller, isAdmin, loading } = useAuth();
+  const { key: locationKey } = useLocation();
+  const authenticatedLocation = useRef<string | null>(null);
   const hasRegisteredUser = !!user && user.is_anonymous !== true;
   const hasRequiredRole = !requiredRole || (requiredRole === 'seller' ? isSeller : isAdmin);
 
   useEffect(() => {
+    if (hasRegisteredUser) authenticatedLocation.current = locationKey;
     if (loading) return;
-    if (!hasRegisteredUser) toast.error(signInMessage, { id: `protected-route-auth:${signInMessage}` });
-    else if (requireProfileSetup && needsProfileSetup) {
+    if (!hasRegisteredUser) {
+      // Route-specific messaging belongs only to fresh guest navigation.
+      // Known logout/session-end reasons are reported by the session lifecycle.
+      if (authTransition === null || authenticatedLocation.current !== locationKey) {
+        toast.error(signInMessage, { id: `protected-route-auth:${signInMessage}` });
+      }
+    } else if (requireProfileSetup && needsProfileSetup) {
       toast.error('Please complete your profile setup first', { id: 'protected-route-profile-setup' });
     } else if (requiredRole && !hasRequiredRole && !(requiredRole === 'seller' && isAdmin)) {
       toast.error('You do not have access to this page', { id: `protected-route-role:${requiredRole}` });
     }
-  }, [loading, hasRegisteredUser, needsProfileSetup, requireProfileSetup, requiredRole, hasRequiredRole, isAdmin, signInMessage]);
+  }, [loading, hasRegisteredUser, authTransition, locationKey, needsProfileSetup, requireProfileSetup, requiredRole, hasRequiredRole, isAdmin, signInMessage]);
 
   if (loading) {
     return (

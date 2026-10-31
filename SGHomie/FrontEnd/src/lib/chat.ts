@@ -4,9 +4,48 @@ import { parseSellerContext, type SellerFlowEvent } from '../../../BackEnd/supab
 export type { SellerContext, SellerDraftCard, SellerFlowEvent } from '../../../BackEnd/supabase/functions/_shared/sellerFlow.ts';
 export type { ListingSearchResult } from '../../../BackEnd/supabase/functions/_shared/listings.ts';
 
+export type ChatInteractionMetadata = { interaction_id: string; request_id: string; conversation_id: string; feedback_eligible: boolean };
+
 export const BUY_MESSAGE = 'I want to buy a house';
 
-export function chatFailureText(status?: number, code?: string): string {
+type ChatFailurePayload = {
+  retry_after_seconds?: unknown;
+  retry_at?: unknown;
+  quota?: { daily_reset_at?: unknown };
+};
+
+export function formatSingaporeResetTimestamp(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return undefined;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-SG', {
+    timeZone: 'Asia/Singapore', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  }).formatToParts(date).map(part => [part.type, part.value])) as Record<string, string>;
+  const { weekday, day, month, year, hour, minute, dayPeriod } = parts;
+  if (!weekday || !day || !month || !year || !hour || !minute || !dayPeriod) return undefined;
+  return `${weekday}, ${day} ${month} ${year} at ${hour}:${minute} ${dayPeriod.toUpperCase()}`;
+}
+
+export function chatFailureText(status?: number, code?: string, payload?: ChatFailurePayload): string {
+  if (code === 'CHAT_USER_BURST_LIMIT') {
+    const seconds = typeof payload?.retry_after_seconds === 'number' && Number.isFinite(payload.retry_after_seconds)
+      ? Math.max(1, Math.ceil(payload.retry_after_seconds)) : undefined;
+    return `You're sending messages a little too quickly. Please wait${seconds ? ` ${seconds} seconds` : ''} and try again.`;
+  }
+  if (code === 'CHAT_USER_DAILY_LIMIT') {
+    const reset = formatSingaporeResetTimestamp(payload?.quota?.daily_reset_at)
+      ?? formatSingaporeResetTimestamp(payload?.retry_at);
+    return `You've reached today's SG Homie AI allowance.${reset ? ` Your allowance resets ${reset} Singapore time.` : ' Please try again later.'}`;
+  }
+  if (code === 'CHAT_COOLDOWN_ACTIVE') {
+    const retry = formatSingaporeResetTimestamp(payload?.retry_at);
+    return `AI chat has been temporarily paused for this account because of repeated rapid requests.${retry ? ` You can try again at ${retry}.` : ' Please try again later.'}`;
+  }
+  if (code === 'CHAT_GLOBAL_CAPACITY') {
+    const retry = formatSingaporeResetTimestamp(payload?.retry_at);
+    return `SG Homie's AI service has reached its current capacity.${retry ? ` Please try again at ${retry}.` : ' Please try again later.'} The rest of SG Homie remains available.`;
+  }
   if (code === 'provider_rate_limited') return 'The AI service has reached its request limit. You can use the [listing search](/search) to browse homes while the chat service recovers.';
   if (status === 503) return 'The chat service is temporarily unavailable. You can still browse the [listing search](/search), or try again later.';
   return "I'm sorry, I'm having trouble responding right now. Please try again later.";
@@ -19,6 +58,7 @@ export async function consumeChatStream(
   onRecommendations: (result: ListingSearchResult) => void,
   onSellerFlow?: (event: SellerFlowEvent) => void,
   signal?: AbortSignal,
+  onInteraction?: (metadata: ChatInteractionMetadata) => void,
 ): Promise<string> {
   signal?.throwIfAborted();
   if (!response.body) throw new Error('The chatbot returned an empty response stream');
@@ -29,6 +69,7 @@ export async function consumeChatStream(
   let buffer = '';
   let content = '';
   let completed = false;
+  let streamDone = false;
   const processEvent = (event: string) => {
     const lines = event.split(/\r?\n/);
     const kind = lines.find(line => line.startsWith('event:'))?.slice(6).trim();
@@ -37,6 +78,11 @@ export async function consumeChatStream(
     if (data === '[DONE]') { completed = true; return; }
     const payload = JSON.parse(data);
     if (kind === 'error' || payload.error) throw new Error('The chatbot response was interrupted');
+    if (kind === 'interaction') {
+      if (typeof payload.interaction_id === 'string' && typeof payload.request_id === 'string'
+        && typeof payload.conversation_id === 'string' && typeof payload.feedback_eligible === 'boolean') onInteraction?.(payload as ChatInteractionMetadata);
+      return;
+    }
     if (kind === 'recommendations') { onRecommendations(payload as ListingSearchResult); return; }
     if (kind === 'seller_flow') {
       const context = payload.context === null ? null : parseSellerContext(payload.context);
@@ -53,14 +99,14 @@ export async function consumeChatStream(
     if (typeof delta === 'string' && delta) { content += delta; onText(visibleAssistantText(content)); }
   };
   try {
-    while (!completed) {
+    while (!streamDone) {
       const { value, done } = await reader.read();
       signal?.throwIfAborted();
       buffer += decoder.decode(value, { stream: !done });
       const events = buffer.split(/\r?\n\r?\n/);
       buffer = events.pop() ?? '';
       events.forEach(processEvent);
-      if (done) { if (buffer.trim()) processEvent(buffer); break; }
+      if (done) { if (buffer.trim()) processEvent(buffer); streamDone = true; }
     }
     const visible = visibleAssistantText(content);
     if (!completed || !visible.trim()) throw new Error('The chatbot returned an incomplete response');

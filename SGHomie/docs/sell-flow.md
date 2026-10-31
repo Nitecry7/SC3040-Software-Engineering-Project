@@ -67,6 +67,10 @@ seller/admin checks, ownership checks, RLS and verified-address requirements.
   and the draft card shows "Price to be added". There is no schema migration.
 - Draft ownership/RLS and verified-address writes remain enforced. Chat does not
   have an approval tool. A failed write must not emit a saved-draft card.
+- Ordinary buyer/general chat screens contact details before AI processing. The
+  authenticated seller details-intake stage remains separate and can collect
+  validated seller contacts; draft persistence is confirmed only after its
+  authorized database writes succeed.
 
 ## Architecture
 

@@ -1,4 +1,4 @@
-import React, { lazy, Suspense } from 'react';
+import { lazy, Suspense } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import Navbar from './components/Navbar';
@@ -6,6 +6,7 @@ import AuthModal from './components/AuthModal';
 import Chatbot from './components/Chatbot';
 import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import SessionLifecycle from './components/SessionLifecycle';
 
 const Home = lazy(() => import('./pages/Home'));
 const Search = lazy(() => import('./pages/Search'));
@@ -22,7 +23,7 @@ function App() {
   return (
     <AuthProvider>
       <Router>
-        <div className="flex flex-col min-h-screen bg-gray-50">
+        <div id="app-shell" className="flex flex-col min-h-screen bg-gray-50">
           <Navbar />
           <main className="flex-grow">
             <Suspense fallback={(
@@ -101,6 +102,7 @@ function App() {
           <Chatbot />
           <Toaster position="bottom-right" />
         </div>
+        <SessionLifecycle />
       </Router>
     </AuthProvider>
   );

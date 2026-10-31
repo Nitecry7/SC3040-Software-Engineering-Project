@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import shutil
+from dataclasses import replace
 
 import pandas as pd
 import pytest
@@ -293,6 +294,11 @@ def test_timing_log_reuses_the_private_correlation_id_without_logging_features_o
     assert event["event"] == "valuation_timing"
     assert event["request_id"] == request_id
     assert event["status_code"] == 200
+    assert event["failure_category"] is None
+    assert event["model_version"] == DEFAULT_MODEL_VERSION
+    assert event["prediction_model_version"] == DEFAULT_MODEL_VERSION
+    assert event["prediction_sanity"] == "passed"
+    assert event["timings_ms"]["total_request_ms"] >= 0
     for stage in [
         "request_feature_order_ms",
         "feature_preparation_ms",
@@ -305,6 +311,52 @@ def test_timing_log_reuses_the_private_correlation_id_without_logging_features_o
         assert event["timings_ms"][stage] >= 0
     assert private_token not in timing_logs[0]
     assert private_feature not in timing_logs[0]
+
+
+@pytest.mark.parametrize(
+    "mutation,expected_category",
+    [
+        ("interval", "INVALID_INTERVAL"),
+        ("non_finite", "INVALID_PREDICTION_SCHEMA"),
+        ("oversized_integer", "INVALID_PREDICTION_SCHEMA"),
+        ("model_version", "MODEL_VERSION_MISMATCH"),
+        ("missing_fields", "INVALID_PREDICTION_SCHEMA"),
+    ],
+)
+def test_api_rejects_insane_prediction_output_and_logs_safe_classification(
+    client, monkeypatch, caplog, mutation, expected_category
+):
+    original = LoadedValuationBundle.predict_one
+
+    def invalid_prediction(self, *args, **kwargs):
+        prediction = original(self, *args, **kwargs)
+        if mutation == "interval":
+            return replace(prediction, lower_bound=prediction.estimated_value + 1)
+        if mutation == "non_finite":
+            return replace(prediction, estimated_value=float("inf"))
+        if mutation == "oversized_integer":
+            return replace(prediction, estimated_value=10**1000)
+        if mutation == "model_version":
+            return replace(prediction, model_version="unexpected-model")
+        return object()
+
+    monkeypatch.setattr(LoadedValuationBundle, "predict_one", invalid_prediction)
+    request_id = "a2c30b6f-631b-4d9e-8383-8968707546b1"
+    caplog.set_level(logging.INFO, logger="uvicorn.error")
+    response = client.post(
+        "/v1/valuation/predict",
+        json=valid_request(block="private-synthetic-block"),
+        headers={"X-Valuation-Request-ID": request_id},
+    )
+    assert response.status_code == 500
+    assert response.json() == {"detail": "Valuation prediction failed."}
+    timing_logs = [record.getMessage() for record in caplog.records if "valuation_timing {" in record.getMessage()]
+    assert len(timing_logs) == 1
+    event = json.loads(timing_logs[0].split("valuation_timing ", 1)[1])
+    assert event["request_id"] == request_id
+    assert event["failure_category"] == expected_category
+    assert event["prediction_sanity"] == "failed"
+    assert "private-synthetic-block" not in timing_logs[0]
 
 
 def test_asking_price_is_context_only_and_uses_existing_classifier(

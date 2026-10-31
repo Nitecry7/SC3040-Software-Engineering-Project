@@ -117,6 +117,7 @@ function isPropertyValuation(value: unknown): value is PropertyValuation {
     && value.uncertainty_method.trim().length > 0
     && typeof value.uncertainty_group === 'string'
     && value.uncertainty_group.trim().length > 0
+    && typeof value.uncertainty_support === 'number'
     && Number.isInteger(value.uncertainty_support)
     && value.uncertainty_support >= 0
     && typeof value.used_global_fallback === 'boolean'

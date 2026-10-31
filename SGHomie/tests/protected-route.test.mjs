@@ -1,53 +1,37 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { runInNewContext } from 'node:vm';
-import ts from '../FrontEnd/node_modules/typescript/lib/typescript.js';
+import { protectedRouteHarness } from './helpers/protected-route-harness.mjs';
 
 const appSource = readFileSync(new URL('../FrontEnd/src/App.tsx', import.meta.url), 'utf8');
-
-function protectedRouteHarness(initialAuth) {
-  const source = readFileSync(new URL('../FrontEnd/src/components/ProtectedRoute.tsx', import.meta.url), 'utf8');
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2022 },
-  }).outputText;
-  let auth = initialAuth;
-  const notices = [];
-  const effects = [];
-  const Navigate = 'Navigate';
-  const toast = { error: (message, options) => notices.push({ message, id: options?.id }) };
-  const Fragment = 'Fragment';
-  const react = { default: {}, Fragment: 'Fragment', useEffect: effect => effects.push(effect) };
-  const modules = {
-    react,
-    'react/jsx-runtime': {
-      Fragment,
-      jsx: (type, props) => ({ type, props }),
-      jsxs: (type, props) => ({ type, props }),
-    },
-    'react-router-dom': { Navigate },
-    '../contexts/AuthContext': { useAuth: () => auth },
-    'react-hot-toast': { default: toast },
-  };
-  const exports = {};
-  runInNewContext(compiled, { exports, require: name => {
-    assert.ok(name in modules, `Unexpected import: ${name}`);
-    return modules[name];
-  } });
-  const ProtectedRoute = exports.default;
-  return {
-    notices,
-    render: (children = 'PropertyDetails', props = {}) => ProtectedRoute({ children, ...props }),
-    setAuth: next => { auth = next; },
-    flushEffects: () => effects.splice(0).forEach(effect => effect()),
-  };
-}
 
 test('unresolved authentication renders loading state without redirecting', () => {
   const app = protectedRouteHarness({ user: null, loading: true, needsProfileSetup: false });
   const rendered = app.render();
   assert.equal(rendered.type, 'div');
   assert.equal(rendered.props.children.type, 'div');
+  assert.deepEqual(app.notices, []);
+});
+
+for (const page of ['Profile', 'Search', 'SellerDashboard']) {
+  test(`fresh anonymous navigation to ${page} still warns after an intentional sign-out`, () => {
+    const app = protectedRouteHarness({ user: null, loading: false, authTransition: 'intentional-sign-out' });
+    const rendered = app.render(page, page === 'SellerDashboard' ? { requiredRole: 'seller' } : {});
+    app.flushEffects();
+    assert.equal(rendered.type, 'Navigate');
+    assert.equal(rendered.props.to, '/');
+    assert.equal(app.notices.length, 1);
+    assert.equal(app.notices[0].message, 'Please sign in to access this feature');
+  });
+}
+
+test('intentional sign-out from another mounted protected page removes content without warning', () => {
+  const app = protectedRouteHarness({ user: { id: 'buyer-1' }, loading: false });
+  assert.equal(app.render('Search').props.children, 'Search');
+  app.flushEffects();
+  app.setAuth({ user: null, loading: false, authTransition: 'intentional-sign-out' });
+  assert.equal(app.render('Search').type, 'Navigate');
+  app.flushEffects();
   assert.deepEqual(app.notices, []);
 });
 
@@ -102,19 +86,16 @@ test('other protected routes continue to require profile setup', () => {
   }]);
 });
 
-test('reactive sign-out removes property content and applies the guest gate on rerender', () => {
+test('unexpected auth loss removes property content without mislabeling it as unauthorized navigation', () => {
   const app = protectedRouteHarness({ user: { id: 'buyer-1' }, loading: false, needsProfileSetup: false });
   const beforeSignOut = app.render('PropertyDetails', { requireProfileSetup: false });
   assert.equal(beforeSignOut.type, 'Fragment');
   assert.equal(beforeSignOut.props.children, 'PropertyDetails');
-  app.setAuth({ user: null, loading: false, needsProfileSetup: false });
+  app.setAuth({ user: null, loading: false, needsProfileSetup: false, authTransition: 'session-ended' });
   const rendered = app.render('PropertyDetails', { signInMessage: 'Sign up or log in to view property details' });
   app.flushEffects();
   assert.equal(rendered.type, 'Navigate');
-  assert.deepEqual(app.notices, [{
-    message: 'Sign up or log in to view property details',
-    id: 'protected-route-auth:Sign up or log in to view property details',
-  }]);
+  assert.deepEqual(app.notices, []);
 });
 
 test('replayed StrictMode effects reuse the same auth toast ID and message', () => {

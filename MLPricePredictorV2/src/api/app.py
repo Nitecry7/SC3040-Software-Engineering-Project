@@ -23,6 +23,7 @@ from src.inference.bundle import (
     DEFAULT_COVERAGE_LEVEL,
     DEFAULT_MODEL_VERSION,
     LoadedValuationBundle,
+    ValuationPrediction,
     SUPPORTED_COVERAGE_LEVELS,
     load_bundle,
 )
@@ -39,6 +40,7 @@ from src.api.schemas import (
 logger = logging.getLogger("uvicorn.error")
 V2_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_BUNDLE_PATH = V2_ROOT / "artifacts" / DEFAULT_MODEL_VERSION
+MODEL_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 def resolve_bundle_path(bundle_path: str | Path | None = None) -> Path:
@@ -52,6 +54,73 @@ def resolve_bundle_path(bundle_path: str | Path | None = None) -> Path:
     if not resolved.is_absolute():
         resolved = V2_ROOT / resolved
     return resolved.resolve()
+
+
+def _finite_prediction_number(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _prediction_failure_category(
+    prediction: ValuationPrediction, expected_model_version: str
+) -> str | None:
+    numeric_fields = (
+        "estimated_value",
+        "lower_bound",
+        "upper_bound",
+        "interval_half_width",
+        "interval_full_width",
+        "coverage_target",
+    )
+    required_fields = (
+        *numeric_fields,
+        "model_version",
+        "uncertainty_method",
+        "uncertainty_group",
+        "calibration_support_count",
+        "used_global_fallback",
+    )
+    if any(not hasattr(prediction, field) for field in required_fields):
+        return "INVALID_PREDICTION_SCHEMA"
+    numeric_values = tuple(getattr(prediction, field) for field in numeric_fields)
+    if any(not _finite_prediction_number(value) for value in numeric_values):
+        return "INVALID_PREDICTION_SCHEMA"
+    if not isinstance(prediction.model_version, str) or prediction.model_version != expected_model_version:
+        return "MODEL_VERSION_MISMATCH"
+    if (
+        prediction.estimated_value <= 0
+        or prediction.lower_bound < 0
+        or prediction.lower_bound > prediction.estimated_value
+        or prediction.estimated_value > prediction.upper_bound
+        or prediction.interval_half_width < 0
+        or prediction.interval_full_width < 0
+        or abs(
+            prediction.interval_full_width
+            - (prediction.upper_bound - prediction.lower_bound)
+        ) > 0.01
+        or abs(
+            prediction.interval_half_width
+            - (prediction.upper_bound - prediction.lower_bound) / 2
+        ) > 0.01
+    ):
+        return "INVALID_INTERVAL"
+    if (
+        prediction.coverage_target not in SUPPORTED_COVERAGE_LEVELS
+        or not isinstance(prediction.uncertainty_method, str)
+        or not prediction.uncertainty_method.strip()
+        or not isinstance(prediction.uncertainty_group, str)
+        or not prediction.uncertainty_group.strip()
+        or isinstance(prediction.calibration_support_count, bool)
+        or not isinstance(prediction.calibration_support_count, int)
+        or prediction.calibration_support_count < 0
+        or not isinstance(prediction.used_global_fallback, bool)
+    ):
+        return "INVALID_PREDICTION_SCHEMA"
+    return None
 
 
 def create_app(
@@ -136,6 +205,9 @@ def create_app(
             supplied_request_id,
         ) else None
         request.state.valuation_stage_timings_ms = {}
+        request.state.valuation_prediction_sanity = "not_checked"
+        request.state.valuation_failure_category = None
+        request.state.valuation_response_model_version = None
         request_started_at = perf_counter()
         response_status = 500
         try:
@@ -149,6 +221,14 @@ def create_app(
                     "event": "valuation_timing",
                     "request_id": request_id,
                     "status_code": response_status,
+                    "failure_category": request.state.valuation_failure_category,
+                    "model_version": getattr(
+                        getattr(request.app.state, "valuation_bundle", None),
+                        "model_version",
+                        None,
+                    ),
+                    "prediction_model_version": request.state.valuation_response_model_version,
+                    "prediction_sanity": request.state.valuation_prediction_sanity,
                     "timings_ms": {
                         **request.state.valuation_stage_timings_ms,
                         "total_request_ms": round((perf_counter() - request_started_at) * 1000, 2),
@@ -256,6 +336,7 @@ def create_app(
                 timing_callback=record_timing,
             )
         except Exception:
+            request.state.valuation_failure_category = "VALUATION_INFERENCE_FAILURE"
             logger.error("Valuation inference failed")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -272,6 +353,7 @@ def create_app(
                     prediction.upper_bound,
                 )
             except Exception:
+                request.state.valuation_failure_category = "VALUATION_CLASSIFICATION_FAILURE"
                 logger.error("Asking-price range classification failed")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -279,6 +361,21 @@ def create_app(
                 ) from None
             finally:
                 record_timing("asking_price_classification_ms", perf_counter() - classification_started_at)
+        if (
+            isinstance(getattr(prediction, "model_version", None), str)
+            and MODEL_VERSION_PATTERN.fullmatch(prediction.model_version)
+        ):
+            request.state.valuation_response_model_version = prediction.model_version
+        failure_category = _prediction_failure_category(prediction, bundle.model_version)
+        if failure_category:
+            request.state.valuation_prediction_sanity = "failed"
+            request.state.valuation_failure_category = failure_category
+            logger.error("Valuation prediction rejected category=%s", failure_category)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Valuation prediction failed.",
+            )
+        request.state.valuation_prediction_sanity = "passed"
         return PredictionResponse(
             estimated_value=prediction.estimated_value,
             lower_bound=prediction.lower_bound,

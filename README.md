@@ -36,6 +36,9 @@
 </table>
 
 <p align="center">
+  <a href="https://github.com/Nitecry7/SC3040-Software-Engineering-Project/actions/workflows/tests.yml?query=branch%3Amain">
+    <img alt="Repository tests on main" src="https://github.com/Nitecry7/SC3040-Software-Engineering-Project/actions/workflows/tests.yml/badge.svg?branch=main" />
+  </a>
   <img alt="React frontend" src="https://img.shields.io/badge/React-UI-61DAFB?logo=react&logoColor=20232A" />
   <img alt="TypeScript frontend" src="https://img.shields.io/badge/TypeScript-Frontend-3178C6?logo=typescript&logoColor=white" />
   <img alt="Supabase backend" src="https://img.shields.io/badge/Supabase-Auth%20%7C%20Postgres%20%7C%20Edge%20Functions-3FCF8E?logo=supabase&logoColor=white" />
@@ -43,6 +46,12 @@
   <img alt="Render inference hosting" src="https://img.shields.io/badge/Render-Inference%20Hosting-46E3B7?logo=render&logoColor=000000" />
   <img alt="Python valuation inference" src="https://img.shields.io/badge/Python-Inference-3776AB?logo=python&logoColor=white" />
   <img alt="CatBoost research model" src="https://img.shields.io/badge/CatBoost-Research%20Model-FFCC00" />
+</p>
+
+<p align="center">
+  <a href="https://sghomie.netlify.app/">Open the SG Homie live site</a>
+  ·
+  <a href="https://github.com/Nitecry7/SC3040-Software-Engineering-Project/actions/workflows/tests.yml">Repository CI workflow</a>
 </p>
 
 ---
@@ -63,6 +72,14 @@ The platform separates trusted application data, model-generated estimates, prov
 
 ```mermaid
 flowchart LR
+    subgraph Delivery["Repository and delivery"]
+        Repo["GitHub repository"]
+        CI["GitHub Actions CI<br/>tests.yml"]
+        Netlify["Netlify frontend host<br/>deployment settings are external"]
+        Repo --> CI
+        Repo -.->|"expected source deployment"| Netlify
+    end
+
     Browser["Browser<br/>React + TypeScript"]
 
     subgraph Supabase["Supabase trust boundary"]
@@ -80,6 +97,7 @@ flowchart LR
 
     Tiles["OpenStreetMap<br/>map tiles"]
 
+    Netlify --> Browser
     Browser -->|"session"| Auth
     Browser -->|"application data"| Data
     Browser -->|"authenticated requests"| Functions
@@ -97,7 +115,18 @@ flowchart LR
     Address -->|"verified address"| Functions
 ```
 
-*The browser uses the signed-in user's Supabase session. Render and LLM-provider credentials remain server-side. OneMap is used for HDB address verification, not nearby-amenity verification. This diagram describes repository architecture and does not by itself establish current hosted deployment state.*
+*GitHub Actions runs repository CI; Netlify hosts the frontend through separately configured deployment settings that are not present in this repository. A passing CI run does not verify the live site or its deployment. The browser uses the signed-in user's Supabase session. Render and LLM-provider credentials remain server-side. OneMap is used for HDB address verification, not nearby-amenity verification. This diagram describes repository architecture and does not by itself establish current hosted deployment state.*
+
+### CI and deployment boundaries
+
+GitHub Actions validates the repository on pull requests, pushes, and manual
+dispatch. Netlify hosts the frontend; its production branch and deployment
+settings are managed outside this repository. Supabase schema migrations and
+Edge Functions require separate, deliberate deployment. The Render Blueprint
+has automatic deployment turned off and pins a versioned valuation bundle.
+Passing repository CI neither deploys these services nor verifies their hosted
+configuration; use the [deployment runbook](SGHomie/docs/operations/deployment-runbook.md)
+for controlled release checks.
 
 ---
 
@@ -127,12 +156,12 @@ and buyer/seller context while preserving login, saved preferences and drafts.
 
 | Status | Capability in this repository |
 | --- | --- |
-| ✅ **Implemented** | Buyer listing search, property details, enquiries, seller drafts, admin listing workflows, and structured buyer chatbot search. This describes repository code, not current hosted deployment. |
+| ✅ **Implemented** | Buyer listing search, property details, enquiries, seller drafts, admin listing workflows, structured buyer chatbot search, and repository support for admin monitoring, bounded feedback inspection, and on-demand synthetic checks. This describes repository code, not current hosted deployment. |
 | 🧪 **Research/demo** | Buyer valuation uses a research model and serving path. Its estimate and conformal target coverage do not provide an official valuation or a property-specific probability guarantee. |
 | 🏷️ **Demo data** | Nearby amenity records are synthetic demo data, not verified facilities. Market analytics include generated or hardcoded values; they are not verified market evidence. HDB address verification does not prove that every listing fact is genuine. |
 | 🛠️ **Planned** | Explainable personalized ranking, real amenity ingestion, historical transaction analytics, and CatBoost-based seller pricing guidance are not implemented. Search and sorting are not personalized recommendation ranking. |
 
-One authenticated hosted valuation request was user-reported successful on **2026-10-18**. That dated observation is not independent verification of current deployment, a benchmark, or a service guarantee; see the [Supabase serving notes](SGHomie/BackEnd/supabase/README.md#hosted-serving-observation-and-log-correlation).
+The hosted chatbot synthetic-canary authentication issue remains deferred. No successful hosted chatbot authentication or production availability check is claimed; repository checks and the internal fixed-marker probe do not exercise the authenticated user journey.
 
 
 ---
@@ -322,9 +351,15 @@ SC3040-Software-Engineering-Project/
 | 🎨 [Design system](DESIGN.md) | Existing product visual language |
 | 🔥 [Supabase backend and valuation serving](SGHomie/BackEnd/supabase/README.md) | Backend setup, migrations, RLS, and serving path |
 | 💬 [Chatbot architecture](SGHomie/docs/chatbot/README.md) | Structured buyer and seller flows |
+| 🧪 [Chatbot behavioral evaluations](SGHomie/evals/chatbot/README.md) | Deterministic regression suite and opt-in live checks |
 | 🔍 [Buyer chatbot flow](SGHomie/docs/buy-flow.md) | Buyer search tool and response behavior |
 | 🏠 [Seller chatbot flow](SGHomie/docs/sell-flow.md) | Seller address verification and draft workflow |
+| ⚙️ [Deployment runbook](SGHomie/docs/operations/deployment-runbook.md) | Service ownership, release boundaries, and safe deployment checks |
+| 📈 [Monitoring and test plan](SGHomie/docs/operations/monitoring-test-plan.md) | Current signals, production checks, and phased roadmap |
 | 🤖 [Valuation research and inference](MLPricePredictorV2/README.md) | Leakage-safe research, evaluation, bundle, and API |
+| 🧪 [Historical testing report](SGHomie/docs/testing/test-report.md) | Original pre-merge results and preserved evidence |
+| 🔄 [Historical main merge verification](SGHomie/docs/testing/merge-verification.md) | 28 October 2026 `main` snapshot; not the current `faheem` result |
+| ▶️ [Running the tests](SGHomie/tests/README.md) | Current `faheem` verification summary, application, ML, local database, evidence capture, and CI commands |
 | ⚠️ [Archived migrations](archived_migrations/README.md) | Historical migration notice |
 
 ## 👥 Contributors

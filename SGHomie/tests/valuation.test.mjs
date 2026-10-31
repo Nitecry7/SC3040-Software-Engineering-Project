@@ -166,6 +166,7 @@ test('Edge timing logs correlate to the returned request ID without logging requ
     const response = await createValuationHandler(deps)(publicRequest);
     assert.equal(response.status, 200);
     const responseBody = await response.json();
+    assert.equal(response.headers.get('X-Valuation-Request-ID'), responseBody.request_id);
     const upstreamHeaders = state.fetchCalls[0].options.headers;
     assert.equal(upstreamHeaders['X-Valuation-Request-ID'], responseBody.request_id);
     assert.equal(logLines.length, 1);
@@ -174,6 +175,10 @@ test('Edge timing logs correlate to the returned request ID without logging requ
     assert.equal(event.request_id, responseBody.request_id);
     assert.equal(event.edge_region, 'ap-southeast-1');
     assert.equal(event.outcome, 'success');
+    assert.equal(event.status_code, 200);
+    assert.equal(event.model_version, upstreamResult.model_version);
+    assert.equal(event.prediction_sanity, 'passed');
+    assert.equal(event.failure_category, null);
     for (const stage of ['request_validation_ms', 'authentication_ms', 'database_lookup_ms', 'request_construction_ms', 'render_fetch_ms']) {
       assert.equal(typeof event.timings_ms[stage], 'number', `missing ${stage}`);
     }
@@ -183,6 +188,239 @@ test('Edge timing logs correlate to the returned request ID without logging requ
     }
   } finally {
     console.info = originalInfo;
+  }
+});
+
+test('valuation telemetry is sanitized, asynchronous and cannot change the response', async () => {
+  const scheduled = [];
+  const persisted = [];
+  const { deps } = dependencies({
+    persistMonitoring: async (event, alert) => { persisted.push({ event, alert }); },
+    scheduleBackgroundTask: task => scheduled.push(task),
+  });
+  const response = await createValuationHandler(deps)(makeRequest());
+  const result = await response.json();
+  await Promise.all(scheduled);
+  assert.equal(response.status, 200);
+  assert.equal(persisted.length, 1);
+  const [{ event, alert }] = persisted;
+  assert.equal(event.request_id, result.request_id);
+  assert.equal(event.status, 'success');
+  assert.equal(event.prediction_sanity, 'passed');
+  assert.equal(alert, undefined);
+  assert.equal(typeof event.total_edge_ms, 'number');
+  assert.equal(typeof event.authentication_ms, 'number');
+  assert.equal(typeof event.database_lookup_ms, 'number');
+  assert.equal(typeof event.request_construction_ms, 'number');
+  assert.equal(typeof event.render_fetch_ms, 'number');
+  for (const privateValue of [property.id, 'user-1', property.town, property.block_number, 'server-secret-value']) {
+    assert.equal(JSON.stringify(event).includes(privateValue), false);
+  }
+});
+
+test('telemetry write rejection logs safe metadata and leaves valuation response unchanged', async () => {
+  const { deps } = dependencies({
+    persistMonitoring: async () => { throw new Error('private database exception'); },
+    scheduleBackgroundTask: task => { void task; },
+  });
+  const lines = [];
+  const originalError = console.error;
+  console.error = (...args) => lines.push(args.join(' '));
+  try {
+    const response = await createValuationHandler(deps)(makeRequest());
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).data.model_version, upstreamResult.model_version);
+    await new Promise(resolve => setImmediate(resolve));
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /telemetry_persist_failed/);
+  assert.match(lines[0], /valuation_events/);
+  assert.doesNotMatch(lines[0], /private database exception|property.id|server-secret-value/);
+});
+
+test('invalid optional monitoring durations are null and confirmed response defects map to safe alerts', async () => {
+  const scheduled = [];
+  const records = [];
+  const { deps } = dependencies({
+    persistMonitoring: async (event, alert) => records.push({ event, alert }),
+    scheduleBackgroundTask: task => scheduled.push(task),
+  });
+  const response = await createValuationHandler(deps)(makeRequest());
+  await response.arrayBuffer();
+  await Promise.all(scheduled);
+  assert.equal(records[0].event.status, 'success');
+  assert.equal(records[0].alert, undefined);
+
+  for (const [change, category, severity] of [
+    [body => { body.upper_bound = body.lower_bound - 1; }, 'prediction_interval_invalid', 'warning'],
+    [body => { delete body.model_version; }, 'prediction_schema_invalid', 'critical'],
+  ]) {
+    const pending = [];
+    const events = [];
+    const fixture = dependencies({
+      async fetcher() {
+        const body = structuredClone(upstreamResult);
+        change(body);
+        return Response.json(body);
+      },
+      persistMonitoring: async (event, alert) => events.push({ event, alert }),
+      scheduleBackgroundTask: task => pending.push(task),
+    });
+    const rejected = await createValuationHandler(fixture.deps)(makeRequest());
+    assert.equal(rejected.status, 502);
+    await Promise.all(pending);
+    assert.equal(events[0].alert.category, category);
+    assert.equal(events[0].alert.severity, severity);
+    assert.equal(events[0].event.prediction_sanity, 'failed');
+  }
+});
+
+test('deterministic synthetic canary exercises the valuation Edge handler without writes', async () => {
+  const seed = await readFile(new URL('../BackEnd/supabase/seed.sql', import.meta.url), 'utf8');
+  const fixture = [...seed.matchAll(/^-- fixture: batch=(\S+) id=([0-9a-f-]{36})\b/gm)]
+    .find((match) => match[1] === 'sghomie-test-2026-10-07-2e3e55');
+  assert.ok(fixture, 'the repository must provide the canonical synthetic canary fixture');
+
+  const { deps, state } = dependencies({
+    supabaseUrl: 'https://project.supabase.co',
+    allowHostedDemoInputs: 'true',
+  });
+  state.property.id = fixture[2];
+  state.property.demo_batch_id = fixture[1];
+  const response = await createValuationHandler(deps)(makeRequest({ property_id: fixture[2] }));
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.match(result.request_id, /^[0-9a-f-]{36}$/i);
+  assert.equal(response.headers.get('X-Valuation-Request-ID'), result.request_id);
+  assert.equal(result.data.model_version, upstreamResult.model_version);
+  assert.ok(Number.isFinite(result.data.estimated_value));
+  assert.ok(Number.isFinite(result.data.lower_bound));
+  assert.ok(Number.isFinite(result.data.upper_bound));
+  assert.ok(result.data.lower_bound <= result.data.estimated_value);
+  assert.ok(result.data.estimated_value <= result.data.upper_bound);
+  assert.equal(state.fetchCalls.length, 1);
+  assert.equal(state.fetchCalls[0].options.headers['X-Valuation-Request-ID'], result.request_id);
+  assert.equal(state.clientCalls[0].authorization, 'Bearer user-jwt');
+  assert.equal(state.selectedId, fixture[2]);
+});
+
+test('valuation timing logs classify authentication, property lookup and feature preparation failures', async () => {
+  const scenarios = [
+    {
+      status: 401,
+      category: 'AUTH_FAILURE',
+      request: () => makeRequest(undefined, ''),
+    },
+    {
+      status: 503,
+      category: 'PROPERTY_LOOKUP_FAILURE',
+      configure(fixture) {
+        fixture.deps.createUserClient = () => ({
+          auth: { async getUser() { return { data: { user: { id: 'user-1' } }, error: null }; } },
+          from() { return { select() { return { eq() { return { async maybeSingle() { return { data: null, error: new Error('private lookup detail') }; } }; } }; } }; },
+        });
+      },
+    },
+    {
+      status: 409,
+      category: 'FEATURE_PREPARATION_FAILURE',
+      configure(fixture) { fixture.state.property.remaining_lease_months = 0; },
+    },
+  ];
+  for (const scenario of scenarios) {
+    const fixture = dependencies();
+    scenario.configure?.(fixture);
+    const logLines = [];
+    const originalInfo = console.info;
+    const originalError = console.error;
+    console.info = (...args) => logLines.push(args.join(' '));
+    console.error = () => {};
+    try {
+      const response = await createValuationHandler(fixture.deps)(scenario.request?.() ?? makeRequest());
+      assert.equal(response.status, scenario.status);
+      const event = JSON.parse(logLines[0]);
+      assert.equal(event.failure_category, scenario.category);
+      assert.equal(event.status_code, scenario.status);
+      assert.equal(logLines.join(' ').includes('private lookup detail'), false);
+    } finally {
+      console.info = originalInfo;
+      console.error = originalError;
+    }
+  }
+});
+
+test('valuation timing logs classify upstream failures without storing response or property data', async () => {
+  const scenarios = [
+    {
+      name: 'timeout',
+      overrides: { fetcher: async () => { const error = new Error('private timeout details'); error.name = 'TimeoutError'; throw error; } },
+      status: 503,
+      outcome: 'timeout',
+      failureCategory: 'TIMEOUT',
+      sanity: 'not_checked',
+    },
+    {
+      name: 'Render failure',
+      overrides: { fetcher: async () => new Response('private upstream detail', { status: 503 }) },
+      status: 503,
+      outcome: 'upstream_error',
+      failureCategory: 'RENDER_UNAVAILABLE',
+      sanity: 'not_checked',
+    },
+    {
+      name: 'invalid interval',
+      overrides: { fetcher: async () => Response.json({ ...upstreamResult, lower_bound: 700_000 }) },
+      status: 502,
+      outcome: 'invalid_upstream_response',
+      failureCategory: 'INVALID_INTERVAL',
+      sanity: 'failed',
+      modelVersion: upstreamResult.model_version,
+    },
+    {
+      name: 'invalid response schema',
+      overrides: { fetcher: async () => Response.json({ ...upstreamResult, uncertainty_method: null }) },
+      status: 502,
+      outcome: 'invalid_upstream_response',
+      failureCategory: 'INVALID_PREDICTION_SCHEMA',
+      sanity: 'failed',
+      modelVersion: upstreamResult.model_version,
+    },
+    {
+      name: 'invalid model version',
+      overrides: { fetcher: async () => Response.json({ ...upstreamResult, model_version: '../unexpected' }) },
+      status: 502,
+      outcome: 'invalid_upstream_response',
+      failureCategory: 'INVALID_PREDICTION_SCHEMA',
+      sanity: 'failed',
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const { deps } = dependencies(scenario.overrides);
+    const logLines = [];
+    const originalInfo = console.info;
+    const originalError = console.error;
+    console.info = (...args) => logLines.push(args.join(' '));
+    console.error = () => {};
+    try {
+      const response = await createValuationHandler(deps)(makeRequest());
+      assert.equal(response.status, scenario.status, scenario.name);
+      const event = JSON.parse(logLines[0]);
+      assert.equal(event.outcome, scenario.outcome, scenario.name);
+      assert.equal(event.failure_category, scenario.failureCategory, scenario.name);
+      assert.equal(event.prediction_sanity, scenario.sanity, scenario.name);
+      assert.equal(event.model_version, scenario.modelVersion ?? null, scenario.name);
+      assert.equal(typeof event.timings_ms.render_fetch_ms, 'number', `${scenario.name} records the complete Render fetch attempt`);
+      assert.ok(Number.isFinite(event.timings_ms.render_fetch_ms) && event.timings_ms.render_fetch_ms >= 0, scenario.name);
+      assert.equal(response.headers.get('X-Valuation-Request-ID'), event.request_id, scenario.name);
+      assert.equal(logLines.join(' ').includes('private'), false, scenario.name);
+      assert.equal(logLines.join(' ').includes(property.id), false, scenario.name);
+    } finally {
+      console.info = originalInfo;
+      console.error = originalError;
+    }
   }
 });
 

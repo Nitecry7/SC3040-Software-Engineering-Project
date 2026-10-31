@@ -1,0 +1,89 @@
+name: Repository tests
+
+on:
+  pull_request:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  application:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+          cache: npm
+          cache-dependency-path: SGHomie/FrontEnd/package-lock.json
+      - run: npm ci
+        working-directory: SGHomie/FrontEnd
+      - name: All existing and new application tests
+        run: |
+          mkdir -p test-results
+          node --experimental-strip-types --import ./SGHomie/tests/register-deno-imports.mjs --test --test-reporter=junit --test-reporter-destination=test-results/application.xml SGHomie/tests/*.test.mjs
+      - name: Lint
+        if: always()
+        run: npm run lint
+        working-directory: SGHomie/FrontEnd
+      - name: Check the actual app TypeScript project
+        if: always()
+        run: npx tsc --noEmit -p tsconfig.app.json
+        working-directory: SGHomie/FrontEnd
+      - name: Build
+        if: always()
+        run: npm run build
+        working-directory: SGHomie/FrontEnd
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: application-test-results
+          path: test-results/
+
+  valuation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: MLPricePredictorV2/requirements.txt
+      - run: python -m pip install -r requirements.txt pytest-cov
+        working-directory: MLPricePredictorV2
+      - name: Valuation and leakage regressions
+        run: python -m pytest -q --junitxml=../.test-results/valuation.xml --cov=src --cov-branch --cov-report=xml:../.test-results/coverage.xml
+        working-directory: MLPricePredictorV2
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: valuation-test-results
+          path: .test-results/
+
+  database:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+          cache: npm
+          cache-dependency-path: SGHomie/BackEnd/package-lock.json
+      - run: npm ci
+        working-directory: SGHomie/BackEnd
+      - name: Start disposable CI Supabase stack
+        run: npx supabase start
+        working-directory: SGHomie/BackEnd
+      - name: Migrations RLS and verification triggers
+        run: python3 SGHomie/tests/run-database-tests.py --output .test-results/database.tap
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: database-test-results
+          path: .test-results/
+      - name: Stop CI stack
+        if: always()
+        run: npx supabase stop
+        working-directory: SGHomie/BackEnd

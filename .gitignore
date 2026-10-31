@@ -18,6 +18,10 @@ MLPricePredictorV2/artifacts/
 .venv/
 __pycache__/
 .pytest_cache/
+.test-results/
+/test-results/
+.coverage
+coverage.xml
 *.pyc
 
 # Local listing seeding data, generated images, and helper scripts
@@ -27,3 +31,4 @@ __pycache__/
 .temp/
 .branches/
 /SGHomie/BackEnd/supabase/fixtures/sghomie-demo-listings-2026-10-07.csv
+/SGHomie/evals/chatbot/results/

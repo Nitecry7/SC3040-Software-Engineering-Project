@@ -405,7 +405,10 @@ async function lookupHdbLocation(postalCode: string, sellerId: string) {
 
   const latitude = Number(result.LATITUDE);
   const longitude = Number(result.LONGITUDE);
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+  // Number('') and Number(null) are zero. Use the application's broad Singapore
+  // sanity bounds as well as finiteness before issuing an address token.
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)
+    || latitude < 1.0 || latitude > 1.6 || longitude < 103.4 || longitude > 104.4) {
     throw new HttpError('OneMap returned an address without valid coordinates', 503);
   }
 

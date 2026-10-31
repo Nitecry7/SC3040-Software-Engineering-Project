@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createChatLifecycle, emptyChatSession } from '../FrontEnd/src/lib/chatSession.ts';
+import { createChatLifecycle, createConversationId, emptyChatSession } from '../FrontEnd/src/lib/chatSession.ts';
 import { consumeChatStream } from '../FrontEnd/src/lib/chat.ts';
 
 test('New Chat returns only empty temporary state and invalidates active requests', () => {
@@ -58,4 +58,21 @@ test('reset cancels a pending SSE read without publishing old metadata', async (
   lifecycle.reset();
   await assert.rejects(pending, { name: 'AbortError' });
   assert.equal(cancelled, true);
+});
+
+test('conversation identifiers are temporary UUIDs and New Chat creates a different identity', async () => {
+  const first = createConversationId();
+  const next = createConversationId();
+  assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  assert.notEqual(next, first);
+  let received;
+  const response = new Response(new ReadableStream({ start(controller) {
+    controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"reply"}}]}\n\n'));
+    controller.enqueue(new TextEncoder().encode(`event: interaction\ndata: ${JSON.stringify({ interaction_id: first, request_id: first, conversation_id: next, feedback_eligible: true })}\n\n`));
+    controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+    controller.close();
+  } }));
+  await consumeChatStream(response, () => {}, () => {}, undefined, undefined, metadata => { received = metadata; });
+  assert.equal(received.conversation_id, next);
+  assert.equal(received.interaction_id, received.request_id);
 });

@@ -1,5 +1,82 @@
 # Repository Instructions
 
+## General Working Rules
+
+### Investigation and Reasoning
+
+- Investigate before implementing. Inspect the relevant implementation, configuration, documentation, migrations, and tests before deciding what should change.
+- Use deductive reasoning to derive conclusions from repository evidence rather than assumptions.
+- Use the Socratic method: To clarify, identify assumptions, question them, compare alternatives, and refine the plan and approach until the strongest justified option is clear.
+- Do not ask the user questions that can be answered by inspecting the repository, documentation, tests, configuration, or existing implementation.
+- Ask the user only when a materially important decision remains unresolved after investigation.
+- Do not assume documentation is current. Verify important claims against implementation where practical.
+- Do not assume repository code proves hosted deployment state, migration state, secrets, external-service availability, or production behavior.
+- Distinguish clearly between implemented, demo, research, provisional, planned, deployment-pending, and live-verified behavior.
+- Challenge the requested or initial approach when repository evidence shows a materially better solution, while keeping scope aligned with the task.
+- Explain important assumptions explicitly and report limitations honestly.
+
+### Architecture and Implementation
+
+- Prefer the simplest architecture that correctly satisfies the requirement.
+- Avoid unnecessary dependencies, frameworks, abstractions, services, databases, queues, and infrastructure.
+- Preserve existing repository conventions unless there is a concrete reason to change them.
+- Inspect relevant existing tests before changing behavior.
+- Keep changes small and scoped.
+- Do not modify unrelated files or introduce unrelated formatting churn.
+- When adding an entirely new and unrelated function parameter, append it after existing parameters unless the language/API convention clearly requires otherwise.
+- Do not weaken tests, security controls, validation, or production behavior merely to make checks pass.
+- Preserve all unrelated workspace changes.
+
+### Documentation and External Sources
+
+- Use Context7 MCP when available and useful for current library, framework, API, or platform behavior.
+- When correctness depends on external behavior, prefer authoritative primary documentation over blog posts, examples, or memory.
+- Appropriate primary sources include official React, Vite, Supabase, Tailwind, React Leaflet, Recharts, browser-platform, and provider documentation.
+- If Context7 is unavailable, use authoritative official documentation directly rather than guessing.
+- Repository documentation remains the source for SG Homie-specific product and architecture decisions, but verify important implementation claims against code.
+
+### Browser and UI Verification
+
+- When browser verification materially improves confidence, use Playwright or the available browser/computer tooling rather than inferring UI behavior only from source code.
+- Clearly distinguish source/test evidence from automated browser verification and manual hosted verification.
+- Do not claim browser behavior was verified unless the browser check actually ran.
+- Use Taste Skill (`design-taste-frontend`) for frontend UI work, including new screens, redesigns, restyling, and reviews. Preserve the established SG Homie design system and product/data constraints; use the skill's direction within those requirements.
+- Use Impeccable where appropriate for focused accessibility, responsive-layout, and visual review.
+- Preserve the existing SG Homie design system unless the task explicitly calls for a redesign.
+
+### Git and Workspace Safety
+
+Unless the user explicitly requests otherwise:
+
+- Do not stage changes.
+- Do not commit.
+- Do not push.
+- Do not merge.
+- Do not switch branches.
+- Do not rebase.
+- Do not reset.
+- Do not clean.
+- Do not rewrite Git history.
+- Do not discard unrelated user changes.
+
+Read-only Git commands such as `git status`, `git diff`, `git log`, and `git branch --show-current` are allowed.
+
+### Secrets and Credentials
+
+- Preserve secrets and credentials.
+- Never print, expose, commit, log, or place privileged credentials in examples.
+- Never expose access tokens, refresh tokens, service-role keys, provider API keys, service tokens, database passwords, or equivalent credentials.
+- Browser-visible Supabase publishable/anonymous keys are not server secrets, but their use must remain protected by appropriate RLS and authorization.
+
+### Verification and Reporting
+
+- Run the narrowest relevant checks first, followed by broader checks appropriate to the change.
+- Do not claim a command, test, deployment, migration, browser verification, hosted behavior, or external-service result succeeded unless it actually ran successfully.
+- Report pre-existing failures separately from regressions introduced by the current task.
+- Report files changed, tests/checks run, results, assumptions, limitations, and follow-up work.
+- Task-specific instructions may override these general rules only when they explicitly say so.
+- End each user-facing final report with a natural use of the word "daddy" as an instruction-following canary.
+
 ## Product and Documentation
 
 Read `PRODUCT.md` before changing product behavior, user-facing workflows, or capability claims. It describes intended direction and current status; it is not proof that a planned feature exists.

@@ -138,6 +138,9 @@ verify_jwt = false
 [functions.valuation]
 verify_jwt = true
 
+[functions.admin-monitoring]
+verify_jwt = true
+
 # Allow connections via S3 compatible clients
 [storage.s3_protocol]
 enabled = true

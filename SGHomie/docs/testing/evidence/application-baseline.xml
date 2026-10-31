@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+	<testcase name="amenities sort by distance and use stable name and id tie breaks" time="0.076916" classname="test"/>
+	<testcase name="category selection filters without mutating the source list" time="0.001335" classname="test"/>
+	<testcase name="All includes known and future categories" time="0.000503" classname="test"/>
+	<testcase name="supported categories expose shared visual metadata and unknown categories use neutral tone" time="0.000642" classname="test"/>
+	<testcase name="distance displays metres below one kilometre and kilometres at or above it" time="0.001041" classname="test"/>
+	<testcase name="demo source is explicit and non-demo sources remain distinguishable" time="0.000201" classname="test"/>
+	<testcase name="coordinate validation rejects missing, non-finite, zero and out-of-bound values" time="0.000160" classname="test"/>
+	<testcase name="coordinate validation accepts inclusive Singapore sanity-bound edges" time="0.000092" classname="test"/>
+	<testcase name="overlapping startup profile checks share one lookup but later auth events refresh" time="0.038336" classname="test"/>
+	<testcase name="registration keeps a persistent verification confirmation and returns to sign in" time="0.002683" classname="test" failure="Expected element to be rendered">
+		<failure type="testCodeFailure" message="Expected element to be rendered">
+[Error [ERR_TEST_FAILURE]: Expected element to be rendered] {
+  code: 'ERR_TEST_FAILURE',
+  failureType: 'testCodeFailure',
+  cause: AssertionError [ERR_ASSERTION]: Expected element to be rendered
+      at find (file:///Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/auth-modal.test.mjs:71:12)
+      at Object.click (file:///Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/auth-modal.test.mjs:77:20)
+      at TestContext.&lt;anonymous> (file:///Users/glenn/Desktop/NTU/SC3040/SGHomie/tests/auth-modal.test.mjs:110:7)
+      at async Test.run (node:internal/test_runner/test:1054:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+}
+		</failure>
+	</testcase>
+	<testcase name="failed registration keeps the form and entered email available to retry" time="0.000730" classname="test"/>
+	<testcase name="closing confirmation clears it before reopening registration" time="0.000506" classname="test"/>
+	<testcase name="auto-confirmed registration acknowledges the session without claiming an email was sent" time="0.000392" classname="test"/>
+	<testcase name="successful sign in still closes the modal" time="0.000380" classname="test"/>
+	<testcase name="recommendation writer receives only user context and verified results without tool history" time="0.005957" classname="test"/>
+	<testcase name="invalid or unavailable writing falls back without losing verified recommendations" time="0.080548" classname="test"/>
+	<testcase name="writer rejects stale towns and named nearby alternatives before publishing" time="0.000753" classname="test"/>
+	<testcase name="tool specifies examples and keeps HDB room type separate from bedrooms" time="0.000137" classname="test"/>
+	<testcase name="normalizes town alternatives, nulls and default ranking" time="0.000260" classname="test"/>
+	<testcase name="rejects malformed queries instead of broadening requirements" time="0.000653" classname="test"/>
+	<testcase name="query ANDs requirements, ORs towns, excludes drafts and ranks deterministically" time="0.000854" classname="test"/>
+	<testcase name="4-room filters listing text independently from a requested three bedrooms" time="0.000180" classname="test"/>
+	<testcase name="quotes filter grammar and escapes literal SQL wildcards" time="0.000239" classname="test"/>
+	<testcase name="listing fetch preserves caller identity, caps results and returns links/count" time="0.001471" classname="test"/>
+	<testcase name="zero matches differ from database and network failures" time="0.000483" classname="test"/>
+	<testcase name="previous filters reach the model and tool results retain their call IDs" time="0.001983" classname="test"/>
+	<testcase name="invalid tool arguments receive feedback with a bounded retry budget" time="0.001125" classname="test"/>
+	<testcase name="the model can answer conversationally even when search criteria are present" time="0.001051" classname="test"/>
+	<testcase name="screenshot timing question stays conversational, then an explicit search uses the stated budget" time="0.023794" classname="test"/>
+	<testcase name="preferences discussed after a previous search override its snapshot when a later search is requested" time="0.005001" classname="test"/>
+	<testcase name="fragmented Unicode/SSE metadata reaches the frontend and returns full text" time="0.000715" classname="test"/>
+	<testcase name="frontend rejects provider errors and unfinished streams" time="0.000576" classname="test"/>
+	<testcase name="literal Sengkang and budget requirements survive omitted or incorrect model arguments" time="0.001119" classname="test"/>
+	<testcase name="town changes, alternatives, removals and budget refinements override earlier context" time="0.001373" classname="test"/>
+	<testcase name="nonliteral budget refinements replace saved bounds and survive subsequent literal searches" time="0.004215" classname="test"/>
+	<testcase name="new budget extraction replaces an earlier removal while unrelated refinements retain saved ceilings" time="0.001894" classname="test"/>
+	<testcase name="any executives removes a stale town, retains budget and enforces executive room type" time="0.000421" classname="test"/>
+	<testcase name="explicit room-type refinements and removal override old model filters" time="0.000107" classname="test"/>
+	<testcase name="tool updates distinguish omitted filters from explicit null or empty-array removals" time="0.000252" classname="test"/>
+	<testcase name="new explicit constraints remain protected, while any or removal clears only the requested preference" time="0.000126" classname="test"/>
+	<testcase name="screenshot broadening uses the model-selected filter patch and preserves the budget in JSON and SSE" time="0.029728" classname="test"/>
+	<testcase name="HTTP removal of Clementi searches across towns and writes using the new result scope" time="0.001667" classname="test"/>
+	<testcase name="model-selected any-town search and preserves all saved filters" time="0.001750" classname="test"/>
+	<testcase name="completed tool searches retain verified cards when reply writing is unavailable" time="0.007955" classname="test"/>
+	<testcase name="model-selected searches preserve literal town, room type and budget constraints" time="0.000697" classname="test"/>
+	<testcase name="provider failure before a tool decision cannot produce automatic searches or invented cards" time="0.002234" classname="test"/>
+	<testcase name="complex searches still use the tool with server town/budget guards" time="0.000148" classname="test"/>
+	<testcase name="frontend exposes a safe rate-limit explanation without forwarding arbitrary backend errors" time="0.000056" classname="test"/>
+	<testcase name="textual tool markup is retried privately and cannot become an assistant answer" time="0.000118" classname="test"/>
+	<testcase name="exclusion-only town refinements ask for a replacement without searching broadly" time="0.000055" classname="test"/>
+	<testcase name="streamed legacy tool markup stays hidden even when tags arrive one character at a time" time="0.000546" classname="test"/>
+	<testcase name="database results outside the town or budget are rejected before recommending" time="0.000611" classname="test"/>
+	<testcase name="HTTP Sengkang search preserves constraints and sends only a verified result reply" time="0.000949" classname="test"/>
+	<testcase name="typed Buy clears seller intake and following requirements stay in the buy journey" time="0.033882" classname="test"/>
+	<testcase name="Buy opens a model-led conversation in both response modes without fixed intake or listings" time="0.002443" classname="test"/>
+	<testcase name="saved profile preferences map to supported filters without inferring constraints from income or family size" time="0.000285" classname="test"/>
+	<testcase name="Buy immediately searches authenticated profile preferences with either field set and explains verified results naturally" time="0.008860" classname="test"/>
+	<testcase name="saved preferences do not auto-search advice turns or become preferences for anonymous users" time="0.000690" classname="test"/>
+	<testcase name="requirement reply searches three cards and cannot be trapped in the pending sell journey" time="0.000762" classname="test"/>
+	<testcase name="anonymous buyers use anon role and JSON responses retain response compatibility" time="0.000355" classname="test"/>
+	<testcase name="explicit no-preference reply can search broadly after the requirements question" time="0.000407" classname="test"/>
+	<testcase name="invalid requests never reach model/database and cannot inject tool/system roles" time="0.000963" classname="test"/>
+	<testcase name="database/provider failures remain errors rather than no-match recommendations" time="0.003948" classname="test"/>
+	<testcase name="default model uses the free router without optional parameters that exclude tool providers" time="0.003613" classname="test"/>
+	<testcase name="unavailable model has an actionable error without exposing the upstream payload" time="0.000509" classname="test"/>
+	<testcase name="existing sell flow retains anonymous, non-seller and admin gates without model calls" time="0.002790" classname="test"/>
+	<testcase name="seller postal verification requests the full intake before writing a draft" time="0.001802" classname="test"/>
+	<testcase name="provider switch defaults to existing router, selects separate models and validates config" time="0.001206" classname="test"/>
+	<testcase name="OpenAI preserves prompts, history and tools while adapting only provider parameters" time="0.032760" classname="test"/>
+	<testcase name="model overrides handle non-reasoning models and reject incompatible GPT-6 tool models" time="0.000862" classname="test"/>
+	<testcase name="OpenAI failures retain status and are never retried against OpenRouter" time="0.000991" classname="test"/>
+	<testcase name="OpenAI streaming retains the frontend SSE contract" time="0.005271" classname="test"/>
+	<testcase name="complex buying request executes OpenAI tools, trusted DB search and generated prose" time="0.005228" classname="test"/>
+	<testcase name="Edge Function sends identical system prompts and tools for both providers" time="0.007453" classname="test"/>
+	<testcase name="Edge Function reports OpenAI-specific model configuration and safe rate-limit errors" time="0.005761" classname="test"/>
+	<testcase name="compact starts in the corner and expanded provides a larger centered window" time="0.000384" classname="test"/>
+	<testcase name="dragging cannot lose the window beyond any viewport edge" time="0.000458" classname="test"/>
+	<testcase name="resizing keeps the anchor and enforces usable minimums and viewport maximums" time="0.000076" classname="test"/>
+	<testcase name="small mobile viewports and orientation changes keep both modes inside the screen" time="0.000132" classname="test"/>
+	<testcase name="averages individual listing prices and uses listing counts for the popular area" time="0.093894" classname="test"/>
+	<testcase name="normalizes town names, falls back to location and preserves ties honestly" time="0.000636" classname="test"/>
+	<testcase name="empty or invalid prices show missing data rather than inventing zero averages" time="0.000803" classname="test"/>
+	<testcase name="counts approved HDB rows and normalized distinct towns across response pages" time="0.005426" classname="test"/>
+	<testcase name="an empty approved catalog reports real zero counts" time="0.000298" classname="test"/>
+	<testcase name="failed or incomplete fetches reject instead of publishing false zero or partial totals" time="0.001134" classname="test"/>
+	<testcase name="effect replay cancels the old fetch and never subscribes after cleanup" time="0.004281" classname="test"/>
+	<testcase name="an unmapped amenity type still supplies a Leaflet marker icon" time="0.009880" classname="test"/>
+	<testcase name="revisiting a property while channel removal is pending owns a fresh subscription" time="0.001204" classname="test"/>
+	<testcase name="navigation ignores a realtime count response arriving after the old page cleanup" time="0.001001" classname="test"/>
+	<testcase name="a valuation response from the previous property route is ignored" time="0.001121" classname="test"/>
+	<testcase name="logged-out valuation requests open the existing auth modal without invoking the service" time="0.000604" classname="test"/>
+	<testcase name="property content appears while independent interest lookups are pending and map mounts on approach" time="0.001026" classname="test"/>
+	<testcase name="map mounts eagerly when IntersectionObserver is unavailable" time="0.000612" classname="test"/>
+	<testcase name="valuation CTA prevents duplicates, shows staged copy, renders the hierarchy and clears timers" time="0.001309" classname="test"/>
+	<testcase name="below, within and above asking-price labels stay human-readable" time="0.001840" classname="test"/>
+	<testcase name="unmounting a pending valuation clears both timers and ignores its response" time="0.000646" classname="test"/>
+	<testcase name="valuation failure clears staged timers and leaves a retry action available" time="0.000631" classname="test"/>
+	<testcase name="changing property routes clears the prior valuation stage timers" time="0.000700" classname="test"/>
+	<testcase name="valuation sends only the property ID and passes the authenticated session token" time="0.001504" classname="test"/>
+	<testcase name="empty property IDs fail before session or function calls" time="0.000414" classname="test"/>
+	<testcase name="missing sessions and session lookup errors are controlled authentication failures" time="0.000511" classname="test"/>
+	<testcase name="function failures retain controlled authentication, network, unavailable and generic categories" time="0.010465" classname="test"/>
+	<testcase name="malformed success responses are rejected instead of rendered" time="0.002743" classname="test"/>
+	<testcase name="price-position labels are customer-facing and specific" time="0.000339" classname="test"/>
+	<testcase name="Explore selects only the card and map fields and keeps query controls explicit" time="0.000482" classname="test"/>
+	<testcase name="Explore keeps the first two card images eager and lazily decodes later images" time="0.000062" classname="test"/>
+	<testcase name="Explore map remains mounted as a primary search feature with its existing tile source" time="0.000049" classname="test"/>
+	<testcase name="complete sell flow persists confirmed details and private unit before emitting a draft card" time="0.068682" classname="test"/>
+	<testcase name="unknown details and no price create a partial draft without inventing a private unit" time="0.008098" classname="test"/>
+	<testcase name="user can choose an independent price and pricing-provider failures allow skipping" time="0.010685" classname="test"/>
+	<testsuite name="failed property/private writes never return success or a draft card" time="0.007004" disabled="0" errors="0" tests="2" failures="0" skipped="0" hostname="Lims-MacBook-Air.local">
+		<testcase name="failInsert" time="0.004373" classname="test"/>
+		<testcase name="failPrivate" time="0.002268" classname="test"/>
+	</testsuite>
+	<testcase name="a seller context cannot bypass auth or validation, and Buy escapes an active seller intake" time="0.007898" classname="test"/>
+	<testcase name="price decisions distinguish acceptance, own prices, unknowns and ambiguous messages" time="0.002778" classname="test"/>
+	<testcase name="profile contact details remove redundant questions and survive extraction and natural price acceptance" time="0.002196" classname="test"/>
+	<testcase name="intake asks only for missing or invalid profile contacts" time="0.000403" classname="test"/>
+	<testcase name="extraction sends only untrusted seller facts and validates unknown/invalid fields" time="0.000195" classname="test"/>
+	<testcase name="estimate rejects sparse details, invented extreme values and provider failures" time="0.000251" classname="test"/>
+	<testcase name="ordinary scale keeps 12% padding and maps the actual estimate linearly" time="0.000618" classname="test"/>
+	<testcase name="asking marker maps below, within, above, and at either bound without changing classification inputs" time="0.000155" classname="test"/>
+	<testcase name="narrow and equal ranges have a safe non-zero display domain" time="0.000065" classname="test"/>
+	<testcase name="extreme outliers compress tails while preserving a readable linear likely range and continuation" time="0.000199" classname="test"/>
+	<testcase name="moderate outliers stay linear and positions share the same mapping" time="0.000045" classname="test"/>
+	<testcase name="invalid, inconsistent, non-finite and overflowing values fail safely" time="0.000062" classname="test"/>
+	<testcase name="gauge anchors all three valuation labels and retains an accessible asking marker" time="0.058141" classname="test"/>
+	<testcase name="asking marker keeps its below, within and above status text" time="0.013794" classname="test"/>
+	<testcase name="outlier asking marker has exact value and explicit displayed-scale cue" time="0.010972" classname="test"/>
+	<testcase name="valuation motion is reduced when the user requests less motion" time="0.001023" classname="test"/>
+	<testcase name="invalid gauge values render an explanatory fallback instead of a broken scale" time="0.006297" classname="test"/>
+	<testcase name="lease reference advances by whole calendar months and rejects invalid states" time="0.001605" classname="test"/>
+	<testcase name="feature mapping follows the CatBoost contract and keeps asking price outside features" time="0.000395" classname="test"/>
+	<testcase name="demo storey range follows the training midpoint convention" time="0.000096" classname="test"/>
+	<testcase name="local demo fixtures are eligible only with both explicit local gates" time="0.049100" classname="test"/>
+	<testcase name="Edge timing logs correlate to the returned request ID without logging request secrets or features" time="0.003217" classname="test"/>
+	<testcase name="hosted demos require the independent hosted flag, canonical provenance and approved status" time="0.022991" classname="test"/>
+	<testcase name="verified complete seller inputs pass; incomplete and unverified rows fail closed" time="0.002256" classname="test"/>
+	<testcase name="caller-scoped property lookup preserves RLS and inaccessible rows are indistinguishable" time="0.001182" classname="test"/>
+	<testcase name="authentication, request shape, lease and upstream response are validated safely" time="0.003473" classname="test"/>
+	<testcase name="canonical seed contains both deterministic batches and removes only obsolete seed signatures" time="0.010547" classname="test"/>
+	<testcase name="valuation migrations preserve legacy inputs and validate optional storey ranges" time="0.003989" classname="test"/>
+	<!-- tests 141 -->
+	<!-- suites 0 -->
+	<!-- pass 140 -->
+	<!-- fail 1 -->
+	<!-- cancelled 0 -->
+	<!-- skipped 0 -->
+	<!-- todo 0 -->
+	<!-- duration_ms 1038.946917 -->
+</testsuites>

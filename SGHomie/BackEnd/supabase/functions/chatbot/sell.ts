@@ -79,7 +79,7 @@ export function generatedSellerTitle(details: SellerDetails, town: string): stri
 export interface AskingPriceReference { price: number; bedrooms: number; area_sqft: number }
 
 export async function suggestSellerPrice(client: OpenRouterClient, model: string, context: SellerContext,
-  address: { town: string; builtYear: number | null }, references: AskingPriceReference[]): Promise<number | null> {
+  address: { town: string; builtYear: number | null }, references: AskingPriceReference[], onFallback?: () => void): Promise<number | null> {
   const d = context.details;
   if (!d.bedrooms || !d.bathrooms || !d.area_sqft) return null;
   try {
@@ -95,6 +95,7 @@ export async function suggestSellerPrice(client: OpenRouterClient, model: string
     const price = sellerNumber(jsonObject(getAssistantText(response)).suggested_price, 5000000);
     return price && price >= 100000 ? Math.round(price / 5000) * 5000 : null;
   } catch {
+    onFallback?.();
     return null; // Pricing failure must still allow an unpriced draft.
   }
 }

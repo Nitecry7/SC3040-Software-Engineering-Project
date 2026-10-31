@@ -7,7 +7,8 @@ const PROFILE_LOOKUP_TIMEOUT_MS = 10_000;
 
 interface AuthContextType {
   user: User | null;
-  signOut: () => Promise<void>;
+  authTransition: 'intentional-sign-out' | 'inactivity-sign-out' | 'session-ended' | null;
+  signOut: (reason?: 'manual' | 'inactivity') => Promise<void>;
   refreshProfile: () => Promise<{ needsProfileSetup: boolean; isAdmin: boolean; isSeller: boolean } | null>;
   needsProfileSetup: boolean;
   isAdmin: boolean;
@@ -19,6 +20,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
+  authTransition: null,
   signOut: async () => {},
   refreshProfile: async () => null,
   needsProfileSetup: false,
@@ -33,6 +35,12 @@ export const useAuth = () => useContext(AuthContext);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [authTransition, setAuthTransition] = useState<AuthContextType['authTransition']>(null);
+  const authTransitionRef = useRef<AuthContextType['authTransition']>(null);
+  const setTransition = useCallback((transition: AuthContextType['authTransition']) => {
+    authTransitionRef.current = transition;
+    setAuthTransition(transition);
+  }, []);
   const [needsProfileSetup, setNeedsProfileSetup] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isSeller, setIsSeller] = useState(false);
@@ -45,6 +53,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }>>());
   const authRevision = useRef(0);
   const activeUserId = useRef<string | null | undefined>(undefined);
+  const activeUserIsRegistered = useRef(false);
   const profileLoadingRef = useRef(false);
 
   const checkProfile = useCallback((userId: string): Promise<{
@@ -103,6 +112,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const applySession = useCallback((currentUser: User | null) => {
     const userId = currentUser?.id ?? null;
+    activeUserIsRegistered.current = Boolean(currentUser && currentUser.is_anonymous !== true);
+    if (currentUser && currentUser.is_anonymous !== true && activeUserId.current !== userId) {
+      setTransition(null);
+    }
     setAuthLoading(false);
 
     // getSession() and INITIAL_SESSION can report the same user concurrently.
@@ -141,7 +154,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       profileLoadingRef.current = false;
       setProfileLoading(false);
     });
-  }, [checkProfile]);
+  }, [checkProfile, setTransition]);
 
   const refreshProfile = useCallback(async () => {
     if (!user || user.is_anonymous === true || activeUserId.current !== user.id) return null;
@@ -173,6 +186,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!mounted) return;
       authEventReceived = true;
+      const sessionUser = session?.user;
+      if (sessionUser
+        && sessionUser.is_anonymous !== true
+        && activeUserIsRegistered.current
+        && activeUserId.current === sessionUser.id
+        && !profileLoadingRef.current) {
+        // Supabase can emit SIGNED_IN when a hidden tab recovers a still-valid
+        // session after becoming visible. Reaffirming the same registered
+        // identity does not change its app profile or role, so keep protected
+        // screens mounted instead of restarting the route bootstrap.
+        // Session reaffirmation does not need a new User object either: the
+        // Admin dashboard uses user identity changes to reload its data.
+        if (_event === 'USER_UPDATED') setUser(sessionUser);
+        setAuthLoading(false);
+        return;
+      }
+      if (!session?.user && activeUserIsRegistered.current && !['intentional-sign-out', 'inactivity-sign-out'].includes(authTransitionRef.current ?? '')) {
+        setTransition('session-ended');
+      }
       applySession(session?.user ?? null);
     });
 
@@ -187,25 +219,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       mounted = false;
       authRevision.current += 1;
       activeUserId.current = undefined;
+      activeUserIsRegistered.current = false;
       profileLoadingRef.current = false;
       subscription.unsubscribe();
     };
-  }, [applySession]);
+  }, [applySession, setTransition]);
 
-  const signOut = async () => {
+  const signOut = useCallback(async (reason: 'manual' | 'inactivity' = 'manual') => {
+    // Keep the reason through SIGNED_OUT and the redirect, regardless of whether
+    // the auth event arrives before or after the sign-out promise resolves.
+    setTransition(reason === 'manual' ? 'intentional-sign-out' : 'inactivity-sign-out');
     try {
-      await supabase.auth.signOut();
+      const { error } = await supabase.auth.signOut();
+      if (error) {
+        if (reason === 'manual') throw error;
+        // An idle deadline must remove protected access even if the remote
+        // refresh-token revocation endpoint is unavailable.
+        console.error('Remote sign-out failed at inactivity deadline:', error);
+        try { await supabase.auth.signOut({ scope: 'local' }); } catch { /* local UI state is still ended below */ }
+        localStorage.clear();
+        applySession(null);
+        return;
+      }
       localStorage.clear();
       applySession(null);
     } catch (error) {
+      if (reason === 'inactivity') {
+        console.error('Remote sign-out failed at inactivity deadline:', error);
+        try { await supabase.auth.signOut({ scope: 'local' }); } catch (localError) {
+          console.error('Local sign-out fallback failed:', localError);
+        }
+        localStorage.clear();
+        applySession(null);
+        return;
+      }
+      setTransition(null);
       console.error('Error signing out:', error);
       throw error;
     }
-  };
+  }, [applySession, setTransition]);
 
   return (
     <AuthContext.Provider value={{
       user,
+      authTransition,
       signOut,
       refreshProfile,
       needsProfileSetup,
