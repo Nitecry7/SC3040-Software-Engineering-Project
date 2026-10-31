@@ -50,10 +50,11 @@ def main():
              'ALTER TABLE storage.buckets ADD PRIMARY KEY (id); '
              'ALTER TABLE storage.objects ADD PRIMARY KEY (id); '
              'ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;')
-        # Match Supabase's public Data API default grants. Policies and triggers
-        # themselves come exclusively from the real application migrations.
+        # Match Supabase's Data API and Storage object table grants. Policies
+        # and triggers themselves come from the real application migrations.
         psql('GRANT USAGE ON SCHEMA public, auth, storage, extensions TO anon, authenticated, service_role; '
              'GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA auth TO anon, authenticated, service_role; '
+             'GRANT SELECT, INSERT, UPDATE, DELETE ON storage.objects TO anon, authenticated, service_role; '
              'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role; '
              'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;')
         migrations = sorted((supabase / "migrations").glob("*.sql"))

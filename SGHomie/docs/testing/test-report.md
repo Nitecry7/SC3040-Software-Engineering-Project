@@ -1,6 +1,6 @@
 # SG Homie testing report
 
-> Current results: [verification after merging main](merge-verification.md) records **640 cases, 638 passed and 2 failed**. The report below is the original pre-merge snapshot at `cb3f743`, retained with its original evidence.
+> The [31 October gap-fill report](gap-fill-20261031.md) records the latest local frontend/backend and database verification. The [merge verification](merge-verification.md) and case catalogue are the earlier 28 October snapshot. The report below is the original pre-merge snapshot at `cb3f743`, retained with its original evidence.
 
 The initial pre-merge run included **580 executable test cases: 578 passed and 2 failed**. **237 cases were added**, and all 237 passed. Every pre-existing test file was preserved. Five confirmed implementation defects were fixed with regression tests. The two retained failures and seven existing app TypeScript errors keep the overall verification gate open; this is not a production release approval.
 

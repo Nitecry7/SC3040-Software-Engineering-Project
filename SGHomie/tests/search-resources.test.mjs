@@ -9,9 +9,11 @@ test('Explore selects only the card and map fields and keeps query controls expl
   assert.match(searchSource, /\.select\(SEARCH_PROPERTY_COLUMNS\)/);
   assert.match(searchSource, /const SEARCH_PROPERTY_COLUMNS = 'id,title,price,location,image_url,bedrooms,bathrooms,area_sqft,latitude,longitude'/);
   assert.doesNotMatch(searchSource, /\.select\('\*'\)/);
-  for (const field of ['type', 'status', 'location', 'bedrooms', 'price', 'created_at']) {
+  for (const field of ['type', 'status', 'location', 'price', 'created_at']) {
     assert.match(searchSource, new RegExp(`\\.(?:eq|gte|lte|order)\\('${field}'`));
   }
+  assert.match(searchSource, /\.or\(/, 'flat-size filters use explicit listing-text patterns');
+  assert.doesNotMatch(searchSource, /\.eq\('bedrooms',\s*Number\(filters\.roomType/);
 });
 
 test('Explore keeps the first two card images eager and lazily decodes later images', () => {

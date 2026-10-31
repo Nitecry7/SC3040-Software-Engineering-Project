@@ -11,7 +11,11 @@ const enquiry = {
   status: 'RESPONDED', admin_response: 'Synthetic response', created_at: '2026-10-27T01:00:00Z',
 };
 
-function harness({ history = { data: [], error: null }, insertion = Promise.resolve({ error: null }) } = {}) {
+function harness({
+  history = { data: [], error: null },
+  refreshedHistory = history,
+  insertion = Promise.resolve({ error: null }),
+} = {}) {
   const writes = [];
   const reads = [];
   const successes = [];
@@ -27,7 +31,10 @@ function harness({ history = { data: [], error: null }, insertion = Promise.reso
         insert(rows) { writes.push(JSON.parse(JSON.stringify(rows))); return insertion; },
         select(columns) { read.columns = columns; return query; },
         eq(column, value) { read.filter = [column, value]; return query; },
-        async order(column, options) { reads.push({ ...read, order: [column, options] }); return history; },
+        async order(column, options) {
+          reads.push({ ...read, order: [column, options] });
+          return reads.length === 1 ? history : refreshedHistory;
+        },
       };
       return query;
     } } },
@@ -110,5 +117,24 @@ test('FE-ENQUIRY-06 submission disables its button while the write is pending', 
   assert.match(content(app.render()), /Sending/);
   pending.resolve({ error: null });
   await submitted;
+  assert.equal(app.find(node => node.props.type === 'submit').props.disabled, false);
+});
+
+test('FE-ENQUIRY-07 refresh failure after a successful insert does not invite duplicate submission', async () => {
+  const app = harness({
+    refreshedHistory: { data: null, error: new Error('synthetic refresh failure') },
+  });
+  app.render();
+  await app.effects();
+  await setImmediate();
+  app.fill();
+
+  await app.submit();
+
+  assert.equal(app.writes.length, 1);
+  assert.equal(app.value('name'), '');
+  assert.equal(app.value('message'), '');
+  assert.deepEqual(app.successes, ['Enquiry submitted successfully! We will get back to you soon.']);
+  assert.deepEqual(app.errors, ['Enquiry submitted, but history could not be refreshed.']);
   assert.equal(app.find(node => node.props.type === 'submit').props.disabled, false);
 });

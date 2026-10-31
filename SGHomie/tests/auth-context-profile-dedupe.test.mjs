@@ -392,6 +392,31 @@ test('sign-out clears role state and ignores a late profile response', async () 
   cleanup();
 });
 
+test('a profile response from the previous account cannot overwrite a later sign-in', async () => {
+  const previousAccountProfile = deferred();
+  const currentAccountProfile = deferred();
+  const harness = authHarness();
+  harness.profileResponses.push(previousAccountProfile, currentAccountProfile);
+  const cleanup = harness.start();
+
+  harness.authEvent('SIGNED_IN', { user: { id: 'buyer-old' } });
+  harness.authEvent('SIGNED_IN', { user: { id: 'seller-current' } });
+  assert.equal(harness.value().user.id, 'seller-current');
+  assert.equal(harness.queries.length, 2);
+
+  currentAccountProfile.resolve({ data: { ...completeBuyerProfile.data, is_seller: true }, error: null });
+  await setImmediate();
+  assert.equal(harness.value().isSeller, true);
+  assert.equal(harness.value().loading, false);
+
+  previousAccountProfile.resolve({ data: { ...completeBuyerProfile.data, is_admin: true }, error: null });
+  await setImmediate();
+  assert.equal(harness.value().user.id, 'seller-current');
+  assert.equal(harness.value().isSeller, true);
+  assert.equal(harness.value().isAdmin, false, 'stale admin role cannot cross account boundaries');
+  cleanup();
+});
+
 test('Supabase anonymous sessions resolve as guests without a profile-role lookup', () => {
   const harness = authHarness();
   const cleanup = harness.start();

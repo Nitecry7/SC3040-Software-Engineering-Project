@@ -1,6 +1,6 @@
 # Running SG Homie tests
 
-The latest [main merge verification](../docs/testing/merge-verification.md) records 640 cases and the [current case catalogue](../docs/testing/test-case-catalogue-after-main.md) lists their outcomes. The [initial testing report](../docs/testing/test-report.md) retains the original 580-case run, measured coverage, confirmed fixes, open defects and remaining acceptance work. Earlier added scenarios and incoming main tests are both preserved.
+The [28 October merge verification](../docs/testing/merge-verification.md) and [case catalogue](../docs/testing/test-case-catalogue-after-main.md) are a dated snapshot. The [31 October gap-fill report](../docs/testing/gap-fill-20261031.md) records later frontend/backend and local database results. The [initial testing report](../docs/testing/test-report.md) retains the original 580-case run, measured ML coverage, confirmed fixes, and remaining browser/staging acceptance work.
 
 ## Application tests
 

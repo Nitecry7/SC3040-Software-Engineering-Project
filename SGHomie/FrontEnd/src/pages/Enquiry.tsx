@@ -105,14 +105,21 @@ const Enquiry = () => {
       
       // Refresh the enquiries list by fetching the data again.
       if (user?.email) {
-        const { data } = await supabase
-          .from('enquiries')
-          .select('*')
-          .eq('email', user.email)
-          .order('created_at', { ascending: false });
-        
-        // Update the state with the refreshed enquiries.
-        setEnquiries(data || []);
+        try {
+          const { data, error: refreshError } = await supabase
+            .from('enquiries')
+            .select('*')
+            .eq('email', user.email)
+            .order('created_at', { ascending: false });
+
+          if (refreshError) throw refreshError;
+          // Update the state with the refreshed enquiries.
+          setEnquiries(data || []);
+        } catch (refreshError) {
+          // The insert already succeeded; don't tell the user to resubmit it.
+          console.error('Error refreshing enquiries:', refreshError);
+          toast.error('Enquiry submitted, but history could not be refreshed.');
+        }
       }
     } catch (error) {
       // Log and show an error notification if the enquiry submission fails.

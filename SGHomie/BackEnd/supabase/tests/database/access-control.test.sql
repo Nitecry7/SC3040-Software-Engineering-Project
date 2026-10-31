@@ -3,7 +3,7 @@
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET LOCAL search_path = public, extensions;
-SELECT plan(36);
+SELECT plan(47);
 
 INSERT INTO auth.users (id, email) VALUES
  ('10000000-0000-4000-8000-000000000001', 'seller-a@example.invalid'),
@@ -32,6 +32,17 @@ INSERT INTO public.hdb_location_verifications
 VALUES
  ('40000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000001', '123456', '123', 'SYNTHETIC ROAD', 'BEDOK', 1.32, 103.93, now() + interval '15 minutes'),
  ('40000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000001', '123456', '123', 'SYNTHETIC ROAD', 'BEDOK', 1.32, 103.93, now() - interval '1 minute');
+INSERT INTO storage.objects (id, bucket_id, name, owner) VALUES
+ ('50000000-0000-4000-8000-000000000001', 'property-images', '10000000-0000-4000-8000-000000000001/20000000-0000-4000-8000-000000000002/synthetic-a.png', '10000000-0000-4000-8000-000000000001'),
+ ('50000000-0000-4000-8000-000000000002', 'property-images', '10000000-0000-4000-8000-000000000002/20000000-0000-4000-8000-000000000003/synthetic-b.png', '10000000-0000-4000-8000-000000000002');
+
+SELECT ok((SELECT public FROM storage.buckets WHERE id='property-images'),
+ 'DB-37 property image bucket is public for approved listing URLs');
+SELECT is((SELECT file_size_limit FROM storage.buckets WHERE id='property-images'),
+ 10485760::bigint, 'DB-38 property image bucket enforces its 10 MB object limit');
+SELECT is((SELECT allowed_mime_types FROM storage.buckets WHERE id='property-images'),
+ ARRAY['image/jpeg', 'image/png', 'image/webp']::text[],
+ 'DB-47 property image bucket permits only supported image MIME types');
 
 SELECT ok((SELECT bool_and(relrowsecurity) FROM pg_class WHERE oid IN
  ('public.user_profiles'::regclass, 'public.properties'::regclass, 'public.enquiries'::regclass,
@@ -85,6 +96,25 @@ SELECT lives_ok($$UPDATE public.properties SET hdb_verification_token='40000000-
 SELECT ok((SELECT hdb_verified AND latitude=1.32 AND longitude=103.93 AND postal_code='123456'
  AND hdb_verification_token IS NULL FROM public.properties WHERE id='20000000-0000-4000-8000-000000000002'),
  'DB-19 verified address overwrites spoofed fields and clears bearer token');
+SELECT lives_ok($$INSERT INTO storage.objects (bucket_id, name, owner)
+ VALUES ('property-images', auth.uid()::text || '/20000000-0000-4000-8000-000000000002/synthetic-new.png', auth.uid())$$,
+ 'DB-39 seller can upload an image under their own storage folder');
+SELECT throws_ok($$INSERT INTO storage.objects (bucket_id, name, owner)
+ VALUES ('property-images', '10000000-0000-4000-8000-000000000002/20000000-0000-4000-8000-000000000003/forbidden.png', auth.uid())$$,
+ '42501', NULL, 'DB-40 seller cannot upload into another seller storage folder');
+SELECT is((SELECT count(*) FROM storage.objects WHERE bucket_id='property-images'), 2::bigint,
+ 'DB-41 seller can see only their own property image metadata');
+WITH changed AS (UPDATE storage.objects SET metadata='{"updated":"synthetic"}'::jsonb
+ WHERE id='50000000-0000-4000-8000-000000000002' RETURNING id)
+SELECT is((SELECT count(*) FROM changed), 0::bigint,
+ 'DB-42 seller cannot update another seller image metadata');
+SELECT lives_ok($$UPDATE storage.objects SET metadata='{"updated":"synthetic"}'::jsonb
+ WHERE id='50000000-0000-4000-8000-000000000001'$$,
+ 'DB-43 seller can update their own image metadata');
+WITH removed AS (DELETE FROM storage.objects
+ WHERE id='50000000-0000-4000-8000-000000000002' RETURNING id)
+SELECT is((SELECT count(*) FROM removed), 0::bigint,
+ 'DB-44 seller cannot delete another seller image');
 RESET ROLE;
 
 SELECT set_config('request.jwt.claims', '{"sub":"10000000-0000-4000-8000-000000000002","email":"seller-b@example.invalid","role":"authenticated"}', true);
@@ -98,6 +128,8 @@ SELECT set_config('request.jwt.claims', '{"sub":"10000000-0000-4000-8000-0000000
 SET LOCAL ROLE authenticated;
 SELECT is((SELECT count(*) FROM public.properties), 1::bigint, 'DB-21 buyer sees approved properties only');
 SELECT is((SELECT count(*) FROM public.property_private_details), 0::bigint, 'DB-22 buyer cannot read private unit numbers');
+SELECT is((SELECT count(*) FROM storage.objects WHERE bucket_id='property-images'), 0::bigint,
+ 'DB-45 buyer cannot read seller image metadata');
 SELECT is((SELECT count(*) FROM public.enquiries), 1::bigint, 'DB-23 buyer sees own enquiries with case-insensitive email matching');
 WITH changed AS (UPDATE public.enquiries SET admin_response='spoofed', status='RESPONDED'
  WHERE id='30000000-0000-4000-8000-000000000001' RETURNING id)
@@ -128,6 +160,8 @@ WITH changed AS (UPDATE public.enquiries SET admin_response='Synthetic admin res
  WHERE id='30000000-0000-4000-8000-000000000001' RETURNING admin_response)
 SELECT is((SELECT max(admin_response) FROM changed), 'Synthetic admin response',
  'DB-32 administrator can answer enquiries');
+SELECT is((SELECT count(*) FROM storage.objects WHERE bucket_id='property-images'), 3::bigint,
+ 'DB-46 administrator can inspect property image metadata across sellers');
 RESET ROLE;
 
 -- Execute the PostgreSQL operator behind PostgREST imatch. SDK query-string
