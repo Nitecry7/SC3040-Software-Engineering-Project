@@ -29,6 +29,7 @@ export function componentHarness(file, dependencies = {}, props = {}, globals = 
       if (!(slot in state)) state[slot] = { current: initial };
       return state[slot];
     },
+    useId() { return `:test-${cursor++}:`; },
     useEffect(callback, dependencies) {
       const slot = cursor++;
       if (!state[slot] || !dependencies || dependencies.some((value, index) => value !== state[slot][index])) {

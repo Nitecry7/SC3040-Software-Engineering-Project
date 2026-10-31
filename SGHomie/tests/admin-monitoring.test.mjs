@@ -38,6 +38,9 @@ async function fixture(options = {}) {
           if (name === 'monitoring_dashboard_summary') return options.summaryError
             ? { data: null, error: new Error('private-summary-error') }
             : { data: { version: 2, range: { range: args.p_range, start: '2026-10-30T00:00:00Z', end: '2026-10-31T00:00:00Z' }, metrics: {}, valuation: {}, chatbot: {}, alerts: [], health: [], retention: { target_days: 90 } }, error: null };
+          if (name === 'monitoring_recent_feedback') return options.feedbackError
+            ? { data: null, error: new Error('private-feedback-error') }
+            : { data: options.feedback ?? [], error: null };
           if (name === 'record_monitoring_alert') return { data: null, error: null };
           if (name === 'transition_monitoring_alert') return options.transitionError
             ? { data: null, error: { code: 'P0002' } }
@@ -166,6 +169,31 @@ test('admin monitoring returns only safe bounded samples and readiness with vers
     assert.doesNotMatch(serialized, new RegExp(privateValue.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
   assert.ok(parseMonitoringSnapshot(body));
+});
+
+test('recent written feedback is bounded, expiry-aware, and exposes only safe fields to an admin', async () => {
+  const { handler, rpcCalls } = await fixture({ feedback: [
+    { rating: 'negative', recorded_at: '2026-10-31T00:00:00Z', comment: '[EMAIL_REDACTED] Helpful note', user_id: 'private-user', interaction_id: interactionId },
+  ] });
+  const response = await handler(request({ action: 'read_summary', range: '7d' }));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.dashboard_v2.recent_feedback, [{
+    rating: 'negative', recorded_at: '2026-10-31T00:00:00Z', comment: '[EMAIL_REDACTED] Helpful note',
+  }]);
+  const feedbackArgs = rpcCalls.find((call) => call.name === 'monitoring_recent_feedback')?.args;
+  assert.equal(feedbackArgs.p_start, '2026-10-30T00:00:00Z');
+  assert.equal(feedbackArgs.p_end, '2026-10-31T00:00:00Z');
+  assert.doesNotMatch(JSON.stringify(body), /private-user|interaction_id/);
+});
+
+test('feedback detail query failure does not fail the monitoring dashboard', async () => {
+  const { handler } = await fixture({ feedbackError: true });
+  const response = await handler(request({ action: 'read_summary', range: '7d' }));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.dashboard_v2.recent_feedback, null);
+  assert.equal(body.dashboard_v2.range.range, '7d');
 });
 
 test('Render uncertainty stays unknown; only explicit not-ready and confirmed version mismatch create incidents', async () => {

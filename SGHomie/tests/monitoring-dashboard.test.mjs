@@ -4,8 +4,8 @@ import { setImmediate } from 'node:timers/promises';
 import { readFileSync } from 'node:fs';
 import { componentHarness, content, deferred, nodes } from './helpers/frontend-component.mjs';
 import {
-  formatDuration, formatSgt, isUnsupportedMonitoringAction, parseHealthCheckResult,
-  parseDashboard, parseMonitoringBadge, parseMonitoringDetail, percentileLabel,
+  formatDuration, formatSgt, formatSgtWithZone, isUnsupportedMonitoringAction, monitoringBucketLabel,
+  monitoringDisplayLabel, parseHealthCheckResult, parseDashboard, parseMonitoringBadge, parseMonitoringDetail, percentileLabel,
 } from '../FrontEnd/src/lib/monitoringDashboard.ts';
 
 const stamp = '2026-10-31T00:00:00Z';
@@ -46,7 +46,7 @@ const dashboard = (range, count = 20) => ({
 });
 const flush = async (app) => { await setImmediate(); app.render(); await app.effects(); await setImmediate(); };
 function makeApp(invoke) {
-  const icons = Object.fromEntries(['Activity', 'Info', 'RefreshCw', 'Search', 'ShieldAlert', 'X'].map((name) => [name, name]));
+  const icons = Object.fromEntries(['Activity','AlertTriangle','Bot','CheckCircle2','Clock3','Cpu','Database','Gauge','Globe2','Info','MessageCircle','MessageSquare','Monitor','Radar','RefreshCw','Search','ShieldAlert','ShieldCheck','ThumbsDown','ThumbsUp','Timer','TrendingUp','Wrench','X'].map((name) => [name, name]));
   const props = {
     onBadgeChanged() {}, view: 'overview', range: '7d',
     onViewChange(view) { props.view = view; },
@@ -54,13 +54,21 @@ function makeApp(invoke) {
   };
   return componentHarness(new URL('../FrontEnd/src/components/AdminMonitoringV2.tsx', import.meta.url), {
     'lucide-react': icons,
-    recharts: Object.fromEntries(['Area', 'AreaChart', 'Bar', 'BarChart', 'CartesianGrid', 'Cell', 'Legend', 'ResponsiveContainer', 'Tooltip', 'XAxis', 'YAxis'].map((name) => [name, name])),
+    recharts: Object.fromEntries(['Area', 'AreaChart', 'Bar', 'BarChart', 'CartesianGrid', 'Cell', 'ResponsiveContainer', 'Tooltip', 'XAxis', 'YAxis'].map((name) => [name, name])),
     '../lib/supabase': { supabase: { functions: { invoke } } },
-    '../lib/monitoringDashboard': { formatCount: (n) => String(n), formatDuration, formatSgt,
+    '../lib/monitoringDashboard': { formatCount: (n) => String(n), formatDuration, formatSgt, formatSgtWithZone,
+      monitoringBucketLabel, monitoringDisplayLabel, percentileMinimums: { p50: 5, p95: 20, p99: 100 },
       isUnsupportedMonitoringAction, parseHealthCheckResult, parseDashboard, parseMonitoringDetail, percentileLabel },
   }, props);
 }
-const click = (app, text) => app.find((node) => node.type === 'button' && content(node).includes(text)).props.onClick();
+const click = (app, text) => app.find((node) => node.type === 'button' && content(node).toLowerCase().includes(text.toLowerCase())).props.onClick();
+const expandComponents = (node) => {
+  if (Array.isArray(node)) return node.map(expandComponents);
+  if (!node || typeof node !== 'object') return node;
+  if (typeof node.type === 'function') return expandComponents(node.type(node.props));
+  return { ...node, props: { ...node.props, children: expandComponents(node.props?.children) } };
+};
+const viewText = (app) => content(expandComponents(app.render()));
 
 test('versioned dashboard rejects malformed values and treats an older backend as an upgrade state', () => {
   assert.equal(parseDashboard({ checked_at: stamp }), 'upgrade_required');
@@ -80,6 +88,12 @@ test('versioned dashboard rejects malformed values and treats an older backend a
   assert.equal(percentileLabel({ state: 'unavailable' }, 'p50'), 'Unavailable');
   assert.equal(formatDuration(1800), '1.8 s');
   assert.match(formatSgt(stamp), /31 Oct 2026/);
+  assert.equal(formatSgtWithZone(null), 'Unavailable');
+  assert.equal(monitoringDisplayLabel('CHAT_USER_BURST_LIMIT'), 'User Burst Limit');
+  assert.equal(monitoringDisplayLabel('prediction_interval_invalid'), 'Prediction Interval Invalid');
+  assert.equal(monitoringBucketLabel('Today so far', stamp, '7d'), 'Today (Partial)');
+  assert.match(monitoringBucketLabel(null, stamp, '7d'), /Sat 31/);
+  assert.match(monitoringBucketLabel(null, stamp, '24h'), /8 am/);
   assert.equal(parseMonitoringBadge({ dashboard_v2: { version: 2, active_unacknowledged_alert_count: 3 } }), 3);
   assert.equal(parseMonitoringBadge({ dashboard_v2: { version: 2, active_unacknowledged_alert_count: 0 } }), null);
   assert.equal(parseMonitoringBadge(null), null);
@@ -99,12 +113,18 @@ test('versioned dashboard rejects malformed values and treats an older backend a
   assert.equal(parseMonitoringDetail({ dashboard_v2: { version: 2, request_detail: {
     ...safeDetail.dashboard_v2.request_detail, render_fetch_ms: -1,
   } } }, id), null);
+  const feedback = parseDashboard({ dashboard_v2: { ...complete.dashboard_v2, recent_feedback: [
+    { rating: 'negative', recorded_at: stamp, comment: 'Plain text', user_id: 'private', interaction_id: 'private-id' },
+    { rating: 'negative', recorded_at: stamp, comment: '   ' },
+  ] } });
+  assert.deepEqual(feedback?.recent_feedback, [{ rating: 'negative', recorded_at: stamp, comment: 'Plain text' }]);
+  assert.equal(parseDashboard({ dashboard_v2: { ...complete.dashboard_v2, recent_feedback: [{ rating: 'negative', recorded_at: stamp, comment: 'x'.repeat(1001) }] } }), null);
 });
 
 test('older backend action rejection shows one upgrade state without fake charts', async () => {
   const app = makeApp(() => Promise.resolve({ data: null, error: { context: { status: 400 } } }));
   app.render(); await app.effects(); await flush(app);
-  const text = content(app.render());
+  const text = viewText(app);
   assert.match(text, /Monitoring backend upgrade required/);
   assert.doesNotMatch(text, /Recorded request volume|P50 typical|Valuation requests/);
 });
@@ -123,8 +143,8 @@ test('newer selected range wins when older response arrives late', async () => {
   assert.equal(pending.at(-1).range, '7d');
   pending.at(-1).task.resolve({ data: dashboard('7d', 42), error: null }); await flush(app);
   pending.at(-2).task.resolve({ data: dashboard('24h', 99), error: null }); await flush(app);
-  assert.match(content(app.render()), /42 succeeded/);
-  assert.doesNotMatch(content(app.render()), /99 succeeded/);
+  assert.match(viewText(app), /42 succeeded/);
+  assert.doesNotMatch(viewText(app), /99 succeeded/);
 });
 
 test('overlapping refreshes retain newest response and previous freshness while pending', async () => {
@@ -134,14 +154,14 @@ test('overlapping refreshes retain newest response and previous freshness while 
   });
   app.render(); await app.effects();
   pending[0].task.resolve({ data: dashboard('7d', 10), error: null }); await flush(app);
-  click(app, 'Refresh data'); app.render();
-  click(app, 'Refresh data'); app.render();
-  assert.match(content(app.render()), /10 succeeded/);
-  assert.match(content(app.render()), /Data as of/);
+  click(app, 'Refresh Data'); app.render();
+  click(app, 'Refresh Data'); app.render();
+  assert.match(viewText(app), /10 succeeded/);
+  assert.match(viewText(app), /Data as of/);
   pending.at(-1).task.resolve({ data: dashboard('7d', 25), error: null }); await flush(app);
   pending.at(-2).task.resolve({ data: dashboard('7d', 90), error: null }); await flush(app);
-  assert.match(content(app.render()), /25 succeeded/);
-  assert.doesNotMatch(content(app.render()), /90 succeeded/);
+  assert.match(viewText(app), /25 succeeded/);
+  assert.doesNotMatch(viewText(app), /90 succeeded/);
 });
 
 test('health check uses selected range, prevents duplicate submission and retains data on unknown', async () => {
@@ -152,18 +172,18 @@ test('health check uses selected range, prevents duplicate submission and retain
   });
   app.render(); await app.effects(); await flush(app);
   click(app, '24h'); await flush(app);
-  click(app, 'Run health check'); app.render();
-  assert.match(content(app.render()), /Running health check/);
-  click(app, 'Running health check');
+  click(app, 'Run Health Check'); app.render();
+  assert.match(viewText(app), /Running Health Check/);
+  click(app, 'Running Health Check');
   assert.equal(calls.filter((call) => call.action === 'health_check').length, 1);
   assert.equal(calls.at(-1).range, '24h');
   const unknown = dashboard('24h', 99);
   unknown.dashboard_v2.health[0].status = 'unknown';
   unknown.dashboard_v2.health_check_result = { status: 'unknown', observed_at: stamp, recorded: true };
   pending.resolve({ data: unknown, error: null }); await flush(app);
-  assert.match(content(app.render()), /could not provide/);
-  assert.match(content(app.render()), /10 succeeded/);
-  assert.doesNotMatch(content(app.render()), /99 succeeded/);
+  assert.match(viewText(app), /could not provide/);
+  assert.match(viewText(app), /10 succeeded/);
+  assert.doesNotMatch(viewText(app), /99 succeeded/);
 });
 
 test('successful health check keeps the chosen range and updates that range without another probe', async () => {
@@ -176,10 +196,10 @@ test('successful health check keeps the chosen range and updates that range with
   });
   app.render(); await app.effects(); await flush(app);
   click(app, '30d'); await flush(app);
-  click(app, 'Run health check'); await flush(app);
+  click(app, 'Run Health Check'); await flush(app);
   assert.equal(calls.at(-1).action, 'health_check');
   assert.equal(calls.at(-1).range, '30d');
-  assert.match(content(app.render()), /28 succeeded/);
+  assert.match(viewText(app), /28 succeeded/);
   assert.equal(calls.filter((call) => call.action === 'health_check').length, 1);
   assert.equal(calls.filter((call) => call.action === 'read_summary').length, 2);
 });
@@ -191,12 +211,12 @@ test('failed refresh keeps previous values and freshness with a neutral retry st
     : { data: dashboard(options.body.range, 12), error: null }));
   app.render(); await app.effects(); await flush(app);
   fail = true;
-  click(app, 'Refresh data'); await flush(app);
-  const text = content(app.render());
+  click(app, 'Refresh Data'); await flush(app);
+  const text = viewText(app);
   assert.match(text, /12 succeeded/);
   assert.match(text, /Data as of/);
   assert.match(text, /dashboard read error, not a service outage/);
-  assert.match(text, /Try again/);
+  assert.match(text, /Try Again/);
 });
 
 test('monitoring chart source provides labelled accessible tables and lazy loading boundary', () => {
@@ -208,7 +228,13 @@ test('monitoring chart source provides labelled accessible tables and lazy loadi
   assert.match(component, /Valuation recorded/);
   assert.match(component, /Chatbot recorded/);
   assert.match(component, /Valid n/);
-  assert.match(component, /Insufficient samples/);
+  assert.match(component, /Insufficient Samples/);
+  assert.match(component, /role="tooltip"/);
+  assert.match(component, /group-focus-within:visible/);
+  assert.match(component, /P50 Typical Latency/);
+  assert.match(component, /50% of recorded requests completed within this time, while 50% took longer/);
+  assert.match(component, /role="img" aria-labelledby="latency-summary"/);
+  assert.doesNotMatch(component, /<(?:button|div|span|p|a|td|th)[^>]*\stitle=/);
   assert.match(route, /lazy\(\(\) => import\('\.\.\/components\/AdminMonitoringV2'\)\)/);
   assert.match(route, /Suspense fallback=/);
   assert.match(route, /monitoringBadge !== null/);
@@ -229,7 +255,7 @@ test('chart tables expose the same recorded counts and supported percentile valu
   const bars = nodes(volume).find((node) => node.type === 'BarChart');
   assert.equal(bars.props.data[0].valuation, 20);
   assert.equal(bars.props.data[0].chatbot, 2);
-  assert.match(content(volume), /Today so far/);
+  assert.match(content(volume), /Today \(Partial\)/);
   assert.match(content(volume), /Valuation recorded/);
   assert.match(content(volume), /Chatbot recorded/);
   assert.ok(nodes(volume).some((node) => node.type === 'summary' && content(node) === 'View data as table'));
@@ -239,19 +265,57 @@ test('chart tables expose the same recorded counts and supported percentile valu
   assert.equal(area.props.data[0].p50, 100);
   assert.equal(area.props.data[0].p95, 300);
   assert.equal(area.props.data[0].p99, null);
-  assert.match(content(latency), /Insufficient samples/);
+  assert.match(content(latency), /Insufficient Samples/);
   assert.match(content(latency), /Valid n/);
 });
 
-test('all six secondary tabs and sparse percentile cards are reachable', async () => {
+test('all six monitoring tabs and timing matrix are reachable', async () => {
   const app = makeApp((_name, options) => Promise.resolve({ data: dashboard(options.body.range, 10), error: null }));
   app.render(); await app.effects(); await flush(app);
   for (const tab of ['Services', 'Chatbot', 'Valuation', 'Security', 'Feedback']) {
-    click(app, tab); const rendered = content(app.render());
+    click(app, tab); const rendered = viewText(app);
     assert.ok(rendered.length > 0, tab);
   }
   click(app, 'Overview');
-  const text = content(app.render());
-  assert.match(text, /Insufficient samples/);
+  const text = viewText(app);
+  assert.match(readFileSync(new URL('../FrontEnd/src/components/AdminMonitoringV2.tsx', import.meta.url), 'utf8'), /Insufficient Samples/);
+  click(app, 'Chatbot');
+  assert.match(readFileSync(new URL('../FrontEnd/src/components/AdminMonitoringV2.tsx', import.meta.url), 'utf8'), /Latency Percentiles/);
+  assert.match(readFileSync(new URL('../FrontEnd/src/components/AdminMonitoringV2.tsx', import.meta.url), 'utf8'), /First Application Output/);
+  assert.doesNotMatch(readFileSync(new URL('../FrontEnd/src/components/AdminMonitoringV2.tsx', import.meta.url), 'utf8'), /Interaction latency · P50/);
   assert.match(text, /10 succeeded/);
+});
+
+test('written feedback detail uses plain text and excludes identity and conversation fields', async () => {
+  const response = dashboard('7d');
+  response.dashboard_v2.chatbot.feedback_count = 1;
+  response.dashboard_v2.chatbot.feedback_ratings = { negative: 1 };
+  response.dashboard_v2.recent_feedback = [{ rating: 'negative', recorded_at: stamp, comment: '<script>plain text only</script>' }];
+  const app = makeApp(() => Promise.resolve({ data: response, error: null }));
+  app.render(); await app.effects(); await flush(app);
+  click(app, 'Feedback');
+  let feedback = expandComponents(app.render());
+  nodes(feedback).find((node) => node.type === 'button' && content(node).includes('<script>plain text only</script>')).props.onClick();
+  feedback = expandComponents(app.render());
+  assert.match(content(feedback), /Recent Written Feedback/);
+  assert.match(content(feedback), /Feedback Details/);
+  assert.match(content(feedback), /<script>plain text only<\/script>/);
+  assert.doesNotMatch(content(feedback), /user_id|interaction_id|conversation/);
+  assert.equal(nodes(feedback).some((node) => node.type === 'script'), false);
+});
+
+test('unsupported latency chart shows a designed empty state without rendering axes', () => {
+  const raw = dashboard('7d', 1);
+  raw.dashboard_v2.valuation.series[0].total_edge = stats(1);
+  const data = parseDashboard(raw);
+  const app = makeApp(() => Promise.resolve({ data: raw, error: null }));
+  const expand = (node) => {
+    if (Array.isArray(node)) return node.map(expand);
+    if (!node || typeof node !== 'object') return node;
+    if (typeof node.type === 'function') return expand(node.type(node.props));
+    return { ...node, props: { ...node.props, children: expand(node.props?.children) } };
+  };
+  const latency = expand(app.exports.LatencyChart({ data }));
+  assert.match(content(latency), /Not Enough Requests to Plot Latency Yet/);
+  assert.equal(nodes(latency).some((node) => node.type === 'AreaChart'), false);
 });

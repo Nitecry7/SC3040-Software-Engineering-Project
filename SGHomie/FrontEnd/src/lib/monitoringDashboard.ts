@@ -16,6 +16,7 @@ export type MonitoringDetail = MonitoringRequest & {
   authentication_ms: number | null; database_lookup_ms: number | null;
   request_construction_ms: number | null; render_fetch_ms: number | null;
 };
+export type MonitoringFeedback = { rating: 'positive' | 'negative'; recorded_at: string; comment: string };
 export type MonitoringBucket = {
   bucket_start: string; label: string | null; request_count: number; success_count: number;
   failure_count: number; chatbot_request_count: number; chatbot_success_count: number;
@@ -40,6 +41,7 @@ export type MonitoringDashboard = {
     oldest_valuation_event_at: string | null; oldest_service_health_check_at: string | null;
     oldest_resolved_alert_at: string | null };
   recent_valuation_requests: MonitoringRequest[] | null;
+  recent_feedback: MonitoringFeedback[] | null;
 };
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -135,7 +137,18 @@ export function parseDashboard(value: unknown): MonitoringDashboard | 'upgrade_r
     || !nullableDate(data.retention.oldest_valuation_event_at)
     || !nullableDate(data.retention.oldest_service_health_check_at)
     || !nullableDate(data.retention.oldest_resolved_alert_at)) return null;
-  return data as MonitoringDashboard;
+  const feedback = data.recent_feedback;
+  if (feedback !== undefined && feedback !== null && (!Array.isArray(feedback) || feedback.length > 20
+    || !feedback.every((item) => object(item)
+      && ['positive', 'negative'].includes(String(item.rating))
+      && date(item.recorded_at) && typeof item.comment === 'string' && item.comment.length <= 1000))) return null;
+  return {
+    ...data,
+    recent_feedback: Array.isArray(feedback) ? feedback.filter((item) => (item.comment as string).trim().length > 0).map((item) => ({
+      rating: item.rating as MonitoringFeedback['rating'], recorded_at: item.recorded_at as string,
+      comment: item.comment as string,
+    })) : null,
+  } as MonitoringDashboard;
 }
 
 export function parseMonitoringBadge(value: unknown): number | null {
@@ -169,6 +182,37 @@ export function formatSgt(value: string | null): string {
     timeZone: 'Asia/Singapore', day: 'numeric', month: 'short', year: 'numeric',
     hour: 'numeric', minute: '2-digit', hour12: true,
   }).format(new Date(value));
+}
+export function formatSgtWithZone(value: string | null): string {
+  const formatted = formatSgt(value);
+  return formatted === 'Unavailable' ? formatted : `${formatted} SGT`;
+}
+const friendlyLabels: Record<string, string> = {
+  success: 'Success', failure: 'Failed', failed: 'Failed', healthy: 'Ready', critical: 'Critical',
+  warning: 'Warning', unknown: 'Unknown', active: 'Active', acknowledged: 'Acknowledged', resolved: 'Resolved',
+  user_burst_limit: 'User Burst Limit', CHAT_USER_BURST_LIMIT: 'User Burst Limit',
+  user_daily_limit: 'User Daily Limit', CHAT_USER_DAILY_LIMIT: 'User Daily Limit',
+  prediction_interval_invalid: 'Prediction Interval Invalid', RENDER_UNAVAILABLE: 'Render Unavailable',
+  provider_error: 'Provider Error', provider_http_429: 'Provider Rate Limit',
+  provider_http_500: 'Provider Error', provider_http_502: 'Provider Error', provider_http_503: 'Provider Error',
+  provider_http_504: 'Provider Timeout', OTHER: 'Other',
+  edge_total: 'Edge Total', database_lookup: 'Database Lookup', request_construction: 'Request Construction',
+  render_fetch: 'Render Fetch', render_total: 'Render Total', catboost_prediction: 'CatBoost Prediction',
+  conformal_interval: 'Conformal Interval', prediction_sanity: 'Prediction Sanity', not_authorized: 'Not Authorized',
+  rate_limited: 'Rate Limited',
+};
+export function monitoringDisplayLabel(value: string): string {
+  return friendlyLabels[value] ?? friendlyLabels[value.toLowerCase()]
+    ?? value.replace(/[_-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+export const percentileMinimums = { p50: 5, p95: 20, p99: 100 } as const;
+export function monitoringBucketLabel(label: string | null, bucketStart: string, range?: MonitoringRange): string {
+  if (label === 'Today so far') return 'Today (Partial)';
+  if (label) return label;
+  const d = new Date(bucketStart);
+  const options: Intl.DateTimeFormatOptions = range === '7d' || range === '30d'
+    ? { weekday: 'short', day: 'numeric' } : { hour: 'numeric', hour12: true };
+  return new Intl.DateTimeFormat('en-SG', { ...options, timeZone: 'Asia/Singapore' }).format(d);
 }
 export function percentileLabel(stats: DurationStats | { state: 'unavailable' } | undefined,
   key: 'p50' | 'p95' | 'p99'): string {

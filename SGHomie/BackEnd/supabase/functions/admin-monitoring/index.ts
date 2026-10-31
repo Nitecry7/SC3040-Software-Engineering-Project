@@ -174,13 +174,15 @@ Deno.serve(async (request) => {
           || !Number.isFinite(Date.parse(start)) || !Number.isFinite(Date.parse(end))) return null;
       let requests: { data: Record<string, unknown>[] | null; error: unknown } = { data: null, error: true };
       let alerts: { data: Record<string, unknown>[] | null; error: unknown } = { data: null, error: true };
+      let feedback: { data: unknown; error: unknown } = { data: null, error: true };
       let unresolvedCount: number | null = null;
-      try { [requests, alerts] = await Promise.all([
+      try { [requests, alerts, feedback] = await Promise.all([
         service.from('valuation_events').select('request_id,created_at,status,failure_category,total_edge_ms')
           .gte('created_at', start).lt('created_at', end)
           .order('created_at', { ascending: false }).limit(10),
         service.from('system_alerts').select('id,severity,source,category,state,first_detected_at,last_detected_at,occurrence_count,latest_request_id,acknowledged_at,resolved_at')
           .in('state', ['active', 'acknowledged']).order('last_detected_at', { ascending: false }).limit(30),
+        service.rpc('monitoring_recent_feedback', { p_start: start, p_end: end }),
       ]);
         const total = await service.from('system_alerts').select('id', { count: 'exact', head: true })
           .in('state', ['active', 'acknowledged']);
@@ -197,6 +199,15 @@ Deno.serve(async (request) => {
         })),
         unresolved_alerts: alerts.error ? null : (alerts.data ?? []).map((row: Record<string, unknown>) => boundedSafeAlert(row)),
         unresolved_alert_count: unresolvedCount,
+        recent_feedback: feedback.error || !Array.isArray(feedback.data) ? null
+          : feedback.data.slice(0, 20).flatMap((row: unknown) => {
+            if (typeof row !== 'object' || row === null || Array.isArray(row)) return [];
+            const item = row as Record<string, unknown>;
+            if (!['positive', 'negative'].includes(String(item.rating))
+                || typeof item.recorded_at !== 'string' || !Number.isFinite(Date.parse(item.recorded_at))
+                || typeof item.comment !== 'string' || item.comment.length > 1000) return [];
+            return [{ rating: item.rating, recorded_at: item.recorded_at, comment: item.comment }];
+          }),
       };
     };
 
