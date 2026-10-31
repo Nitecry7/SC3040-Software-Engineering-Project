@@ -1,11 +1,12 @@
 // Import React and its hooks used for state management, side effects, and navigation.
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 // Import custom auth context to check authenticated user details.
 import { useAuth } from '../contexts/AuthContext';
 // Import Supabase client to perform database operations.
 import { supabase } from '../lib/supabase';
 import { parseMonitoringBadge } from '../lib/monitoringDashboard';
+import { normalizeAdminDashboardUrl, parseAdminDashboardUrl, selectAdminTab, selectMonitoringRange, selectMonitoringView } from '../lib/adminDashboardState';
 // Import various icons from lucide-react for UI elements such as buttons and status indicators.
 import { Users, Home, Mail, Send, Trash2, Store, CheckCircle, XCircle, Clock, Activity } from 'lucide-react';
 const AdminMonitoring = lazy(() => import('../components/AdminMonitoringV2'));
@@ -51,14 +52,24 @@ interface Enquiry {
 }
 
 // Define a type for tab selection to manage which dashboard section is shown.
-type TabType = 'users' | 'enquiries' | 'properties' | 'monitoring';
-
 // The main AdminDashboard component encapsulates all the functionality for the admin panel.
 const AdminDashboard = () => {
   // Retrieve the authenticated user from the custom Auth context.
   const { user } = useAuth();
   // Get the navigate function from react-router for navigation actions.
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigation = parseAdminDashboardUrl(searchParams);
+  const activeTab = navigation.tab;
+
+  useEffect(() => {
+    const normalized = normalizeAdminDashboardUrl(searchParams);
+    if (normalized) setSearchParams(normalized, { replace: true });
+  }, [searchParams, setSearchParams]);
+
+  const changeAdminTab = (tab: typeof activeTab) => selectAdminTab(setSearchParams, tab);
+  const changeMonitoringView = (view: typeof navigation.view) => selectMonitoringView(setSearchParams, view);
+  const changeMonitoringRange = (range: typeof navigation.range) => selectMonitoringRange(setSearchParams, range);
 
   // Local state to manage loading state while data is fetched.
   const [loading, setLoading] = useState(true);
@@ -87,8 +98,6 @@ const AdminDashboard = () => {
   const [response, setResponse] = useState('');
   // State to indicate if a response is currently being sent.
   const [sendingResponse, setSendingResponse] = useState(false);
-  // State to control which dashboard tab is active ('users', 'enquiries', or 'properties').
-  const [activeTab, setActiveTab] = useState<TabType>('users');
   // State to hold any error messages that occur during data loading.
   const [error, setError] = useState<string | null>(null);
 
@@ -314,7 +323,7 @@ const AdminDashboard = () => {
             Retry
           </button>
           <button
-            onClick={() => setActiveTab('monitoring')}
+            onClick={() => changeAdminTab('monitoring')}
             className="ml-3 mt-4 px-4 py-3 rounded-lg border border-blue-600 text-blue-700 hover:bg-blue-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
           >
             Open System Monitoring
@@ -384,7 +393,7 @@ const AdminDashboard = () => {
           <div className="border-b border-gray-200">
             <nav className="flex -mb-px flex-wrap" aria-label="Admin sections">
               <button
-                onClick={() => setActiveTab('users')}
+                onClick={() => changeAdminTab('users')}
                 className={`py-4 px-6 text-center border-b-2 font-medium text-sm ${
                   activeTab === 'users'
                     ? 'border-blue-500 text-blue-600'
@@ -395,7 +404,7 @@ const AdminDashboard = () => {
                 Manage Users
               </button>
               <button
-                onClick={() => setActiveTab('properties')}
+                onClick={() => changeAdminTab('properties')}
                 className={`py-4 px-6 text-center border-b-2 font-medium text-sm ${
                   activeTab === 'properties'
                     ? 'border-blue-500 text-blue-600'
@@ -407,7 +416,7 @@ const AdminDashboard = () => {
                 {pendingProperties.length > 0 && <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-800">{pendingProperties.length}</span>}
               </button>
               <button
-                onClick={() => setActiveTab('enquiries')}
+                onClick={() => changeAdminTab('enquiries')}
                 className={`py-4 px-6 text-center border-b-2 font-medium text-sm ${
                   activeTab === 'enquiries'
                     ? 'border-blue-500 text-blue-600'
@@ -419,7 +428,7 @@ const AdminDashboard = () => {
                 {enquiries.filter((enquiry) => enquiry.status === 'PENDING').length > 0 && <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-800">{enquiries.filter((enquiry) => enquiry.status === 'PENDING').length}</span>}
               </button>
               <button
-                onClick={() => setActiveTab('monitoring')}
+                onClick={() => changeAdminTab('monitoring')}
                 aria-pressed={activeTab === 'monitoring'}
                 className={`py-4 px-6 text-center border-b-2 font-medium text-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 ${
                   activeTab === 'monitoring'
@@ -436,7 +445,13 @@ const AdminDashboard = () => {
 
           {/* Tab content rendering based on the active tab */}
           <div className="p-6">
-            {activeTab === 'monitoring' && <Suspense fallback={<div role="status" className="rounded-xl bg-gray-100 p-6 text-sm text-gray-600">Loading System Monitoring…</div>}><AdminMonitoring onBadgeChanged={() => void refreshMonitoringBadge()} /></Suspense>}
+            {activeTab === 'monitoring' && <Suspense fallback={<div role="status" className="rounded-xl bg-gray-100 p-6 text-sm text-gray-600">Loading System Monitoring…</div>}><AdminMonitoring
+              onBadgeChanged={() => void refreshMonitoringBadge()}
+              view={navigation.view}
+              range={navigation.range}
+              onViewChange={changeMonitoringView}
+              onRangeChange={changeMonitoringRange}
+            /></Suspense>}
             {/* Users Tab Content */}
             {activeTab === 'users' && (
               <div>

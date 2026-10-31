@@ -186,6 +186,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!mounted) return;
       authEventReceived = true;
+      const sessionUser = session?.user;
+      if (sessionUser
+        && sessionUser.is_anonymous !== true
+        && activeUserIsRegistered.current
+        && activeUserId.current === sessionUser.id
+        && !profileLoadingRef.current) {
+        // Supabase can emit SIGNED_IN when a hidden tab recovers a still-valid
+        // session after becoming visible. Reaffirming the same registered
+        // identity does not change its app profile or role, so keep protected
+        // screens mounted instead of restarting the route bootstrap.
+        // Session reaffirmation does not need a new User object either: the
+        // Admin dashboard uses user identity changes to reload its data.
+        if (_event === 'USER_UPDATED') setUser(sessionUser);
+        setAuthLoading(false);
+        return;
+      }
       if (!session?.user && activeUserIsRegistered.current && !['intentional-sign-out', 'inactivity-sign-out'].includes(authTransitionRef.current ?? '')) {
         setTransition('session-ended');
       }

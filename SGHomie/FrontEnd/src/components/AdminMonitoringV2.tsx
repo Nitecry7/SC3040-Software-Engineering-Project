@@ -8,9 +8,13 @@ import {
   type DurationStats, type MonitoringAlert, type MonitoringDashboard, type MonitoringDetail,
   type MonitoringRange,
 } from '../lib/monitoringDashboard';
+import type { AdminDashboardUrlState, MonitoringView } from '../lib/adminDashboardState';
 
-type Tab = 'Overview' | 'Services' | 'Chatbot' | 'Valuation' | 'Security' | 'Feedback';
-const tabs: Tab[] = ['Overview', 'Services', 'Chatbot', 'Valuation', 'Security', 'Feedback'];
+const tabs: MonitoringView[] = ['overview', 'services', 'chatbot', 'valuation', 'security', 'feedback'];
+const tabLabels: Record<MonitoringView, string> = {
+  overview: 'Overview', services: 'Services', chatbot: 'Chatbot',
+  valuation: 'Valuation', security: 'Security', feedback: 'Feedback',
+};
 const ranges: MonitoringRange[] = ['1h', '24h', '7d', '30d'];
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const card = 'rounded-xl border border-gray-200 bg-white p-4 shadow-sm';
@@ -156,10 +160,17 @@ function Incidents({ data, onAction, pending }: { data: MonitoringDashboard; onA
   </Panel>;
 }
 
-export default function AdminMonitoringV2({ onBadgeChanged }: { onBadgeChanged: () => void }) {
-  const [range, setRange] = useState<MonitoringRange>('7d');
-  const rangeRef = useRef<MonitoringRange>('7d');
-  const [tab, setTab] = useState<Tab>('Overview');
+export default function AdminMonitoringV2({
+  onBadgeChanged, range, view: tab, onViewChange, onRangeChange,
+}: {
+  onBadgeChanged: () => void;
+  range: AdminDashboardUrlState['range'];
+  view: MonitoringView;
+  onViewChange: (view: MonitoringView) => void;
+  onRangeChange: (range: AdminDashboardUrlState['range']) => void;
+}) {
+  const rangeRef = useRef<MonitoringRange>(range);
+  rangeRef.current = range;
   const [data, setData] = useState<MonitoringDashboard | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
@@ -200,9 +211,9 @@ export default function AdminMonitoringV2({ onBadgeChanged }: { onBadgeChanged: 
     }
   }, []);
   useEffect(() => {
-    void read(rangeRef.current);
+    void read(range);
     return () => { sequence.current += 1; };
-  }, [read]);
+  }, [read, range]);
   useEffect(() => {
     if (!detail) return;
     dialogRef.current?.focus();
@@ -210,8 +221,7 @@ export default function AdminMonitoringV2({ onBadgeChanged }: { onBadgeChanged: 
   const changeRange = (next: MonitoringRange) => {
     if (next === rangeRef.current) return;
     rangeRef.current = next;
-    setRange(next);
-    void read(next);
+    onRangeChange(next);
   };
   const runHealth = async () => {
     if (healthLock.current) return;
@@ -306,10 +316,10 @@ export default function AdminMonitoringV2({ onBadgeChanged }: { onBadgeChanged: 
     {!initialLoading && !current && !upgrade && <div className={card}><h3 className="font-semibold text-gray-900">Monitoring data unavailable</h3><p className="mt-2 text-sm text-gray-600">Try refreshing the dashboard.</p></div>}
     {current && <div aria-busy={updating || healthPending} className={updating || healthPending ? 'opacity-80' : ''}>
       <nav aria-label="Monitoring sections" className="mb-4 flex flex-wrap gap-1 border-b border-gray-200 pb-2">
-        {tabs.map((item) => <button key={item} aria-current={tab === item ? 'page' : undefined} onClick={() => setTab(item)}
-          className={`rounded-lg px-3 py-2 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${tab === item ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-100'}`}>{item}</button>)}
+        {tabs.map((item) => <button key={item} aria-current={tab === item ? 'page' : undefined} onClick={() => onViewChange(item)}
+          className={`rounded-lg px-3 py-2 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${tab === item ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-100'}`}>{tabLabels[item]}</button>)}
       </nav>
-      {tab === 'Overview' && <div className="space-y-4">
+      {tab === 'overview' && <div className="space-y-4">
         <div className={`${card} flex flex-wrap items-center gap-x-5 gap-y-2 text-xs`}>
           <span className="font-semibold text-gray-700">Last admin check: {current.health[0] ? formatSgt(current.health[0].checked_at) + ' SGT' : 'Unavailable'}</span>
           <span>Application <StatePill value="unknown" /> No outside-in monitor</span>
@@ -343,7 +353,7 @@ export default function AdminMonitoringV2({ onBadgeChanged }: { onBadgeChanged: 
           <span>Oldest resolved alert: {formatSgt(current.retention.oldest_resolved_alert_at)} SGT</span>
           <span>Cleanup scheduling not yet verified</span></div>
       </div>}
-      {tab === 'Services' && <div className="grid gap-4 md:grid-cols-2">
+      {tab === 'services' && <div className="grid gap-4 md:grid-cols-2">
         <Panel title="Application"><StatePill value="unknown" /><p className="mt-2 text-sm text-gray-600">No outside-in monitor. Browser availability is unknown.</p></Panel>
         <Panel title="Database"><p className="text-sm text-gray-700">Monitoring data read succeeded. This does not establish continuous availability.</p></Panel>
         <Panel title="Chatbot"><StatePill value="unknown" /><p className="mt-2 text-sm text-gray-600">Stored interactions do not test live provider health.</p></Panel>
@@ -351,14 +361,14 @@ export default function AdminMonitoringV2({ onBadgeChanged }: { onBadgeChanged: 
           : <p className="text-sm text-gray-600">No admin health observation recorded.</p>}</Panel>
         <Panel title="Hosted canary"><p className="text-sm text-gray-600">Not yet verified.</p></Panel>
       </div>}
-      {tab === 'Chatbot' && <div className="space-y-4">
+      {tab === 'chatbot' && <div className="space-y-4">
         <div className="grid gap-4 md:grid-cols-3"><Panel title="Recorded interactions"><p className="text-2xl font-bold tabular-nums">{formatCount(current.chatbot.recorded_interactions)}</p></Panel><Panel title="Successful interactions"><p className="text-2xl font-bold tabular-nums">{current.chatbot.successful_interactions}</p></Panel><Panel title="Provider calls"><p className="text-2xl font-bold tabular-nums">{current.chatbot.provider_calls}</p></Panel></div>
         <PercentileCards stats={current.metrics.chat_total_interaction} label="Interaction latency" />
         <PercentileCards stats={current.metrics.chat_provider} label="Provider latency" />
         <div className="grid gap-4 md:grid-cols-2"><Panel title="Provider outcomes"><Counts values={current.chatbot.provider_statuses} empty="No provider calls recorded in this period." /></Panel><Panel title="Failure categories"><Counts values={current.chatbot.failure_categories} empty="No failures recorded in this period." /></Panel></div>
         <Panel title="Other supported timings"><div className="grid gap-4 md:grid-cols-2"><div><h4 className="font-medium">Tool duration</h4><PercentileCards stats={current.metrics.chat_tool} label="Tool" /></div><div><h4 className="font-medium">First application output</h4><PercentileCards stats={current.metrics.chat_first_output} label="First output" /></div></div></Panel>
       </div>}
-      {tab === 'Valuation' && <div className="space-y-4">
+      {tab === 'valuation' && <div className="space-y-4">
         <div className="grid gap-4 md:grid-cols-2"><Panel title="Model observation"><p className="text-sm text-gray-700">Last admin check: {current.health[0] ? formatSgt(current.health[0].checked_at) + ' SGT' : 'Unavailable'}</p><p className="mt-1 text-sm text-gray-700">Expected: {current.health[0]?.expected_model_version ?? 'Unavailable'}</p><p className="text-sm text-gray-700">Loaded: {current.health[0]?.loaded_model_version ?? 'Unavailable'}</p></Panel><Panel title="Recorded valuation activity"><p className="text-2xl font-bold tabular-nums">{current.valuation.recorded_events}</p><p className="text-sm text-gray-600">{current.valuation.successful_events} succeeded · {current.valuation.prediction_sanity_failures} sanity failures</p></Panel></div>
         <Panel title="Stage timings" note="P50 needs 5 · P95 needs 20 · P99 needs 100 valid samples">
           <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="border-b border-gray-200 text-xs text-gray-600"><tr><th className="p-2">Stage</th><th className="p-2">Valid n</th><th className="p-2">P50 typical</th><th className="p-2">P95 slow tail</th><th className="p-2">P99 extreme tail</th></tr></thead>
@@ -380,8 +390,8 @@ export default function AdminMonitoringV2({ onBadgeChanged }: { onBadgeChanged: 
               : <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead><tr><th className="p-2">Request ID</th><th className="p-2">Time (SGT)</th><th className="p-2">Outcome</th><th className="p-2">Edge total</th></tr></thead><tbody>{current.recent_valuation_requests.map((item) => <tr key={item.request_id} className="border-t border-gray-100"><td className="p-2"><button className="break-all text-left text-blue-700 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600" onClick={() => void openDetail(item.request_id)}>{item.request_id}</button></td><td className="p-2">{formatSgt(item.created_at)}</td><td className="p-2">{item.status.replace(/_/g, ' ')}</td><td className="p-2">{formatDuration(item.total_edge_ms)}</td></tr>)}</tbody></table></div>}
         </Panel>
       </div>}
-      {tab === 'Security' && <div className="grid gap-4 md:grid-cols-2"><Panel title="Recorded quota outcomes"><Counts values={current.chatbot.quota_outcomes} empty="No quota outcomes recorded in this period." /></Panel><Panel title="Coverage"><ShieldAlert className="h-5 w-5 text-gray-500" aria-hidden="true" /><p className="mt-2 text-sm text-gray-600">Historical coverage is limited to persisted classifications. Events blocked before telemetry begins are not counted here.</p></Panel></div>}
-      {tab === 'Feedback' && <div className="grid gap-4 md:grid-cols-2"><Panel title="Recorded feedback"><p className="text-2xl font-bold tabular-nums">{current.chatbot.feedback_count}</p></Panel><Panel title="Rating distribution"><Counts values={current.chatbot.feedback_ratings} empty="No feedback collected in this period." /></Panel></div>}
+      {tab === 'security' && <div className="grid gap-4 md:grid-cols-2"><Panel title="Recorded quota outcomes"><Counts values={current.chatbot.quota_outcomes} empty="No quota outcomes recorded in this period." /></Panel><Panel title="Coverage"><ShieldAlert className="h-5 w-5 text-gray-500" aria-hidden="true" /><p className="mt-2 text-sm text-gray-600">Historical coverage is limited to persisted classifications. Events blocked before telemetry begins are not counted here.</p></Panel></div>}
+      {tab === 'feedback' && <div className="grid gap-4 md:grid-cols-2"><Panel title="Recorded feedback"><p className="text-2xl font-bold tabular-nums">{current.chatbot.feedback_count}</p></Panel><Panel title="Rating distribution"><Counts values={current.chatbot.feedback_ratings} empty="No feedback collected in this period." /></Panel></div>}
     </div>}
     {detail && <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDetail(); }}>
       <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="operational-detail-title" onKeyDown={(event) => {

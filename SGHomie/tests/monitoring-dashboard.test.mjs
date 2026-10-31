@@ -47,13 +47,18 @@ const dashboard = (range, count = 20) => ({
 const flush = async (app) => { await setImmediate(); app.render(); await app.effects(); await setImmediate(); };
 function makeApp(invoke) {
   const icons = Object.fromEntries(['Activity', 'Info', 'RefreshCw', 'Search', 'ShieldAlert', 'X'].map((name) => [name, name]));
+  const props = {
+    onBadgeChanged() {}, view: 'overview', range: '7d',
+    onViewChange(view) { props.view = view; },
+    onRangeChange(range) { props.range = range; },
+  };
   return componentHarness(new URL('../FrontEnd/src/components/AdminMonitoringV2.tsx', import.meta.url), {
     'lucide-react': icons,
     recharts: Object.fromEntries(['Area', 'AreaChart', 'Bar', 'BarChart', 'CartesianGrid', 'Cell', 'Legend', 'ResponsiveContainer', 'Tooltip', 'XAxis', 'YAxis'].map((name) => [name, name])),
     '../lib/supabase': { supabase: { functions: { invoke } } },
     '../lib/monitoringDashboard': { formatCount: (n) => String(n), formatDuration, formatSgt,
       isUnsupportedMonitoringAction, parseHealthCheckResult, parseDashboard, parseMonitoringDetail, percentileLabel },
-  }, { onBadgeChanged() {} });
+  }, props);
 }
 const click = (app, text) => app.find((node) => node.type === 'button' && content(node).includes(text)).props.onClick();
 
@@ -112,8 +117,8 @@ test('newer selected range wins when older response arrives late', async () => {
   app.render(); await app.effects();
   assert.equal(pending[0].range, '7d');
   pending[0].task.resolve({ data: dashboard('7d'), error: null }); await flush(app);
-  click(app, '24h'); app.render();
-  click(app, '7d'); app.render();
+  click(app, '24h'); await flush(app);
+  click(app, '7d'); await flush(app);
   assert.equal(pending.at(-2).range, '24h');
   assert.equal(pending.at(-1).range, '7d');
   pending.at(-1).task.resolve({ data: dashboard('7d', 42), error: null }); await flush(app);
