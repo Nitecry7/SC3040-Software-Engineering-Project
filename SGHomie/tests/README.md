@@ -1,6 +1,10 @@
 # Running SG Homie tests
 
-The latest [main merge verification](../docs/testing/merge-verification.md) records 640 cases and the [current case catalogue](../docs/testing/test-case-catalogue-after-main.md) lists their outcomes. The [initial testing report](../docs/testing/test-report.md) retains the original 580-case run, measured coverage, confirmed fixes, open defects and remaining acceptance work. Earlier added scenarios and incoming main tests are both preserved.
+## Current verification snapshot
+
+At `faheem` commit `5358d5a298ae03105cf34502639462d2a06fc407`, the supplied verification results are: **439 local Node test cases passed**; the GitHub Actions application job passed; **324 Python valuation tests passed in CI**; and the disposable database suite passed **128 pgTAP assertions** (47 access-control, 65 monitoring, 16 synthetic canary). The CI lint completed with **0 errors and 2 existing warnings**; the actual app TypeScript project (`tsconfig.app.json`) and production build passed.
+
+These results describe repository tests and an isolated CI database. They do not verify a hosted Supabase migration, live Edge Function, provider availability, Netlify deployment, browser journey, or production authentication. The hosted chatbot synthetic-canary authentication issue remains deferred. The [October 28 `main` merge report](../docs/testing/merge-verification.md) and [initial pre-merge report](../docs/testing/test-report.md) are historical snapshots; their original counts and evidence remain unchanged.
 
 ## Application tests
 
@@ -10,14 +14,13 @@ Use Node.js 22.22.2 or a compatible newer release. From `SGHomie/FrontEnd/`:
 npm ci
 npm test
 npm run lint
-npx tsc --noEmit
 npx tsc --noEmit -p tsconfig.app.json
 npm run build
 ```
 
 `npm test` discovers every `SGHomie/tests/*.test.mjs` file, including backend handlers. No hosted service credentials are needed. Service and component fixtures are synthetic. VM-based React tests exercise application callbacks and state with isolated hooks; they do not prove browser rendering, focus, networking or RLS. Markdown tests use the actual React renderer. Existing source-text checks are supplementary static checks.
 
-The wrapper `npx tsc --noEmit` does not check the actual app because its configuration contains an empty file list and project references. Keep the explicit `-p tsconfig.app.json` check. At the recorded run it reports seven pre-existing errors. Two preserved JavaScript assertions also fail; see the report rather than treating the suite as green.
+Use the explicit `-p tsconfig.app.json` option to typecheck the actual frontend application. The current supplied verification has no TypeScript errors. Historical typecheck failures are documented only in the dated [pre-merge report](../docs/testing/test-report.md).
 
 `npm run test:coverage` is an optional Node diagnostic. VM-transpiled component/handler coverage is not a reliable measure of original TypeScript coverage, so no whole-app coverage percentage or threshold is claimed.
 
@@ -58,12 +61,16 @@ mkdir -p .test-results
 node --experimental-strip-types --import ./SGHomie/tests/register-deno-imports.mjs --test --test-reporter=./SGHomie/tests/reporters/case-results.mjs --test-reporter-destination=.test-results/application.jsonl --test-reporter=junit --test-reporter-destination=.test-results/application.xml SGHomie/tests/*.test.mjs
 ```
 
-Capture the ML JUnit and database TAP using the commands above. The application runner intentionally returns nonzero for the two currently preserved failures; its completed evidence files still contain their real outcomes. Then run:
+Capture the ML JUnit and database TAP using the commands above. A nonzero application runner exit means the current run has failed cases; retain its completed ignored result files for diagnosis. The two failures described in the linked historical reports are not current results. Then run:
 
 ```sh
-python3 SGHomie/tests/build-case-catalogue.py --node .test-results/application.jsonl --ml .test-results/valuation.xml --database .test-results/database.tap --output SGHomie/docs/testing/test-case-catalogue-after-main.md --json-output SGHomie/docs/testing/evidence/after-main/case-results.json
+python3 SGHomie/tests/build-case-catalogue.py --node .test-results/application.jsonl --ml .test-results/valuation.xml --database .test-results/database.tap --output .test-results/case-catalogue.md --json-output .test-results/case-results.json
 ```
 
-The generator excludes Node's parent/container result from independent case totals when JUnit contains only its child cases. Parameter-expanded Python cases remain separate. Review the narrative report and environment metadata when refreshing a dated evidence snapshot.
+The generator excludes Node's parent/container result from independent case totals when JUnit contains only its child cases. Parameter-expanded Python cases remain separate. Generated output stays under ignored `.test-results/`; do not overwrite the frozen historical catalogues or evidence. Review the narrative report and environment metadata before recording a new dated snapshot.
 
-The GitHub Actions [test workflow](../../.github/workflows/tests.yml) prepares application, valuation and local-database jobs and retains machine-readable results. Its first hosted run is pending; local results are not evidence that CI has already passed. Current retained failures and app type errors deliberately remain visible.
+## GitHub Actions workflow
+
+The [Repository tests workflow](../../.github/workflows/tests.yml) runs on pull requests, pushes, and manual dispatch. Its application job uses Node 22.22.2 for the complete Node suite, lint, the actual `tsconfig.app.json` typecheck, and Vite production build. Its valuation job uses Python 3.12 and pytest with branch coverage. Its database job starts a disposable local Supabase stack, applies the repository migrations to a uniquely named temporary database, checks TAP plans and assertions, and stops the stack even after failure. Each job uploads machine-readable results. The database job does not connect to hosted Supabase.
+
+The current supplied CI run passed all three jobs. A CI pass proves those checks passed for the run's source and environment; it does not prove hosted deployment or service state. VM-based React tests do not prove browser rendering, focus, networking or RLS. Database tests exercise PostgreSQL policies, triggers and constraints with simulated JWT claims; they do not verify Auth token signing, Storage HTTP uploads or the full Supabase service stack.

@@ -37,22 +37,33 @@ documented in [Chatbot sell flow](../../docs/sell-flow.md).
 
 For visual overviews of both structured chatbot paths, see the [chatbot guide](../../docs/chatbot/README.md).
 
-The active migration path starts with one complete initial migration and then
-applies incremental migrations for the current application features:
+The active migration path contains **24 SQL migrations**: one complete initial
+schema followed by timestamp-ordered incremental changes.
 
-- `20250328092626_sghomie_initial.sql`
-- HDB postal-code validation, property image storage, chatbot drafts, and
-  admin-role constraints
-- `20260917120000_hdb_verification_tokens.sql` for server-enforced HDB writes
-- `20260917130000_remove_chatbot_rate_limits.sql` removes the chatbot counter
-- `20261008120000_deterministic_demo_property_amenities.sql` adds provenance and deterministic demo nearby amenities
-- `20261012120000_property_valuation_inputs.sql` adds nullable, provenance-labelled valuation inputs
-- `20261013140000_property_demo_batch_provenance.sql` adds canonical synthetic demo batch provenance and database-enforced eligibility invariants
-- `20261013150000_require_approved_demo_valuations.sql` replaces the demo completeness check to require approved listings while preserving fixture owner IDs
-- `20261026120000_authenticated_enquiry_insert.sql` restricts enquiry creation to authenticated users and binds new enquiry email/status fields to the caller
-- `20261026130000_chatbot_quotas_and_capacity.sql` adds server-authoritative chatbot tiers, user interaction reservations, provider-call capacity reservations and bounded cooldown state
-- `20261026140000_chat_telemetry_privacy_feedback.sql` adds private interaction/provider-call metadata, caller-owned feedback and a service-only 30-day content cleanup function
-- `20261026150000_redact_singapore_phone_feedback.sql` extends best-effort Singapore phone redaction in stored feedback comments; deploy the matching chatbot function code for interaction text redaction
+1. `20250328092626_sghomie_initial.sql` — initial application schema and policies.
+2. `20260916120000_hdb_postal_lookup.sql` — HDB postal-code lookup support.
+3. `20260916133000_property_image_storage.sql` — property image storage policies.
+4. `20260916140000_remove_vault_image_cleanup.sql` — removes Vault-based image cleanup.
+5. `20260917090000_chatbot_sell_drafts.sql` — seller chatbot draft support.
+6. `20260917100000_admin_role_exclusivity.sql` — admin-role constraints.
+7. `20260917110000_chatbot_rate_limits.sql` — initial chatbot rate limits.
+8. `20260917120000_hdb_verification_tokens.sql` — server-enforced HDB write verification.
+9. `20260917130000_remove_chatbot_rate_limits.sql` — removes the chatbot counter.
+10. `20261008120000_deterministic_demo_property_amenities.sql` — amenity provenance and deterministic demo records.
+11. `20261012120000_property_valuation_inputs.sql` — nullable, provenance-labelled valuation inputs.
+12. `20261013120000_property_storey_range.sql` — property storey-range support.
+13. `20261013130000_preserve_explicit_property_coordinates.sql` — preserves explicitly supplied coordinates.
+14. `20261013140000_property_demo_batch_provenance.sql` — canonical demo-batch provenance and eligibility invariants.
+15. `20261013150000_require_approved_demo_valuations.sql` — requires approved listings for demo valuations.
+16. `20261026120000_authenticated_enquiry_insert.sql` — binds enquiry inserts to the authenticated caller.
+17. `20261026130000_chatbot_quotas_and_capacity.sql` — user quotas, provider capacity, and bounded cooldown state.
+18. `20261026140000_chat_telemetry_privacy_feedback.sql` — private interaction metadata, caller-owned feedback, and service-only cleanup.
+19. `20261026150000_redact_singapore_phone_feedback.sql` — best-effort Singapore phone redaction in feedback comments.
+20. `20261031120000_phase7_monitoring_data_api.sql` — restricted monitoring data access.
+21. `20261031130000_phase7_monitoring_recent_feedback.sql` — recent feedback summaries for monitoring.
+22. `20261031140000_phase7_feedback_inspection.sql` — bounded admin feedback inspection.
+23. `20261031141000_phase7_feedback_access_audit.sql` — audit records for feedback inspection.
+24. `20261031150000_phase7_synthetic_canary_runs.sql` — privacy-safe persisted synthetic-check results.
 
 The initial migration creates the full application schema, policies, views, and
 triggers for a fresh Supabase project. Later migrations must be applied in
@@ -148,6 +159,27 @@ against a synthetic expired fixture in the target project. Do not wait 30 days
 or alter real users' records for this check. No migration, schedule, or function
 deployment is performed by this guide.
 
+### Phase 7 monitoring, feedback inspection and synthetic results
+
+The five Phase 7 migrations add restricted monitoring data access, recent
+feedback summaries, bounded admin feedback inspection, an access-audit record,
+and persisted chatbot/valuation synthetic-check results. Feedback content is
+served through the authorized Edge Function path; ordinary users do not receive
+direct telemetry-table access. Inspection is bounded and audited before content
+is returned. The `synthetic_canary_runs` table stores safe status and operational
+metadata under service-only access, with cleanup support in the monitoring
+cleanup function. These tables and policies are covered by the repository's
+disposable database tests.
+
+Repository implementation and local/CI database tests do not show that these
+migrations, schedules or Edge Function versions are present in a hosted project.
+The hosted chatbot synthetic-canary authentication issue remains deferred. The
+internal fixed-marker check does not exercise user authentication, quotas,
+streaming, tools or the full user journey; no successful hosted chatbot
+authentication or production availability check is claimed. See the
+[deployment runbook](../../docs/operations/deployment-runbook.md#phase-7d-on-demand-synthetic-checks)
+for the separately controlled rollout procedure.
+
 Enquiry submission is registered-user only. The latest enquiry policy permits
 authenticated inserts only when the enquiry email matches the caller's Auth
 email, the initial status is `PENDING`, and `admin_response` is empty. Existing
@@ -155,7 +187,7 @@ authenticated email-scoped reads and admin management policies are preserved.
 
 ## Deterministic demo amenities
 
-The latest migration adds a `source` column to `public.property_amenities`,
+Migration `20261008120000_deterministic_demo_property_amenities.sql` adds a `source` column to `public.property_amenities`,
 defaulting existing and unspecified rows to `legacy`. Generated rows use
 `source = 'demo'` and one deterministic record per property for each category:
 Transport, School, Shopping, Healthcare, Food, Park, and Community. Distance and
@@ -303,6 +335,9 @@ sequenceDiagram
 *The request ID is correlation metadata, not authentication. Asking price is a comparison input only and is not a CatBoost feature. This research/demo output is not an official valuation or production-approved service.*
 
 ### Hosted serving observation and log correlation
+
+**Historical user-reported observation from 2026-10-18; not independently
+rechecked and not a current service or latency claim.**
 
 The buyer valuation path has been live-verified by the user with an
 authenticated request to the hosted function. The function response wraps the

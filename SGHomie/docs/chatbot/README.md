@@ -103,6 +103,13 @@ feedback save failures are reported inline. The cleanup function is implemented
 in the repository, while its Supabase Dashboard schedule and hosted behavior
 remain deployment-dependent; see the [deployment runbook](../operations/deployment-runbook.md#phase-4-chatbot-telemetry-and-feedback).
 
+Admin Monitoring provides bounded inspection of feedback-linked conversation
+context and server-generated exports. The admin identity is rechecked for each
+request; viewing or exporting requires a successful audit write before content
+is returned. Direct client access to telemetry and audit tables is not granted.
+This is repository behavior; hosted migrations, function versions, and cleanup
+scheduling require separate verification.
+
 For authenticated AI requests, the server attempts an idempotent interaction
 upsert before quota reservation and provider processing. JSON finalization is
 awaited before the JSON response is sent. SSE finalization runs when the
@@ -205,6 +212,12 @@ sequenceDiagram
 *The optional price suggestion is provisional LLM guidance based on application asking listings. It is separate from CatBoost valuation and is not completed-sale evidence. Address verification does not verify all listing facts; supplied details remain seller-provided. Saving creates an owner-bound draft, not an approved or published listing. The seller reviews and submits it from the dashboard.*
 
 *Demo amenity records are synthetic; nearby amenity lookup is not implemented.*
+
+The internal Chatbot synthetic check uses a fixed marker and does not exercise
+user authentication, quotas, streaming, tools, or the full user journey. The
+hosted chatbot synthetic-canary authentication issue remains deferred. No
+successful hosted chatbot authentication or production availability check is
+claimed; see the [Phase 7D deployment notes](../operations/deployment-runbook.md#phase-7d-on-demand-synthetic-checks).
 
 ## Detailed flows and setup
 

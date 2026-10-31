@@ -814,6 +814,9 @@ production load test, and can vary by machine and library versions.
 
 ### Hosted SG Homie demo serving and observed latency
 
+**Historical user-reported observation from 2026-10-18; not independently
+rechecked and not a current service or latency claim.**
+
 The Property Details page makes an explicit authenticated request to the
 Supabase `valuation` Edge Function, which constructs trusted features and calls
 the hosted FastAPI service. The browser sends only the property ID; the Render

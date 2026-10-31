@@ -1,6 +1,6 @@
 # SG Homie testing report
 
-> Current results: [verification after merging main](merge-verification.md) records **640 cases, 638 passed and 2 failed**. The report below is the original pre-merge snapshot at `cb3f743`, retained with its original evidence.
+> **Historical snapshot:** This report records the pre-merge run at `cb3f743`. Its counts and evidence are preserved as originally recorded. The October 28 `main` merge results are separately preserved in [the historical merge report](merge-verification.md); current `faheem` verification is summarized in the [running tests guide](../../tests/README.md).
 
 The initial pre-merge run included **580 executable test cases: 578 passed and 2 failed**. **237 cases were added**, and all 237 passed. Every pre-existing test file was preserved. Five confirmed implementation defects were fixed with regression tests. The two retained failures and seven existing app TypeScript errors keep the overall verification gate open; this is not a production release approval.
 

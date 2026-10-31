@@ -222,6 +222,12 @@ For each release, record date, environment, source commit, services changed, mig
 
 After rollout, run each check deliberately in a non-production admin environment first. Confirm the result row contains only status/failure category, start/completion/duration, request ID, safe model/provider metadata, and boolean evidence. Confirm no `system_alerts` row is created by either failure. A Chatbot result checks the deployed Edge Function/provider with a fixed marker; it does not exercise user authentication, per-user quotas, streaming, tools or the full user journey, and it never stores normal chat telemetry. A Valuation result uses the canonical seeded demo property through the normal valuation Edge Function path; it validates response schema, interval, request-ID correlation and expected model version, not valuation accuracy.
 
+The hosted Chatbot synthetic-canary authentication issue remains deferred. A
+fixed-marker internal check is not a successful user-authentication check or a
+production availability check; none is claimed here. Repository test results
+also do not establish that the hosted migrations or functions have been
+deployed.
+
 Synthetic results have a 90-day retention target. The migration extends `cleanup_monitoring_data()` but does not schedule it. Configure and verify a daily hosted invocation using the approved project scheduler before treating the target as operational. Maintain the same caution for the existing valuation events, health checks and resolved-alert cleanup.
 
 No synthetic check runs during this repository task. Hosted secrets/configuration, canonical fixture state, migration application, function versions, provider reachability and scheduler state remain deployment-dependent and must be verified separately.

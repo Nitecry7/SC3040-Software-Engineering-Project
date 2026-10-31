@@ -1,8 +1,10 @@
-# Main merge verification
+# Historical main merge verification — 28 October 2026
+
+> **Historical evidence only:** This document records the 28 October 2026 `main` merge at `470748e508f8002f213cb48e0c05d4ead0fb44c7`. Its **640 independent cases: 638 passed and 2 failed** remain unchanged. These results are not the current `faheem` verification; see the [running tests guide](../../tests/README.md) for the supplied current snapshot.
 
 Local `main` was fast-forwarded from `cb3f743` to **`470748e508f8002f213cb48e0c05d4ead0fb44c7`**, matching `origin/main`. The earlier testing work is preserved and compatible with the incoming changes. The merged local run contains **640 independent cases: 638 passed and the same 2 known assertions failed**. All **237 scenarios added in the earlier testing work remain covered**; all 85 added JavaScript scenarios pass by case name, all 116 added ML cases pass, and all 36 database cases pass under the current policy.
 
-The [current case catalogue](test-case-catalogue-after-main.md) lists every merged-run case and outcome. The [initial report](test-report.md) and [original 580-case catalogue](test-case-catalogue.md) remain historical evidence of the pre-merge run. Original raw evidence and JSON were retained; old catalogue links now point to frozen source snapshots so upstream edits cannot change the procedures those results describe.
+The [case catalogue for this run](test-case-catalogue-after-main.md) lists every merged-run case and outcome. The [initial report](test-report.md) and [original 580-case catalogue](test-case-catalogue.md) remain historical evidence of the pre-merge run. Available raw evidence and JSON were retained; the original valuation execution log was not retained in the repository. Catalogue links point to frozen source snapshots so upstream edits cannot change the procedures those results describe.
 
 ## Preservation and integration
 
@@ -50,7 +52,7 @@ The two known failures remain the auth button's exact-label assertion and the so
 ## Execution evidence
 
 - [Application events](evidence/after-main/application.jsonl) and [JUnit](evidence/after-main/application.xml)
-- [ML JUnit](evidence/after-main/valuation.xml) and [execution log](evidence/after-main/valuation.log)
+- [ML JUnit](evidence/after-main/valuation.xml); the original execution log is not retained in the repository
 - [Database TAP](evidence/after-main/database.tap)
 - [Actual app typecheck output](evidence/after-main/app-typecheck.txt)
 - [All outcomes, source procedures and evidence hashes](evidence/after-main/case-results.json)

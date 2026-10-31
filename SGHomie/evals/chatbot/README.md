@@ -35,7 +35,7 @@ $env:SGHOMIE_EVAL_PROMPT_VERSION = 'chatbot-v2' # optional explicit label; defau
 node --experimental-strip-types --import ./SGHomie/tests/register-deno-imports.mjs ./SGHomie/evals/chatbot/run.mjs --mode live
 ```
 
-Do not run live mode unless the test user and project are explicitly configured. A 200 response verifies only the tested request path. It does not certify answer quality, quota policy, migrations, function deployment or production availability. Hosted live evaluation has not been performed as part of repository implementation.
+Do not run live mode unless the test user and project are explicitly configured. A 200 response verifies only the tested request path. It does not certify answer quality, quota policy, migrations, function deployment or production availability. Hosted live evaluation has not been performed as part of repository implementation. The separate hosted Chatbot synthetic check is not this evaluation; its authentication issue remains deferred, and no successful hosted authentication or production availability check is claimed.
 
 ## Critical checks and human review
 
