@@ -1,4 +1,6 @@
 BEGIN;
+CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
+SET LOCAL search_path = public, extensions;
 SELECT plan(16);
 
 SELECT has_table('public', 'synthetic_canary_runs', 'on-demand synthetic check results have a dedicated table');

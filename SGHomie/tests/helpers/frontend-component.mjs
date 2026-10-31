@@ -17,6 +17,8 @@ export function componentHarness(file, dependencies = {}, props = {}, globals = 
     return state[slot].value;
   };
   const hooks = {
+    lazy: () => () => null,
+    Suspense: ({ children }) => children,
     useMemo: memo,
     useCallback: (callback, dependencies) => memo(() => callback, dependencies),
     useState(initial) {
