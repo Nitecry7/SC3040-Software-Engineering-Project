@@ -19,6 +19,14 @@ export type MonitoringDetail = MonitoringRequest & {
   request_construction_ms: number | null; render_fetch_ms: number | null;
 };
 export type MonitoringFeedback = { feedback_id: string; rating: FeedbackRating; recorded_at: string; comment: string | null };
+export type SyntheticCanaryType = 'chatbot' | 'valuation';
+export type SyntheticCanaryResult = {
+  canary_type: SyntheticCanaryType; status: 'success' | 'failure' | 'unknown'; failure_category: string | null;
+  started_at: string; completed_at: string; duration_ms: number; request_id: string | null;
+  expected_model_version: string | null; observed_model_version: string | null;
+  provider: 'openai' | 'openrouter' | null; model: string | null;
+  edge_reached: boolean; upstream_reached: boolean; response_valid: boolean; canary_valid: boolean;
+};
 export type MonitoringBucket = {
   bucket_start: string; label: string | null; request_count: number; success_count: number;
   failure_count: number; chatbot_request_count: number; chatbot_success_count: number;
@@ -44,6 +52,7 @@ export type MonitoringDashboard = {
     oldest_resolved_alert_at: string | null };
   recent_valuation_requests: MonitoringRequest[] | null;
   recent_feedback: MonitoringFeedback[] | null;
+  synthetic_canaries?: { chatbot: SyntheticCanaryResult | null; valuation: SyntheticCanaryResult | null } | null;
 };
 
 const object = (value: unknown): value is Record<string, unknown> =>
@@ -193,12 +202,27 @@ export function parseDashboard(value: unknown): MonitoringDashboard | 'upgrade_r
       && typeof item.feedback_id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item.feedback_id)
       && ['positive', 'negative'].includes(String(item.rating))
       && date(item.recorded_at) && (item.comment === null || (typeof item.comment === 'string' && item.comment.length <= 1000))))) return null;
+  const canaries = data.synthetic_canaries;
+  const validCanary = (item: unknown): item is SyntheticCanaryResult => item === null || (object(item)
+    && ['chatbot', 'valuation'].includes(String(item.canary_type))
+    && ['success', 'failure', 'unknown'].includes(String(item.status))
+    && (item.failure_category === null || typeof item.failure_category === 'string')
+    && date(item.started_at) && date(item.completed_at) && duration(item.duration_ms) && item.duration_ms !== null
+    && (item.request_id === null || (typeof item.request_id === 'string'
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item.request_id)))
+    && nullableText(item.expected_model_version) && nullableText(item.observed_model_version)
+    && (item.provider === null || item.provider === 'openai' || item.provider === 'openrouter')
+    && nullableText(item.model)
+    && ['edge_reached', 'upstream_reached', 'response_valid', 'canary_valid'].every((key) => typeof item[key] === 'boolean'));
+  if (canaries !== undefined && canaries !== null && (!object(canaries)
+    || !validCanary(canaries.chatbot) || !validCanary(canaries.valuation))) return null;
   return {
     ...data,
     recent_feedback: Array.isArray(feedback) ? feedback.map((item) => ({
       feedback_id: item.feedback_id as string, rating: item.rating as MonitoringFeedback['rating'],
       recorded_at: item.recorded_at as string, comment: item.comment as string | null,
     })) : null,
+    ...(canaries !== undefined ? { synthetic_canaries: canaries as MonitoringDashboard['synthetic_canaries'] } : {}),
   } as MonitoringDashboard;
 }
 
@@ -218,6 +242,25 @@ export function parseHealthCheckResult(value: unknown): { status: 'healthy' | 'c
   if (!['healthy', 'critical', 'unknown'].includes(String(result.status))
     || typeof result.recorded !== 'boolean' || !date(result.observed_at)) return null;
   return { status: result.status as 'healthy' | 'critical' | 'unknown', recorded: result.recorded };
+}
+
+export function parseSyntheticCanaryResult(value: unknown, expectedType?: SyntheticCanaryType): SyntheticCanaryResult | null {
+  if (!object(value) || !object(value.dashboard_v2)) return null;
+  const item = value.dashboard_v2.synthetic_canary;
+  if (!object(item)) return null;
+  const valid = (item.canary_type === 'chatbot' || item.canary_type === 'valuation')
+    && (!expectedType || item.canary_type === expectedType)
+    && ['success', 'failure', 'unknown'].includes(String(item.status))
+    && (item.failure_category === null || typeof item.failure_category === 'string')
+    && date(item.started_at) && date(item.completed_at)
+    && duration(item.duration_ms) && item.duration_ms !== null
+    && (item.request_id === null || (typeof item.request_id === 'string'
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item.request_id)))
+    && nullableText(item.expected_model_version) && nullableText(item.observed_model_version)
+    && (item.provider === null || item.provider === 'openai' || item.provider === 'openrouter')
+    && nullableText(item.model)
+    && ['edge_reached', 'upstream_reached', 'response_valid', 'canary_valid'].every((key) => typeof item[key] === 'boolean');
+  return valid ? item as SyntheticCanaryResult : null;
 }
 
 export function formatDuration(value: number | null): string {

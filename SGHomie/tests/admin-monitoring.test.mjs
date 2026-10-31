@@ -64,6 +64,23 @@ async function feedbackFixture(options = {}) {
               return Promise.resolve({ error: options.failedTable === table ? new Error('private audit failure') : null });
             },
             select(columns) {
+              if (table === 'properties') {
+                const filters = {};
+                const query = {
+                  eq(column, value) { filters[column] = value; return query; },
+                  async limit(limit) {
+                    reads.push({ type: 'canary_fixture', table, columns, filters: { ...filters }, limit });
+                    return { data: options.fixtureMissing ? [] : [{ id: 'a2c30b6f-631b-4d9e-8383-8968707546b1' }], error: options.fixtureReadError ? new Error('private fixture read') : null };
+                  },
+                };
+                return query;
+              }
+              if (table === 'synthetic_canary_runs') return {
+                eq(filterColumn, type) { return { order(column, config) { return { async limit(limit) {
+                  reads.push({ type: 'synthetic_canaries', table, columns, filterColumn, canaryType: type, column, config, limit });
+                  return { data: (options.canaryRows ?? []).filter((row) => row.canary_type === type).slice(0, limit), error: options.canaryReadError ? new Error('private-canary-read') : null };
+                } }; } }; },
+              };
               const filters = {};
               const query = {
                 eq(column, value) { filters[column] = value; return query; },
@@ -112,7 +129,7 @@ async function fixture(options = {}) {
   const probes = [];
   const writes = [];
   const rpcCalls = [];
-  const { handler } = await loadEdgeFunction('admin-monitoring', {
+  const { handler, logs } = await loadEdgeFunction('admin-monitoring', {
     env: { ...env, ...options.env },
     createClient(_url, key, config) {
       reads.push({ type: 'client', key, authorization: config?.global?.headers?.Authorization });
@@ -147,6 +164,23 @@ async function fixture(options = {}) {
                   reads.push({ type: 'role', column, id });
                   return { maybeSingle: async () => ({ data: options.nonAdmin ? { is_admin: false } : { is_admin: true }, error: options.roleError ? new Error('private-role-error') : null }) };
                 },
+              };
+              if (table === 'properties') {
+                const filters = {};
+                const query = {
+                  eq(column, value) { filters[column] = value; return query; },
+                  async limit(limit) {
+                    reads.push({ type: 'canary_fixture', table, columns, filters: { ...filters }, limit });
+                    return { data: options.fixtureMissing ? [] : [{ id: 'a2c30b6f-631b-4d9e-8383-8968707546b1' }], error: options.fixtureReadError ? new Error('private fixture read') : null };
+                  },
+                };
+                return query;
+              }
+              if (table === 'synthetic_canary_runs') return {
+                eq(filterColumn, type) { return { order(column, config) { return { async limit(limit) {
+                  reads.push({ type: 'synthetic_canaries', table, columns, filterColumn, canaryType: type, column, config, limit });
+                  return { data: (options.canaryRows ?? []).filter((row) => row.canary_type === type).slice(0, limit), error: options.canaryReadError ? new Error('private-canary-read') : null };
+                } }; } }; },
               };
               if (table === 'system_alerts') return {
                 eq() { return { in: async () => ({ count: options.badgeError ? null : 2, error: options.badgeError ? new Error('private') : null }) }; },
@@ -195,13 +229,23 @@ async function fixture(options = {}) {
       };
     },
     async fetch(url, init) {
-      probes.push({ url: String(url), authorization: init.headers?.Authorization ?? null, signal: init.signal, redirect: init.redirect });
+      probes.push({ url: String(url), authorization: init.headers?.Authorization ?? null, signal: init.signal, redirect: init.redirect, body: init.body });
       if (options.networkError) throw new Error('private-network-error');
+      if (String(url).endsWith('/functions/v1/chatbot')) return Response.json({ synthetic_canary: options.chatbotCanary ?? {
+        status: 'success', failure_category: null, request_id: interactionId, provider: 'openrouter', model: 'openrouter/free',
+        upstream_reached: true, response_valid: true, canary_valid: true,
+      } });
+      if (String(url).endsWith('/functions/v1/valuation')) return Response.json({ data: {
+        estimated_value: 500000, lower_bound: 450000, upper_bound: 550000, interval_half_width: 50000,
+        interval_full_width: 100000, coverage_target: 0.9, model_version: 'model-v1',
+        uncertainty_method: 'town_conformal', uncertainty_group: 'synthetic', uncertainty_support: 40,
+        used_global_fallback: false, price_position: null,
+      }, request_id: interactionId }, { headers: { 'X-Valuation-Request-ID': interactionId } });
       if (String(url).endsWith('/health')) return Response.json(options.healthBody ?? { status: 'ok', model_loaded: true }, { status: options.healthStatus ?? 200 });
       return Response.json(options.modelBody ?? { model_version: options.modelVersion ?? 'model-v1', private_bundle_url: 'https://private.invalid' }, { status: options.modelStatus ?? 200 });
     },
   });
-  return { handler, reads, probes, writes, rpcCalls, options };
+  return { handler, reads, probes, writes, rpcCalls, options, logs };
 }
 
 test('admin monitoring denies guests and non-admins before monitoring reads or Render probes', async () => {
@@ -215,6 +259,10 @@ test('admin monitoring denies guests and non-admins before monitoring reads or R
   assert.equal((await nonAdmin.handler(request())).status, 403);
   assert.equal(nonAdmin.reads.filter((item) => item.type === 'monitoring').length, 0);
   assert.equal(nonAdmin.probes.length, 0);
+  const deniedSynthetic = await fixture({ nonAdmin: true });
+  assert.equal((await deniedSynthetic.handler(request({ action: 'run_canary', canary_type: 'chatbot' }))).status, 403);
+  assert.equal(deniedSynthetic.probes.length, 0);
+  assert.equal(deniedSynthetic.writes.length, 0);
   const roleError = await fixture({ roleError: true });
   assert.equal((await roleError.handler(request())).status, 503);
   assert.equal(roleError.reads.filter((item) => item.type === 'monitoring').length, 0);
@@ -274,6 +322,75 @@ test('recent written feedback is bounded, expiry-aware, and exposes only safe fi
   assert.equal(feedbackArgs.p_start, '2026-10-30T00:00:00Z');
   assert.equal(feedbackArgs.p_end, '2026-10-31T00:00:00Z');
   assert.doesNotMatch(JSON.stringify(body), /private-user|interaction_id/);
+});
+
+test('on-demand chatbot synthetic check is admin-only, fixed-input, persisted, and does not create incidents', async () => {
+  const run = await fixture();
+  const response = await run.handler(request({ action: 'run_canary', canary_type: 'chatbot' }));
+  assert.equal(response.status, 200, `${await response.clone().text()} ${JSON.stringify(run.logs)}`);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  const body = await response.json();
+  assert.equal(body.dashboard_v2.synthetic_canary.canary_type, 'chatbot');
+  assert.equal(body.dashboard_v2.synthetic_canary.status, 'success');
+  assert.equal(run.writes.filter((item) => item.table === 'synthetic_canary_runs').length, 1);
+  const stored = run.writes.find((item) => item.table === 'synthetic_canary_runs').record;
+  assert.equal(stored.canary_valid, true);
+  assert.equal(stored.request_id, interactionId);
+  assert.equal(Object.keys(stored).some((key) => /prompt|raw_response|text|property|user|payload|secret|error_message/i.test(key)), false);
+  const probe = run.probes.find((item) => item.url.endsWith('/functions/v1/chatbot'));
+  assert.equal(probe.authorization, `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`);
+  assert.equal(probe.redirect, 'error');
+  assert.ok(probe.signal);
+  assert.equal(run.rpcCalls.some((item) => item.name === 'record_monitoring_alert'), false);
+  assert.doesNotMatch(JSON.stringify(body), /SGHOMIE_CANARY_OK|synthetic-service-secret|secret|response text/);
+});
+
+test('synthetic check requests reject arbitrary types and writes fail closed', async () => {
+  const invalid = await fixture();
+  assert.equal((await invalid.handler(request({ action: 'run_canary', canary_type: 'anything' }))).status, 400);
+  assert.equal(invalid.probes.length, 0);
+  const failedWrite = await fixture({ failedTable: 'synthetic_canary_runs' });
+  const response = await failedWrite.handler(request({ action: 'run_canary', canary_type: 'chatbot' }));
+  assert.equal(response.status, 503);
+  assert.doesNotMatch(await response.text(), /provider|prompt|SGHOMIE_CANARY_OK/);
+});
+
+test('valuation synthetic check uses only the approved canonical fixture and validates the expected model', async () => {
+  const run = await fixture({ env: { VALUATION_ALLOW_HOSTED_DEMO_INPUTS: 'true' } });
+  const response = await run.handler(request({ action: 'run_canary', canary_type: 'valuation' }));
+  assert.equal(response.status, 200, `${await response.clone().text()} ${JSON.stringify(run.logs)}`);
+  const body = await response.json();
+  assert.equal(body.dashboard_v2.synthetic_canary.status, 'success');
+  assert.equal(body.dashboard_v2.synthetic_canary.expected_model_version, 'model-v1');
+  assert.equal(body.dashboard_v2.synthetic_canary.observed_model_version, 'model-v1');
+  const fixtureRead = run.reads.find((item) => item.type === 'canary_fixture');
+  assert.equal(fixtureRead.filters.demo_batch_id, 'sghomie-test-2026-10-07-2e3e55');
+  assert.equal(fixtureRead.filters.status, 'approved');
+  const call = run.probes.find((item) => item.url.endsWith('/functions/v1/valuation'));
+  assert.equal(call.authorization, 'Bearer synthetic-user-session');
+  assert.equal(call.redirect, 'error');
+  assert.deepEqual(Object.keys(JSON.parse(call.body)), ['property_id']);
+  assert.equal(JSON.parse(call.body).property_id, 'a2c30b6f-631b-4d9e-8383-8968707546b1');
+  const stored = run.writes.find((item) => item.table === 'synthetic_canary_runs').record;
+  assert.equal(stored.canary_valid, true);
+  assert.equal(Object.keys(stored).some((key) => /property|user|price|prediction/i.test(key)), false);
+});
+
+test('dashboard summary includes only the latest bounded safe result for each synthetic check', async () => {
+  const result = { canary_type: 'valuation', status: 'success', failure_category: null,
+    started_at: '2026-10-30T00:00:00Z', completed_at: '2026-10-30T00:00:01Z', duration_ms: 1000,
+    request_id: interactionId, expected_model_version: 'model-v1', observed_model_version: 'model-v1',
+    provider: null, model: null, edge_reached: true, upstream_reached: true, response_valid: true, canary_valid: true,
+    property_id: 'must-not-return', user_id: 'must-not-return' };
+  const run = await fixture({ canaryRows: [result] });
+  const response = await run.handler(request({ action: 'read_summary', range: '7d' }));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.dashboard_v2.synthetic_canaries.valuation.canary_valid, true);
+  assert.equal(body.dashboard_v2.synthetic_canaries.chatbot, null);
+  assert.doesNotMatch(JSON.stringify(body.dashboard_v2.synthetic_canaries), /property_id|user_id|must-not-return/);
+  const latestReads = run.reads.filter((item) => item.type === 'synthetic_canaries');
+  assert.deepEqual(latestReads.map((item) => [item.canaryType, item.limit]).sort(), [['chatbot', 1], ['valuation', 1]]);
 });
 
 test('feedback detail query failure does not fail the monitoring dashboard', async () => {

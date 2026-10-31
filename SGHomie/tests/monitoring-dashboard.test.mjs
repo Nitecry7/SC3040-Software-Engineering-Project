@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { componentHarness, content, deferred, nodes } from './helpers/frontend-component.mjs';
 import {
   formatDuration, formatSgt, formatSgtWithZone, isUnsupportedMonitoringAction, monitoringBucketLabel,
-  monitoringDisplayLabel, parseFeedbackConversation, parseHealthCheckResult, parseDashboard, parseMonitoringBadge, parseMonitoringDetail, percentileLabel,
+  monitoringDisplayLabel, parseFeedbackConversation, parseHealthCheckResult, parseDashboard, parseMonitoringBadge, parseMonitoringDetail, parseSyntheticCanaryResult, percentileLabel,
 } from '../FrontEnd/src/lib/monitoringDashboard.ts';
 import { serializeFeedbackCopyForAnalysis } from '../BackEnd/supabase/functions/_shared/feedbackConversation.ts';
 
@@ -61,7 +61,7 @@ function makeApp(invoke, globals = {}) {
     '../lib/supabase': { supabase: { functions: { invoke } } },
     '../lib/monitoringDashboard': { formatCount: (n) => String(n), formatDuration, formatSgt, formatSgtWithZone,
       monitoringBucketLabel, monitoringDisplayLabel, percentileMinimums: { p50: 5, p95: 20, p99: 100 },
-      isUnsupportedMonitoringAction, parseFeedbackConversation, parseHealthCheckResult, parseDashboard, parseMonitoringDetail, percentileLabel },
+      isUnsupportedMonitoringAction, parseFeedbackConversation, parseHealthCheckResult, parseDashboard, parseMonitoringDetail, parseSyntheticCanaryResult, percentileLabel },
     '../../../BackEnd/supabase/functions/_shared/feedbackConversation': { serializeFeedbackCopyForAnalysis },
   }, props, { document: { body: {}, activeElement: null }, HTMLElement: class HTMLElement {}, window: { innerWidth: 1280, innerHeight: 800, addEventListener() {}, removeEventListener() {} }, ...globals });
 }
@@ -392,7 +392,36 @@ test('range labels and service evidence stay clear and truthful', async () => {
   assert.match(services, /Last Observed/);
   assert.match(services, /31 Oct 2026/);
   assert.match(services, /Expected Model/);
-  assert.match(services, /Hosted Canary/);
+  assert.match(services, /Valuation Canary/);
+});
+
+test('synthetic checks run only after an explicit click and show the persisted result', async () => {
+  const calls = [];
+  const pending = deferred();
+  const app = makeApp((_name, options) => {
+    calls.push(options.body);
+    return options.body.action === 'run_canary' ? pending.promise : Promise.resolve({ data: dashboard(options.body.range), error: null });
+  });
+  app.render(); await app.effects(); await flush(app);
+  click(app, 'Services');
+  assert.equal(JSON.stringify(calls), JSON.stringify([{ action: 'read_summary', range: '7d' }]));
+  const cardNode = nodes(expandComponents(app.render())).find((node) => node.type === 'article' && content(node).includes('Chatbot Synthetic Check'));
+  const runButton = nodes(cardNode).find((node) => node.type === 'button' && content(node).includes('Run Check'));
+  assert.ok(runButton);
+  runButton.props.onClick(); app.render();
+  assert.equal(JSON.stringify(calls.at(-1)), JSON.stringify({ action: 'run_canary', canary_type: 'chatbot' }));
+  const pendingButton = nodes(expandComponents(app.render())).find((node) => node.type === 'button' && content(node).includes('Running Check'));
+  assert.equal(pendingButton.props.disabled, true);
+  pending.resolve({ data: { dashboard_v2: { synthetic_canary: {
+    canary_type: 'chatbot', status: 'success', failure_category: null, started_at: stamp,
+    completed_at: stamp, duration_ms: 842, request_id: 'f3279239-d561-4cf0-ad8c-b3ebfa2bcb3b',
+    expected_model_version: null, observed_model_version: null, provider: 'openrouter', model: 'openrouter/free',
+    edge_reached: true, upstream_reached: true, response_valid: true, canary_valid: true,
+  } } }, error: null });
+  await flush(app);
+  assert.match(viewText(app), /Chatbot Synthetic Check[\s\S]*Success/);
+  assert.match(viewText(app), /Synthetic check passed/);
+  assert.equal(calls.filter((call) => call.action === 'run_canary').length, 1);
 });
 
 test('valuation request details open inline without a modal or page dimming', async () => {

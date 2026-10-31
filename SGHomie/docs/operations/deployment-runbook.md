@@ -210,3 +210,18 @@ For an approved deployment, verify each migration and function version in the in
 ## Verification record
 
 For each release, record date, environment, source commit, services changed, migration/function/model versions, checks performed, observed result, rollback decision and unresolved follow-up. Redact project credentials, user data and request secrets from the record.
+### Phase 7D on-demand synthetic checks
+
+**Implemented in the repository; no hosted migration or function deployment has been performed.** The System Monitoring Services tab offers separate admin-triggered Chatbot and Valuation checks. They are never run on page load, Refresh Data, range changes, or the Render/model Health Check. Results are stored in `synthetic_canary_runs` and displayed as the latest point-in-time result independently of the selected history range. Single failures do not create monitoring alerts.
+
+#### Safe hosted rollout order
+
+1. Review and apply `20261031150000_phase7_synthetic_canary_runs.sql` to the intended project.
+2. Deploy `chatbot`, `valuation` (when it differs from the deployed version), and the updated `admin-monitoring` Edge Functions. The chatbot internal canary route requires the existing service-role secret and a fixed internal-action header; it ignores browser prompts and returns no generated content. The valuation check requires the approved canonical fixture, `VALUATION_ALLOW_HOSTED_DEMO_INPUTS=true`, and a valid `VALUATION_EXPECTED_MODEL_VERSION` matching the serving model.
+3. Deploy the frontend after the migration and functions. If the monitoring action is unsupported by an older backend, the UI keeps existing dashboard data and shows a backend-upgrade message on the check card.
+
+After rollout, run each check deliberately in a non-production admin environment first. Confirm the result row contains only status/failure category, start/completion/duration, request ID, safe model/provider metadata, and boolean evidence. Confirm no `system_alerts` row is created by either failure. A Chatbot result checks the deployed Edge Function/provider with a fixed marker; it does not exercise user authentication, per-user quotas, streaming, tools or the full user journey, and it never stores normal chat telemetry. A Valuation result uses the canonical seeded demo property through the normal valuation Edge Function path; it validates response schema, interval, request-ID correlation and expected model version, not valuation accuracy.
+
+Synthetic results have a 90-day retention target. The migration extends `cleanup_monitoring_data()` but does not schedule it. Configure and verify a daily hosted invocation using the approved project scheduler before treating the target as operational. Maintain the same caution for the existing valuation events, health checks and resolved-alert cleanup.
+
+No synthetic check runs during this repository task. Hosted secrets/configuration, canonical fixture state, migration application, function versions, provider reachability and scheduler state remain deployment-dependent and must be verified separately.

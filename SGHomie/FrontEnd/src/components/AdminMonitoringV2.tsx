@@ -8,7 +8,7 @@ import {
   formatCount, formatDuration, formatSgt, formatSgtWithZone, isUnsupportedMonitoringAction, monitoringBucketLabel, monitoringDisplayLabel, parseFeedbackConversation, parseHealthCheckResult,
   parseDashboard, parseMonitoringDetail, percentileMinimums,
   type DurationStats, type MonitoringAlert, type MonitoringDashboard, type MonitoringDetail, type MonitoringFeedback,
-  type MonitoringRange,
+  type MonitoringRange, type SyntheticCanaryResult, type SyntheticCanaryType, parseSyntheticCanaryResult,
 } from '../lib/monitoringDashboard';
 import type { AdminDashboardUrlState, MonitoringView } from '../lib/adminDashboardState';
 
@@ -233,16 +233,54 @@ function PercentileTile({ percentile, stats, tone }: { percentile: 'p50' | 'p95'
 }
 function ServiceStrip({ data }: { data: MonitoringDashboard }) {
   const observation = data.health[0];
+  const chatbotCanary = data.synthetic_canaries?.chatbot ?? null;
+  const valuationCanary = data.synthetic_canaries?.valuation ?? null;
+  const canaryLabel = (result: SyntheticCanaryResult | null) => result ? monitoringDisplayLabel(result.status)
+    : data.synthetic_canaries === null ? 'Results Unavailable' : 'Not Yet Verified';
+  const canaryEvidence = (result: SyntheticCanaryResult | null) => result
+    ? `Last check · ${formatSgtWithZone(result.completed_at)}`
+    : data.synthetic_canaries === null ? 'Results unavailable' : 'On-demand check';
   const items: Array<{ name: string; icon: LucideIcon; tone: 'blue' | 'teal' | 'green' | 'slate'; state: string; evidence: string; help?: { title: string; text: string } }> = [
     { name: 'Application', icon: Monitor, tone: 'slate', state: 'Unknown', evidence: 'No outside-in monitor' },
-    { name: 'Database', icon: Database, tone: 'green', state: 'Data Read OK', evidence: 'Monitoring data read' },
-    { name: 'Chatbot', icon: Bot, tone: 'teal', state: 'Live Health Unknown', evidence: 'Stored outcomes only' },
+    { name: 'Database', icon: Database, tone: 'green', state: 'Data Read OK', evidence: `Monitoring read · ${formatSgtWithZone(data.generated_at)}` },
+    { name: 'Chatbot', icon: Bot, tone: chatbotCanary?.status === 'success' ? 'teal' : 'slate', state: `Synthetic ${canaryLabel(chatbotCanary)}`, evidence: chatbotCanary ? canaryEvidence(chatbotCanary) : 'Stored outcomes only', help: { title: 'Chatbot Synthetic Check', text: 'A deliberate, fixed-prompt provider check. It is point-in-time evidence and does not represent continuous availability or a user conversation.' } },
     { name: 'Render Model', icon: Cpu, tone: observation?.status === 'healthy' ? 'green' : 'slate', state: observation?.status === 'healthy' ? 'Observed Ready' : observation ? monitoringDisplayLabel(observation.status) : 'Unknown', evidence: observation ? `Admin check · ${formatSgtWithZone(observation.checked_at)}` : 'No admin check recorded', help: { title: 'Admin Check', text: 'A point-in-time Render/model readiness observation. It does not measure continuous uptime.' } },
-    { name: 'Hosted Canary', icon: Radar, tone: 'slate', state: 'Not Yet Verified', evidence: 'Deferred', help: { title: 'Hosted Canary', text: 'An end-to-end hosted run is not implemented or recorded.' } },
+    { name: 'Valuation Canary', icon: Radar, tone: valuationCanary?.status === 'success' ? 'green' : 'slate', state: canaryLabel(valuationCanary), evidence: canaryEvidence(valuationCanary), help: { title: 'Valuation Synthetic Check', text: 'A deliberate valuation request against the canonical approved demo fixture. This point-in-time result is not continuous uptime or model accuracy evidence.' } },
   ];
   return <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">{items.map((item) => <div key={item.name} className="flex min-w-0 items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2.5">
     <IconTile icon={item.icon} tone={item.tone} /><div className="min-w-0"><div className="flex flex-wrap items-center gap-1.5"><p className="text-sm font-semibold text-slate-800">{item.name}</p><StatePill value={item.state} />{item.help && <HelpTip {...item.help} />}</div><p className="mt-0.5 truncate text-xs text-slate-500">{item.evidence}</p></div>
   </div>)}</div>;
+}
+function SyntheticCanaryCard({ type, result, pending, message, onRun }: {
+  type: SyntheticCanaryType; result: SyntheticCanaryResult | null; pending: boolean; message: string | null;
+  onRun: (type: SyntheticCanaryType) => void;
+}) {
+  const title = type === 'chatbot' ? 'Chatbot Synthetic Check' : 'Valuation Synthetic Check';
+  const status = result ? monitoringDisplayLabel(result.status) : 'Not Yet Verified';
+  const tone = result?.status === 'success' ? 'text-emerald-700' : result?.status === 'failure' ? 'text-rose-700' : 'text-slate-600';
+  return <article className="min-w-0 rounded-xl border border-gray-200 bg-white p-4">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h4 className="font-semibold text-slate-900">{title}</h4><p className="mt-1 text-sm leading-5 text-slate-600">{type === 'chatbot'
+      ? 'Checks the deployed chatbot Edge Function and configured provider with a fixed synthetic prompt. No interaction text is stored.'
+      : 'Runs a valuation against the canonical approved demo fixture and checks the response, interval, request ID, and expected model version.'}</p></div>
+      <span className={`rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium ${tone}`}>{status}</span></div>
+    <dl className="mt-4 grid gap-x-5 gap-y-3 border-t border-slate-100 pt-3 text-xs sm:grid-cols-2">
+      <MetricDatum label="Last Run" value={result ? formatSgtWithZone(result.completed_at) : 'Not Yet Run'} />
+      <MetricDatum label="Duration" value={result ? formatDuration(result.duration_ms) : 'Not Yet Run'} />
+      {result?.failure_category && <MetricDatum label="Result Detail" value={monitoringDisplayLabel(result.failure_category)} />}
+      {type === 'chatbot' && result && <MetricDatum label="Provider" value={result.provider ? monitoringDisplayLabel(result.provider) : null} />}
+      {type === 'chatbot' && result && <MetricDatum label="Model" value={result.model} />}
+      {type === 'valuation' && result && <MetricDatum label="Expected Model" value={result.expected_model_version} />}
+      {type === 'valuation' && result && <MetricDatum label="Observed Model" value={result.observed_model_version} />}
+      {result && <MetricDatum label="Evidence" value={result.canary_valid ? 'Synthetic check passed' : result.edge_reached ? 'Request reached the Edge Function' : 'Check did not reach the Edge Function'} />}
+    </dl>
+    {message && <p role="alert" className="mt-3 text-sm text-amber-800">{message}</p>}
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+      <p className="text-xs text-slate-500">On-demand only · not continuous availability monitoring</p>
+      <button type="button" className={button} onClick={() => onRun(type)} disabled={pending}>
+        <Activity className="mr-1 inline h-4 w-4" aria-hidden="true" />{pending ? 'Running Check…' : 'Run Check'}
+      </button>
+    </div>
+  </article>;
 }
 function ServiceCard({ icon, name, state, evidence, copy, tone = 'slate', help, lastObserved, className = '' }: { icon: LucideIcon; name: string; state: string; evidence: string; copy: string; tone?: 'green' | 'slate' | 'teal'; help?: { title: string; text: string }; lastObserved?: string | null; className?: string }) {
   return <Panel title={name} icon={icon} tone={tone} help={help} className={className}><div className="flex items-center justify-between gap-3"><StatePill value={state} /></div><p className="mt-3 text-sm leading-5 text-slate-600">{copy}</p><dl className="mt-3 grid gap-2 border-t border-slate-100 pt-3 text-xs sm:grid-cols-2"><div><dt className="font-medium text-slate-500">Evidence</dt><dd className="mt-0.5 font-semibold text-slate-700">{evidence}</dd></div>{lastObserved !== undefined && <div><dt className="font-medium text-slate-500">Last Observed</dt><dd className="mt-0.5 font-semibold text-slate-700">{lastObserved ?? 'Unavailable'}</dd></div>}</dl></Panel>;
@@ -352,11 +390,17 @@ export default function AdminMonitoringV2({
 }) {
   const rangeRef = useRef<MonitoringRange>(range);
   rangeRef.current = range;
+  const tabRef = useRef<MonitoringView>(tab);
+  tabRef.current = tab;
   const [data, setData] = useState<MonitoringDashboard | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [healthPending, setHealthPending] = useState(false);
   const healthLock = useRef(false);
+  const [canaryPending, setCanaryPending] = useState<Record<SyntheticCanaryType, boolean>>({ chatbot: false, valuation: false });
+  const canaryLocks = useRef<Record<SyntheticCanaryType, boolean>>({ chatbot: false, valuation: false });
+  const canarySequence = useRef(0);
+  const [canaryMessages, setCanaryMessages] = useState<Record<SyntheticCanaryType, string | null>>({ chatbot: null, valuation: null });
   const [notice, setNotice] = useState<string | null>(null);
   const [upgrade, setUpgrade] = useState(false);
   const [detail, setDetail] = useState<MonitoringDetail | null>(null);
@@ -418,6 +462,7 @@ export default function AdminMonitoringV2({
     return () => { sequence.current += 1; };
   }, [read, range]);
   useEffect(() => () => { feedbackRequestSequence.current += 1; }, []);
+  useEffect(() => { canarySequence.current += 1; }, [tab]);
   useEffect(() => {
     if (!detail) return;
     detailPanelRef.current?.focus();
@@ -464,6 +509,47 @@ export default function AdminMonitoringV2({
       healthLock.current = false;
       setHealthPending(false);
       if (id === sequence.current) setInitialLoading(false);
+    }
+  };
+  const runCanary = async (type: SyntheticCanaryType) => {
+    if (canaryLocks.current[type]) return;
+    canaryLocks.current[type] = true;
+    setCanaryPending((previous) => ({ ...previous, [type]: true }));
+    setCanaryMessages((previous) => ({ ...previous, [type]: null }));
+    const requestId = ++canarySequence.current;
+    const startedOnTab = tabRef.current;
+    try {
+      const { data: response, error } = await supabase.functions.invoke('admin-monitoring', {
+        body: { action: 'run_canary', canary_type: type },
+      });
+      if (requestId !== canarySequence.current || startedOnTab !== tabRef.current) {
+        if (!error) void read(rangeRef.current);
+        return;
+      }
+      if (error) {
+        setCanaryMessages((previous) => ({ ...previous, [type]: isUnsupportedMonitoringAction(error)
+          ? 'The monitoring backend needs an upgrade before this check can run.'
+          : 'The check could not be completed or recorded. Existing results remain visible.' }));
+        return;
+      }
+      const result = parseSyntheticCanaryResult(response, type);
+      if (!result) {
+        setCanaryMessages((previous) => ({ ...previous, [type]: 'The backend returned an unsupported check result. Existing results remain visible.' }));
+        return;
+      }
+      setData((previous) => previous ? { ...previous, synthetic_canaries: {
+        chatbot: previous.synthetic_canaries?.chatbot ?? null,
+        valuation: previous.synthetic_canaries?.valuation ?? null,
+        [type]: result,
+      } } : previous);
+      if (result.status !== 'success') setCanaryMessages((previous) => ({ ...previous, [type]:
+        'This point-in-time check did not pass. It does not by itself indicate an outage.' }));
+    } catch {
+      if (requestId === canarySequence.current) setCanaryMessages((previous) => ({ ...previous, [type]:
+        'The check could not be completed or recorded. Existing results remain visible.' }));
+    } finally {
+      canaryLocks.current[type] = false;
+      setCanaryPending((previous) => ({ ...previous, [type]: false }));
     }
   };
   const openFeedbackDetails = async (item: MonitoringFeedback, target: HTMLButtonElement) => {
@@ -634,12 +720,18 @@ export default function AdminMonitoringV2({
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           <ServiceCard className="xl:col-span-2" icon={Monitor} name="Application" state="Unknown" evidence="None Collected" copy="No outside-in monitor exists, so browser availability is unknown." help={{ title: 'Application Monitoring', text: 'No external browser availability monitor is configured. Unknown does not mean healthy.' }} />
           <ServiceCard className="xl:col-span-2" icon={Database} name="Database" state="Data Read OK" tone="green" evidence="Telemetry Read" lastObserved={formatSgtWithZone(current.generated_at)} copy="The monitoring data read succeeded. This timestamp describes the latest summary read, not continuous database availability." help={{ title: 'Database Evidence', text: 'A successful telemetry read confirms this summary query completed. It does not measure ongoing database uptime.' }} />
-          <ServiceCard className="xl:col-span-2" icon={Bot} name="Chatbot" state="Live Health Unknown" tone="teal" evidence="Stored Chat Records" copy="Stored interactions describe past outcomes. They do not test live provider health." help={{ title: 'Chatbot Monitoring', text: 'Historical interactions show recorded outcomes only; they do not probe live chatbot or provider availability.' }} />
+          <ServiceCard className="xl:col-span-2" icon={Bot} name="Chatbot" state={current.synthetic_canaries?.chatbot ? monitoringDisplayLabel(current.synthetic_canaries.chatbot.status) : current.synthetic_canaries === null ? 'Results Unavailable' : 'Not Yet Verified'} tone="teal" evidence={current.synthetic_canaries?.chatbot ? `Synthetic check · ${formatSgtWithZone(current.synthetic_canaries.chatbot.completed_at)}` : 'Stored Chat Records'} copy="Stored interactions describe past outcomes. The on-demand synthetic check separately exercises the deployed Edge Function and provider." help={{ title: 'Chatbot Monitoring', text: 'Historical interactions show recorded outcomes only. A deliberate synthetic check is point-in-time evidence, not continuous availability.' }} />
           <Panel className="xl:col-span-4" title="Render Model" icon={Cpu} tone="green" help={{ title: 'Admin Check', text: 'This is a point-in-time Render/model readiness check, not continuous monitoring.' }}><div className="flex items-center justify-between gap-3"><StatePill value={current.health[0]?.status === 'healthy' ? 'Observed Ready' : current.health[0]?.status ?? 'Unknown'} /></div>
             <p className="mt-3 text-sm text-slate-600">Readiness reflects the last admin check and is not observed continuously.</p>
             <dl className="mt-4 grid gap-x-4 gap-y-3 text-xs sm:grid-cols-2 lg:grid-cols-3"><ValueChip label="Expected Model" value={current.health[0]?.expected_model_version} /><ValueChip label="Loaded Model" value={current.health[0]?.loaded_model_version} /><ValueChip label="Version Comparison" value={current.health[0]?.expected_model_version && current.health[0]?.loaded_model_version ? current.health[0].expected_model_version === current.health[0].loaded_model_version ? 'Match' : 'Mismatch' : 'Not Compared'} /><ValueChip label="Last Admin Check" value={current.health[0] ? formatSgtWithZone(current.health[0].checked_at) : null} /><ValueChip label="Source" value={current.health[0] ? current.health[0].source === 'admin_view' ? 'Admin Check' : monitoringDisplayLabel(current.health[0].source) : null} /></dl></Panel>
-          <ServiceCard className="xl:col-span-2" icon={Radar} name="Hosted Canary" state="Not Yet Verified" evidence="Deferred" copy="An end-to-end hosted canary run has not been recorded." help={{ title: 'Hosted Canary', text: 'An end-to-end hosted canary run is deferred and is not part of Run Health Check.' }} />
         </div>
+        <section aria-labelledby="synthetic-checks-title" className="space-y-3">
+          <div><h3 id="synthetic-checks-title" className="text-base font-semibold text-slate-900">On-Demand Synthetic Checks</h3><p className="mt-1 max-w-3xl text-sm text-slate-600">These checks run only when an admin starts them. A single failure does not create an incident or establish a continuous outage.</p></div>
+          <div className="grid items-start gap-3 xl:grid-cols-2">
+            <SyntheticCanaryCard type="chatbot" result={current.synthetic_canaries?.chatbot ?? null} pending={canaryPending.chatbot} message={canaryMessages.chatbot} onRun={(type) => void runCanary(type)} />
+            <SyntheticCanaryCard type="valuation" result={current.synthetic_canaries?.valuation ?? null} pending={canaryPending.valuation} message={canaryMessages.valuation} onRun={(type) => void runCanary(type)} />
+          </div>
+        </section>
       </div>}
       {tab === 'chatbot' && <div className="space-y-4">
         <div className="grid gap-3 md:grid-cols-3"><MetricTile icon={MessageCircle} label="Recorded Interactions" value={formatCount(current.chatbot.recorded_interactions)} note="Recorded events only" tone="teal" help={{ title: 'Recorded Events', text: 'Best-effort telemetry can undercount activity when a write fails.' }} /><MetricTile icon={CheckCircle2} label="Successful Interactions" value={formatCount(current.chatbot.successful_interactions)} note={current.chatbot.recorded_interactions ? `${(current.chatbot.successful_interactions / current.chatbot.recorded_interactions * 100).toFixed(1)}% of recorded interactions` : 'No recorded interactions'} tone="green" /><MetricTile icon={Bot} label="Provider Calls" value={formatCount(current.chatbot.provider_calls)} note="Recorded calls" tone="blue" help={{ title: 'Provider Calls', text: 'The number of provider calls recorded in this time range, not a live availability check.' }} /></div>

@@ -2,19 +2,12 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { performance } from 'node:perf_hooks';
+import { validateValuationCanaryResponse } from '../BackEnd/supabase/functions/_shared/valuationCanary.ts';
 
 const TIMEOUT_MS = 150_000;
 const VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const CANONICAL_BATCH_PATTERN = /^sghomie-test-\d{4}-\d{2}-\d{2}-[a-f0-9]+$/;
-const NUMERIC_FIELDS = [
-  'estimated_value',
-  'lower_bound',
-  'upper_bound',
-  'interval_half_width',
-  'interval_full_width',
-  'coverage_target',
-];
 
 function requiredValue(env, key) {
   const value = env[key]?.trim();
@@ -39,51 +32,6 @@ async function canonicalFixtureId() {
     if (CANONICAL_BATCH_PATTERN.test(match[1]) && REQUEST_ID_PATTERN.test(match[2])) return match[2];
   }
   throw new Error('CANARY_FIXTURE_UNAVAILABLE');
-}
-
-function isRecord(value) {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function responseChecks(body, expectedModelVersion, headerRequestId) {
-  if (!isRecord(body) || !isRecord(body.data)) return null;
-  const data = body.data;
-  const schemaValid = NUMERIC_FIELDS.every((key) => typeof data[key] === 'number' && Number.isFinite(data[key]))
-    && typeof data.model_version === 'string'
-    && VERSION_PATTERN.test(data.model_version)
-    && typeof data.uncertainty_method === 'string'
-    && data.uncertainty_method.trim().length > 0
-    && typeof data.uncertainty_group === 'string'
-    && data.uncertainty_group.trim().length > 0
-    && Number.isInteger(data.uncertainty_support)
-    && data.uncertainty_support >= 0
-    && typeof data.used_global_fallback === 'boolean'
-    && (data.price_position === null || [
-      'below_estimated_market_range',
-      'within_estimated_market_range',
-      'above_estimated_market_range',
-    ].includes(data.price_position))
-    && [0.8, 0.9, 0.95].includes(data.coverage_target);
-  const intervalValid = schemaValid
-    && data.estimated_value > 0
-    && data.lower_bound >= 0
-    && data.lower_bound <= data.estimated_value
-    && data.estimated_value <= data.upper_bound
-    && data.interval_half_width >= 0
-    && data.interval_full_width >= 0
-    && Math.abs(data.interval_full_width - (data.upper_bound - data.lower_bound)) <= 0.01
-    && Math.abs(data.interval_half_width - (data.upper_bound - data.lower_bound) / 2) <= 0.01;
-  const requestIdValid = typeof body.request_id === 'string'
-    && REQUEST_ID_PATTERN.test(body.request_id)
-    && headerRequestId === body.request_id;
-  return {
-    response_schema: schemaValid,
-    interval_ordering: intervalValid,
-    request_id_correlation: requestIdValid,
-    expected_model_version: schemaValid && data.model_version === expectedModelVersion,
-    modelVersion: schemaValid ? data.model_version : null,
-    requestId: requestIdValid ? body.request_id : null,
-  };
 }
 
 export async function runValuationCanary(config, fetcher = fetch, timeoutMs = TIMEOUT_MS) {
@@ -124,12 +72,12 @@ export async function runValuationCanary(config, fetcher = fetch, timeoutMs = TI
           if (controller.signal.aborted || ['AbortError', 'TimeoutError'].includes(error?.name)) throw error;
           body = null;
         }
-        checks = responseChecks(body, config.expectedModelVersion, responseRequestId);
+        checks = validateValuationCanaryResponse(body, config.expectedModelVersion, responseRequestId);
         if (!checks?.response_schema) failureCode = 'INVALID_PREDICTION_SCHEMA';
         else if (!checks.interval_ordering) failureCode = 'INVALID_INTERVAL';
         else if (!checks.request_id_correlation) failureCode = 'REQUEST_ID_MISMATCH';
         else if (!checks.expected_model_version) failureCode = 'MODEL_VERSION_MISMATCH';
-        requestId = checks?.requestId ?? requestId;
+        requestId = checks?.request_id ?? requestId;
       }
     } finally {
       clearTimeout(timer);
@@ -148,7 +96,7 @@ export async function runValuationCanary(config, fetcher = fetch, timeoutMs = TI
     http_status: httpStatus,
     request_id: requestId,
     expected_model_version: config.expectedModelVersion,
-    returned_model_version: checks?.modelVersion ?? null,
+    returned_model_version: checks?.model_version ?? null,
     checks: checks ? {
       response_schema: checks.response_schema,
       interval_ordering: checks.interval_ordering,

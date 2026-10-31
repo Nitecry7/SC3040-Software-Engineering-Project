@@ -20,10 +20,11 @@ import { profileListingFilters } from './buyerRequirements.ts';
 import { buyOnboarding, onboardingAction, REGISTRATION_MESSAGE, SELL_ONBOARDING } from './onboarding.ts';
 import { ChatQuotaError, ChatQuotaUnavailableError, reserveProviderCapacity, reserveUserInteraction, type ChatQuotaSnapshot } from './quota.ts';
 import { createChatTelemetry, createTelemetryStore, containsContactInformation, CONTACT_INPUT_REPLY, detectSensitiveInput, observeChatStream, SENSITIVE_INPUT_WARNING, type InteractionStatus } from './telemetry.ts';
+import { runSyntheticChatbotCanary } from './syntheticCanary.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-sghomie-internal-action',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Cache-Control': 'no-store',
 };
@@ -835,6 +836,28 @@ export async function handleRequest(req: Request): Promise<Response> {
 
   if (req.method !== 'POST') {
     return jsonResponse({ error: 'Method not allowed' }, 405);
+  }
+
+  // This fixed-prompt route is only for the already-authorized admin-monitoring
+  // Edge Function. It deliberately bypasses user interaction persistence and
+  // never accepts a browser-supplied prompt or records the generated text.
+  if (req.headers.get('X-SGHomie-Internal-Action') === 'chatbot-synthetic-canary') {
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    if (!serviceRoleKey || req.headers.get('Authorization') !== `Bearer ${serviceRoleKey}`)
+      return jsonResponse({ error: 'Not found' }, 404);
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const result = await runSyntheticChatbotCanary({
+      createProvider: () => createChatProvider(name => Deno.env.get(name)),
+      reserveProviderCapacity: async () => {
+        if (!supabaseUrl || !serviceRoleKey) throw new ChatQuotaUnavailableError();
+        const client = createClient(supabaseUrl, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } });
+        await reserveProviderCapacity(client);
+      },
+    });
+    console.info(JSON.stringify({ event: 'synthetic_chatbot_canary', request_id: result.request_id,
+      status: result.status, failure_category: result.failure_category, duration_ms: result.duration_ms,
+      provider: result.provider, model: result.model, upstream_reached: result.upstream_reached }));
+    return jsonResponse({ synthetic_canary: result });
   }
 
   try {

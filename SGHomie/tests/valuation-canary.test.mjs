@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { loadCanaryConfig, runValuationCanary } from '../scripts/valuation-canary.mjs';
+import { validateValuationCanaryResponse } from '../BackEnd/supabase/functions/_shared/valuationCanary.ts';
 
 const requestId = 'd4e6be0e-1849-4fc8-9425-04200fc76c21';
 const modelVersion = 'hdb-catboost-2025-12-v1';
@@ -26,6 +27,16 @@ const validResult = {
   used_global_fallback: false,
   price_position: null,
 };
+
+test('valuation canary contract helper keeps expected version, interval and request correlation checks reusable', () => {
+  assert.deepEqual(validateValuationCanaryResponse({ data: validResult, request_id: requestId }, modelVersion, requestId), {
+    response_schema: true, interval_ordering: true, request_id_correlation: true,
+    expected_model_version: true, model_version: modelVersion, request_id: requestId,
+  });
+  const mismatched = validateValuationCanaryResponse({ data: validResult, request_id: requestId }, modelVersion, 'd4e6be0e-1849-4fc8-9425-04200fc76c22');
+  assert.equal(mismatched.request_id_correlation, false);
+  assert.equal(mismatched.request_id, null);
+});
 
 test('hosted canary config requires deliberate HTTPS credentials and expected model version', () => {
   const config = loadCanaryConfig({

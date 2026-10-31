@@ -3,6 +3,7 @@ import {
   boundFeedbackConversation, serializeFeedbackJson, serializeFeedbackMarkdown, serializeFeedbackText,
   type FeedbackConversation, type FeedbackRating, type FeedbackTechnicalContext,
 } from '../_shared/feedbackConversation.ts';
+import { isCanaryModelVersion, isCanaryRequestId, validateValuationCanaryResponse } from '../_shared/valuationCanary.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -25,6 +26,18 @@ const SAFE_VALUATION_FAILURES = new Set([
   'INVALID_PREDICTION_SCHEMA', 'INVALID_INTERVAL', 'MODEL_VERSION_MISMATCH',
   'EDGE_UNAVAILABLE', 'INVALID_REQUEST',
 ]);
+const CANARY_TYPES = new Set(['chatbot', 'valuation']);
+const CANARY_FAILURES = new Set([
+  'CONFIGURATION_FAILURE', 'PROVIDER_CONFIGURATION_FAILURE', 'PROVIDER_UNAVAILABLE',
+  'PROVIDER_TIMEOUT', 'PROVIDER_RATE_LIMITED', 'INVALID_PROVIDER_RESPONSE',
+  'CANARY_VALIDATION_FAILURE', 'GLOBAL_CAPACITY_LIMITED', 'GLOBAL_CAPACITY_UNAVAILABLE',
+  'NETWORK_UNCERTAIN', 'CHATBOT_EDGE_FAILURE', 'VALUATION_EDGE_FAILURE', 'AUTH_FAILURE',
+  'PROPERTY_FIXTURE_UNAVAILABLE', 'PROPERTY_NOT_FOUND', 'FEATURE_PREPARATION_FAILURE',
+  'INVALID_PREDICTION_SCHEMA', 'INVALID_INTERVAL', 'REQUEST_ID_MISMATCH',
+  'MODEL_VERSION_MISMATCH', 'MODEL_VERSION_UNCONFIGURED',
+]);
+const CANONICAL_DEMO_BATCH = 'sghomie-test-2026-10-07-2e3e55';
+const CANARY_TIMEOUT_MS = 150_000;
 
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { ...corsHeaders, 'Cache-Control': 'no-store' } });
@@ -57,6 +70,140 @@ function safeProviderOutcome(value: unknown): string | null {
 }
 function safePromptVersion(value: unknown): string | null {
   return typeof value === 'string' && /^[a-z0-9][a-z0-9._-]{0,79}$/i.test(value) ? value : null;
+}
+function safeCanaryResult(value: Record<string, unknown>) {
+  const status = value.status === 'success' || value.status === 'failure' || value.status === 'unknown'
+    ? value.status : 'unknown';
+  const failure = typeof value.failure_category === 'string' && CANARY_FAILURES.has(value.failure_category)
+    ? value.failure_category : status === 'success' ? null : 'NETWORK_UNCERTAIN';
+  return {
+    canary_type: value.canary_type,
+    status,
+    failure_category: failure,
+    started_at: value.started_at,
+    completed_at: value.completed_at,
+    duration_ms: nonnegative(value.duration_ms) ?? 0,
+    request_id: isCanaryRequestId(value.request_id) ? value.request_id : null,
+    expected_model_version: isCanaryModelVersion(value.expected_model_version) ? value.expected_model_version : null,
+    observed_model_version: isCanaryModelVersion(value.observed_model_version) ? value.observed_model_version : null,
+    provider: safeProvider(value.provider),
+    model: safeModelLabel(value.model),
+    edge_reached: value.edge_reached === true,
+    upstream_reached: value.upstream_reached === true,
+    response_valid: value.response_valid === true,
+    canary_valid: value.canary_valid === true,
+  };
+}
+function canaryFailure(type: 'chatbot' | 'valuation', category: string, startedAt: string, durationMs: number,
+  fields: Record<string, unknown> = {}) {
+  return safeCanaryResult({ canary_type: type, status: category === 'NETWORK_UNCERTAIN'
+    || category === 'PROVIDER_TIMEOUT' || category.startsWith('GLOBAL_CAPACITY')
+    || category === 'MODEL_VERSION_UNCONFIGURED' || category === 'PROPERTY_FIXTURE_UNAVAILABLE'
+      ? 'unknown' : 'failure', failure_category: category, started_at: startedAt,
+  completed_at: new Date().toISOString(), duration_ms: durationMs, request_id: null,
+  expected_model_version: null, observed_model_version: null, provider: null, model: null,
+  edge_reached: false, upstream_reached: false, response_valid: false, canary_valid: false, ...fields });
+}
+async function runChatbotCanary(supabaseUrl: string, anonKey: string, serviceKey: string,
+  startedAt: string): Promise<Record<string, unknown>> {
+  const started = performance.now();
+  try {
+    const response = await fetch(`${supabaseUrl.replace(/\/$/, '')}/functions/v1/chatbot`, {
+      method: 'POST',
+      headers: { apikey: anonKey, Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json',
+        'X-SGHomie-Internal-Action': 'chatbot-synthetic-canary' },
+      body: '{}', signal: AbortSignal.timeout(35_000), redirect: 'error',
+    });
+    let payload: unknown = null;
+    try { payload = await response.json(); } catch { /* The response body is never logged or persisted. */ }
+    const result = typeof payload === 'object' && payload !== null && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>).synthetic_canary : null;
+    if (!response.ok || typeof result !== 'object' || result === null || Array.isArray(result)) {
+      const category = response.status === 401 || response.status === 403 ? 'AUTH_FAILURE' : 'CHATBOT_EDGE_FAILURE';
+      return canaryFailure('chatbot', category, startedAt, performance.now() - started,
+        { edge_reached: true });
+    }
+    const body = result as Record<string, unknown>;
+    const status = ['success', 'failure', 'unknown'].includes(String(body.status)) ? body.status : 'unknown';
+    const failureCategory = typeof body.failure_category === 'string' && CANARY_FAILURES.has(body.failure_category)
+      ? body.failure_category : status === 'success' ? null : 'NETWORK_UNCERTAIN';
+    const valid = typeof body.request_id === 'string' && UUID.test(body.request_id)
+      && (body.provider === null || safeProvider(body.provider) !== null)
+      && (body.model === null || safeModelLabel(body.model) !== null)
+      && ['upstream_reached', 'response_valid', 'canary_valid'].every((key) => typeof body[key] === 'boolean');
+    if (!valid) return canaryFailure('chatbot', 'CHATBOT_EDGE_FAILURE', startedAt, performance.now() - started,
+      { edge_reached: true });
+    const normalizedStatus = status as 'success' | 'failure' | 'unknown';
+    return safeCanaryResult({ canary_type: 'chatbot', status: normalizedStatus,
+      failure_category: failureCategory, started_at: startedAt, completed_at: new Date().toISOString(),
+      duration_ms: performance.now() - started, request_id: body.request_id,
+      expected_model_version: null, observed_model_version: null, provider: body.provider, model: body.model,
+      edge_reached: true, upstream_reached: body.upstream_reached, response_valid: body.response_valid,
+      canary_valid: body.canary_valid });
+  } catch (error) {
+    const timedOut = (error as { name?: string })?.name === 'TimeoutError'
+      || (error as { name?: string })?.name === 'AbortError';
+    return canaryFailure('chatbot', timedOut ? 'PROVIDER_TIMEOUT' : 'NETWORK_UNCERTAIN', startedAt,
+      performance.now() - started);
+  }
+}
+async function runValuationCanary(service: any, supabaseUrl: string, anonKey: string, authorization: string,
+  startedAt: string): Promise<Record<string, unknown>> {
+  const started = performance.now();
+  const expectedModel = Deno.env.get('VALUATION_EXPECTED_MODEL_VERSION');
+  if (!isCanaryModelVersion(expectedModel)) return canaryFailure('valuation', 'MODEL_VERSION_UNCONFIGURED', startedAt, 0);
+  if (Deno.env.get('VALUATION_ALLOW_HOSTED_DEMO_INPUTS') !== 'true')
+    return canaryFailure('valuation', 'CONFIGURATION_FAILURE', startedAt, 0, { expected_model_version: expectedModel });
+  try {
+    const fixture = await service.from('properties').select('id')
+      .eq('demo_batch_id', CANONICAL_DEMO_BATCH).eq('status', 'approved').limit(1);
+    if (fixture.error) return canaryFailure('valuation', 'NETWORK_UNCERTAIN', startedAt, performance.now() - started,
+      { expected_model_version: expectedModel });
+    const fixtureRow = Array.isArray(fixture.data) ? fixture.data[0] : null;
+    if (!fixtureRow || typeof fixtureRow.id !== 'string' || !UUID.test(fixtureRow.id))
+      return canaryFailure('valuation', 'PROPERTY_FIXTURE_UNAVAILABLE', startedAt, performance.now() - started,
+        { expected_model_version: expectedModel });
+    const response = await fetch(`${supabaseUrl.replace(/\/$/, '')}/functions/v1/valuation`, {
+      method: 'POST', headers: { apikey: anonKey, Authorization: authorization, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ property_id: fixtureRow.id }), signal: AbortSignal.timeout(CANARY_TIMEOUT_MS), redirect: 'error',
+    });
+    const headerId = response.headers.get('X-Valuation-Request-ID');
+    let payload: unknown = null;
+    if (response.ok) { try { payload = await response.json(); } catch { payload = null; } }
+    const checks = response.ok ? validateValuationCanaryResponse(payload, expectedModel, headerId) : null;
+    let failure: string | null = null;
+    if (!response.ok) failure = response.status === 401 || response.status === 403 ? 'AUTH_FAILURE'
+      : response.status === 404 ? 'PROPERTY_NOT_FOUND' : response.status === 409 ? 'FEATURE_PREPARATION_FAILURE'
+        : 'VALUATION_EDGE_FAILURE';
+    else if (!checks?.response_schema) failure = 'INVALID_PREDICTION_SCHEMA';
+    else if (!checks.interval_ordering) failure = 'INVALID_INTERVAL';
+    else if (!checks.request_id_correlation) failure = 'REQUEST_ID_MISMATCH';
+    else if (!checks.expected_model_version) failure = 'MODEL_VERSION_MISMATCH';
+    const status = failure ? 'failure' : 'success';
+    return safeCanaryResult({ canary_type: 'valuation', status, failure_category: failure,
+      started_at: startedAt, completed_at: new Date().toISOString(), duration_ms: performance.now() - started,
+      request_id: checks?.request_id ?? (isCanaryRequestId(headerId) ? headerId : null),
+      expected_model_version: expectedModel, observed_model_version: checks?.model_version ?? null,
+      provider: null, model: null, edge_reached: true, upstream_reached: checks?.response_schema === true,
+      response_valid: checks?.response_schema === true && checks.interval_ordering,
+      canary_valid: !failure });
+  } catch (error) {
+    const timedOut = (error as { name?: string })?.name === 'TimeoutError'
+      || (error as { name?: string })?.name === 'AbortError';
+    return canaryFailure('valuation', timedOut ? 'NETWORK_UNCERTAIN' : 'NETWORK_UNCERTAIN', startedAt,
+      performance.now() - started, { expected_model_version: expectedModel });
+  }
+}
+async function persistCanaryResult(service: any, result: Record<string, unknown>) {
+  const { error } = await service.from('synthetic_canary_runs').insert({
+    canary_type: result.canary_type, status: result.status, failure_category: result.failure_category,
+    started_at: result.started_at, completed_at: result.completed_at, duration_ms: result.duration_ms,
+    request_id: result.request_id, expected_model_version: result.expected_model_version,
+    observed_model_version: result.observed_model_version, provider: result.provider, model: result.model,
+    edge_reached: result.edge_reached, upstream_reached: result.upstream_reached,
+    response_valid: result.response_valid, canary_valid: result.canary_valid,
+  });
+  if (error) throw new Error('synthetic canary persistence failed');
 }
 function exportFilename(feedbackId: string, recordedAt: string, extension: string): string {
   const timestamp = new Date(recordedAt).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
@@ -282,8 +429,29 @@ Deno.serve(async (request) => {
     const action = input.action === undefined ? 'summary' : input.action;
     const feedbackExportActions = ['export_markdown', 'export_text', 'export_json'] as const;
     if (!['summary', 'read_summary', 'health_check', 'badge', 'detail', 'acknowledge', 'resolve',
-      'get_feedback_conversation', 'audit_feedback_copy', ...feedbackExportActions].includes(String(action))) {
+      'get_feedback_conversation', 'audit_feedback_copy', 'run_canary', ...feedbackExportActions].includes(String(action))) {
       return json({ error: 'Invalid monitoring action' }, 400);
+    }
+
+    if (action === 'run_canary') {
+      if (typeof input.canary_type !== 'string' || !CANARY_TYPES.has(input.canary_type)
+        || Object.keys(input).length !== 2 || !Object.keys(input).every((key) => ['action', 'canary_type'].includes(key)))
+        return json({ error: 'Invalid synthetic check request' }, 400);
+      const type = input.canary_type as 'chatbot' | 'valuation';
+      const startedAt = new Date().toISOString();
+      const result = type === 'chatbot'
+        ? await runChatbotCanary(supabaseUrl, anonKey, serviceKey, startedAt)
+        : await runValuationCanary(service, supabaseUrl, anonKey, authorization, startedAt);
+      try { await persistCanaryResult(service, result); }
+      catch {
+        console.error(JSON.stringify({ event: 'synthetic_canary_persist_failed', canary_type: type, failure_class: 'write_failed' }));
+        return json({ error: 'Synthetic check result could not be recorded' }, 503);
+      }
+      console.info(JSON.stringify({ event: 'synthetic_canary', canary_type: type,
+        status: result.status, failure_category: result.failure_category, duration_ms: result.duration_ms,
+        request_id: result.request_id, expected_model_version: result.expected_model_version,
+        observed_model_version: result.observed_model_version }));
+      return json({ dashboard_v2: { synthetic_canary: result } });
     }
 
     if (action === 'get_feedback_conversation' || feedbackExportActions.includes(action as typeof feedbackExportActions[number])) {
@@ -377,14 +545,21 @@ Deno.serve(async (request) => {
       let requests: { data: Record<string, unknown>[] | null; error: unknown } = { data: null, error: true };
       let alerts: { data: Record<string, unknown>[] | null; error: unknown } = { data: null, error: true };
       let feedback: { data: unknown; error: unknown } = { data: null, error: true };
+      let chatbotCanary: { data: Record<string, unknown>[] | null; error: unknown } = { data: null, error: true };
+      let valuationCanary: { data: Record<string, unknown>[] | null; error: unknown } = { data: null, error: true };
       let unresolvedCount: number | null = null;
-      try { [requests, alerts, feedback] = await Promise.all([
+      const latestCanary = (type: 'chatbot' | 'valuation') => service.from('synthetic_canary_runs')
+        .select('canary_type,status,failure_category,started_at,completed_at,duration_ms,request_id,expected_model_version,observed_model_version,provider,model,edge_reached,upstream_reached,response_valid,canary_valid')
+        .eq('canary_type', type).order('completed_at', { ascending: false }).limit(1);
+      try { [requests, alerts, feedback, chatbotCanary, valuationCanary] = await Promise.all([
         service.from('valuation_events').select('request_id,created_at,status,failure_category,total_edge_ms')
           .gte('created_at', start).lt('created_at', end)
           .order('created_at', { ascending: false }).limit(10),
         service.from('system_alerts').select('id,severity,source,category,state,first_detected_at,last_detected_at,occurrence_count,latest_request_id,acknowledged_at,resolved_at')
           .in('state', ['active', 'acknowledged']).order('last_detected_at', { ascending: false }).limit(30),
         service.rpc('monitoring_recent_feedback', { p_start: start, p_end: end }),
+        latestCanary('chatbot'),
+        latestCanary('valuation'),
       ]);
         const total = await service.from('system_alerts').select('id', { count: 'exact', head: true })
           .in('state', ['active', 'acknowledged']);
@@ -411,6 +586,11 @@ Deno.serve(async (request) => {
                 || !(item.comment === null || (typeof item.comment === 'string' && item.comment.length <= 1000))) return [];
             return [{ feedback_id: item.feedback_id, rating: item.rating, recorded_at: item.recorded_at, comment: item.comment }];
           }),
+        synthetic_canaries: chatbotCanary.error || valuationCanary.error
+          || !Array.isArray(chatbotCanary.data) || !Array.isArray(valuationCanary.data) ? null : {
+          chatbot: chatbotCanary.data[0] ? safeCanaryResult(chatbotCanary.data[0]) : null,
+          valuation: valuationCanary.data[0] ? safeCanaryResult(valuationCanary.data[0]) : null,
+        },
       };
     };
 
@@ -541,7 +721,10 @@ Deno.serve(async (request) => {
         status: healthStatus, observed_at: checkedAt, recorded: healthRecorded,
       } } }) : json({ error: 'Monitoring data unavailable' }, 503))
       : json({ ...legacy, dashboard_v2: summary ?? { version: 2, state: 'unavailable', reason: 'monitoring_data_unavailable' } });
-  } catch {
+  } catch (error) {
+    const errorName = typeof error === 'object' && error !== null && typeof (error as { name?: unknown }).name === 'string'
+      ? (error as { name: string }).name : 'unknown';
+    console.error(JSON.stringify({ event: 'admin_monitoring_request_failed', failure_class: errorName }));
     return json({ error: 'Monitoring unavailable' }, 503);
   }
 });

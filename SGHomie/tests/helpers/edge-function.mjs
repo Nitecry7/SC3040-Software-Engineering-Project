@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import {
   boundFeedbackConversation, serializeFeedbackJson, serializeFeedbackMarkdown, serializeFeedbackText,
 } from '../../BackEnd/supabase/functions/_shared/feedbackConversation.ts';
+import { isCanaryModelVersion, isCanaryRequestId, validateValuationCanaryResponse } from '../../BackEnd/supabase/functions/_shared/valuationCanary.ts';
 
 // Run the actual Deno handler in an isolated realm. Only external SDK imports,
 // secrets, network and logging are substituted; business logic is unchanged.
@@ -12,16 +13,18 @@ export async function loadEdgeFunction(name, { env = {}, createClient, fetch, SM
   const source = (await readFile(path, 'utf8'))
     .replace(/^import \{ createClient \} from 'npm:@supabase\/supabase-js@2\.114\.0';\r?\n/m, '')
     .replace(/^import \{[\s\S]*?\} from '\.\.\/_shared\/feedbackConversation\.ts';\r?\n/m, '')
+    .replace(/^import \{ isCanaryModelVersion, isCanaryRequestId, validateValuationCanaryResponse \} from '\.\.\/_shared\/valuationCanary\.ts';\r?\n/m, '')
     .replace(/^import \{ SMTPClient \} from "npm:emailjs@4\.0\.3";\r?\n/m, '');
   let handler;
   const logs = [];
   const context = vm.createContext({
     createClient: createClient ?? (() => { throw new Error('Unexpected SDK call'); }),
     boundFeedbackConversation, serializeFeedbackJson, serializeFeedbackMarkdown, serializeFeedbackText,
+    isCanaryModelVersion, isCanaryRequestId, validateValuationCanaryResponse,
     SMTPClient: SMTPClient ?? class { constructor() { throw new Error('Unexpected SMTP call'); } },
     fetch: fetch ?? (() => { throw new Error('Unexpected network call'); }),
     Deno: { env: { get: key => env[key] }, serve: callback => { handler = callback; } },
-    console: Object.fromEntries(['log', 'warn', 'error'].map(level => [level, (...args) => logs.push({ level, args })])),
+    console: Object.fromEntries(['log', 'info', 'warn', 'error'].map(level => [level, (...args) => logs.push({ level, args })])),
     Request, Response, Headers, URL, URLSearchParams, crypto, Error, Date, AbortSignal, performance,
   });
   vm.runInContext(stripTypeScriptTypes(source), context, { filename: path.pathname });
