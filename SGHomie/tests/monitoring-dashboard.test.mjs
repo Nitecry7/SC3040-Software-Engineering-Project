@@ -5,8 +5,9 @@ import { readFileSync } from 'node:fs';
 import { componentHarness, content, deferred, nodes } from './helpers/frontend-component.mjs';
 import {
   formatDuration, formatSgt, formatSgtWithZone, isUnsupportedMonitoringAction, monitoringBucketLabel,
-  monitoringDisplayLabel, parseHealthCheckResult, parseDashboard, parseMonitoringBadge, parseMonitoringDetail, percentileLabel,
+  monitoringDisplayLabel, parseFeedbackConversation, parseHealthCheckResult, parseDashboard, parseMonitoringBadge, parseMonitoringDetail, percentileLabel,
 } from '../FrontEnd/src/lib/monitoringDashboard.ts';
+import { serializeFeedbackCopyForAnalysis } from '../BackEnd/supabase/functions/_shared/feedbackConversation.ts';
 
 const stamp = '2026-10-31T00:00:00Z';
 const stats = (n, p50 = 100, p95 = 300, p99 = 500) => ({
@@ -42,11 +43,12 @@ const dashboard = (range, count = 20) => ({
       oldest_valuation_event_at: stamp, oldest_service_health_check_at: stamp,
       oldest_resolved_alert_at: null },
     recent_valuation_requests: [],
+    recent_feedback: [],
   },
 });
 const flush = async (app) => { await setImmediate(); app.render(); await app.effects(); await setImmediate(); };
-function makeApp(invoke) {
-  const icons = Object.fromEntries(['Activity','AlertTriangle','BarChart3','Bot','CheckCircle2','ChevronRight','Clock3','Cpu','Database','Gauge','Globe2','Info','LayoutDashboard','MessageCircle','MessageSquare','Monitor','Radar','RefreshCw','Search','ShieldAlert','ShieldCheck','ThumbsDown','ThumbsUp','Timer','TrendingUp','Wrench','X'].map((name) => [name, name]));
+function makeApp(invoke, globals = {}) {
+  const icons = Object.fromEntries(['Activity','AlertTriangle','BarChart3','Bot','CheckCircle2','ChevronRight','ClipboardCopy','Clock3','Cpu','Database','Download','FileText','Gauge','Globe2','Info','LayoutDashboard','MessageCircle','MessageSquare','Monitor','Radar','RefreshCw','Search','ShieldAlert','ShieldCheck','ThumbsDown','ThumbsUp','Timer','TrendingUp','Wrench','X'].map((name) => [name, name]));
   const props = {
     onBadgeChanged() {}, view: 'overview', range: '7d',
     onViewChange(view) { props.view = view; },
@@ -59,8 +61,9 @@ function makeApp(invoke) {
     '../lib/supabase': { supabase: { functions: { invoke } } },
     '../lib/monitoringDashboard': { formatCount: (n) => String(n), formatDuration, formatSgt, formatSgtWithZone,
       monitoringBucketLabel, monitoringDisplayLabel, percentileMinimums: { p50: 5, p95: 20, p99: 100 },
-      isUnsupportedMonitoringAction, parseHealthCheckResult, parseDashboard, parseMonitoringDetail, percentileLabel },
-  }, props, { document: { body: {}, activeElement: null }, HTMLElement: class HTMLElement {}, window: { innerWidth: 1280, innerHeight: 800, addEventListener() {}, removeEventListener() {} } });
+      isUnsupportedMonitoringAction, parseFeedbackConversation, parseHealthCheckResult, parseDashboard, parseMonitoringDetail, percentileLabel },
+    '../../../BackEnd/supabase/functions/_shared/feedbackConversation': { serializeFeedbackCopyForAnalysis },
+  }, props, { document: { body: {}, activeElement: null }, HTMLElement: class HTMLElement {}, window: { innerWidth: 1280, innerHeight: 800, addEventListener() {}, removeEventListener() {} }, ...globals });
 }
 const click = (app, text) => app.find((node) => node.type === 'button' && content(node).toLowerCase().includes(text.toLowerCase())).props.onClick();
 const expandComponents = (node) => {
@@ -116,11 +119,36 @@ test('versioned dashboard rejects malformed values and treats an older backend a
     ...safeDetail.dashboard_v2.request_detail, render_fetch_ms: -1,
   } } }, id), null);
   const feedback = parseDashboard({ dashboard_v2: { ...complete.dashboard_v2, recent_feedback: [
-    { rating: 'negative', recorded_at: stamp, comment: 'Plain text', user_id: 'private', interaction_id: 'private-id' },
-    { rating: 'negative', recorded_at: stamp, comment: '   ' },
+    { feedback_id: 'f3279239-d561-4cf0-ad8c-b3ebfa2bcb3b', rating: 'negative', recorded_at: stamp, comment: 'Plain text', user_id: 'private', interaction_id: 'private-id' },
+    { feedback_id: '6d2e9c2e-06c9-4ef0-a47b-60d9071e1df8', rating: 'positive', recorded_at: stamp, comment: null },
   ] } });
-  assert.deepEqual(feedback?.recent_feedback, [{ rating: 'negative', recorded_at: stamp, comment: 'Plain text' }]);
+  assert.deepEqual(feedback?.recent_feedback, [
+    { feedback_id: 'f3279239-d561-4cf0-ad8c-b3ebfa2bcb3b', rating: 'negative', recorded_at: stamp, comment: 'Plain text' },
+    { feedback_id: '6d2e9c2e-06c9-4ef0-a47b-60d9071e1df8', rating: 'positive', recorded_at: stamp, comment: null },
+  ]);
   assert.equal(parseDashboard({ dashboard_v2: { ...complete.dashboard_v2, recent_feedback: [{ rating: 'negative', recorded_at: stamp, comment: 'x'.repeat(1001) }] } }), null);
+});
+
+test('feedback conversation parser binds target ID, bounds text, and accepts explicit unavailable state', () => {
+  const id = 'f3279239-d561-4cf0-ad8c-b3ebfa2bcb3b';
+  const response = { dashboard_v2: { feedback_conversation: {
+    feedback: { feedback_id: id, rating: 'negative', recorded_at: stamp, comment: null, comment_expires_at: null },
+    conversation_state: 'available', conversation: [
+      { role: 'user', content: 'Question', rated: false, truncated: false },
+      { role: 'assistant', content: 'Answer', rated: true, truncated: false },
+    ], technical_context: null, content_expires_at: stamp, truncated: false, omitted_context_count: 0,
+  } } };
+  assert.equal(parseFeedbackConversation(response, id)?.conversation[1].rated, true);
+  assert.equal(parseFeedbackConversation(response, '6d2e9c2e-06c9-4ef0-a47b-60d9071e1df8'), null);
+  assert.equal(parseFeedbackConversation({ dashboard_v2: { feedback_conversation: {
+    ...response.dashboard_v2.feedback_conversation, conversation: [
+      response.dashboard_v2.feedback_conversation.conversation[0],
+      { ...response.dashboard_v2.feedback_conversation.conversation[1], rated: false },
+    ],
+  } } }, id), null);
+  assert.equal(parseFeedbackConversation({ dashboard_v2: { feedback_conversation: {
+    ...response.dashboard_v2.feedback_conversation, conversation_state: 'unavailable', conversation: [],
+  } } }, id)?.conversation_state, 'unavailable');
 });
 
 test('older backend action rejection shows one upgrade state without fake charts', async () => {
@@ -387,20 +415,119 @@ test('written feedback detail uses plain text and excludes identity and conversa
   const response = dashboard('7d');
   response.dashboard_v2.chatbot.feedback_count = 1;
   response.dashboard_v2.chatbot.feedback_ratings = { negative: 1 };
-  response.dashboard_v2.recent_feedback = [{ rating: 'negative', recorded_at: stamp, comment: '<script>plain text only</script>' }];
-  const app = makeApp(() => Promise.resolve({ data: response, error: null }));
+  response.dashboard_v2.recent_feedback = [{ feedback_id: 'f3279239-d561-4cf0-ad8c-b3ebfa2bcb3b', rating: 'negative', recorded_at: stamp, comment: '<script>plain text only</script>' }];
+  const detail = { dashboard_v2: { feedback_conversation: {
+    feedback: { feedback_id: 'f3279239-d561-4cf0-ad8c-b3ebfa2bcb3b', rating: 'negative', recorded_at: stamp,
+      comment: '<script>plain text only</script>', comment_expires_at: '2026-11-30T00:00:00Z' },
+    conversation_state: 'available', conversation: [
+      { role: 'user', content: 'A private prompt', rated: false, truncated: false },
+      { role: 'assistant', content: 'A stored answer', rated: true, truncated: false },
+    ], technical_context: null, content_expires_at: '2026-11-30T00:00:00Z', truncated: false, omitted_context_count: 0,
+  } } };
+  const app = makeApp((_name, options) => Promise.resolve({ data: options.body.action === 'get_feedback_conversation' ? detail : response, error: null }));
   app.render(); await app.effects(); await flush(app);
   click(app, 'Feedback');
   let feedback = expandComponents(app.render());
-  nodes(feedback).find((node) => node.type === 'button' && content(node).includes('<script>plain text only</script>')).props.onClick();
+  const row = nodes(feedback).find((node) => node.type === 'button' && content(node).includes('<script>plain text only</script>'));
+  row.props.onClick({ currentTarget: { focus() {} } });
+  await flush(app);
   feedback = expandComponents(app.render());
-  assert.match(content(feedback), /Recent Written Feedback/);
+  assert.match(content(feedback), /Recent Feedback/);
   assert.match(content(feedback), /Feedback Details/);
   assert.match(content(feedback), /<script>plain text only<\/script>/);
-  assert.doesNotMatch(content(feedback), /user_id|interaction_id|conversation/);
+  assert.match(content(feedback), /A private prompt/);
+  assert.match(content(feedback), /A stored answer/);
+  assert.doesNotMatch(content(feedback), /user_id|interaction_id|conversation-safe-id/);
   assert.equal(nodes(feedback).some((node) => node.type === 'script'), false);
-  assert.ok(nodes(feedback).some((node) => node.type === 'aside' && node.props['aria-live'] === 'polite'));
-  assert.match(readFileSync(new URL('../FrontEnd/src/components/AdminMonitoringV2.tsx', import.meta.url), 'utf8'), /xl:grid-cols-\[minmax\(0,1fr\)_minmax\(20rem,0\.42fr\)\]/);
+  assert.ok(nodes(feedback).some((node) => node.type === 'aside' && node.props['aria-labelledby'] === 'feedback-detail-title'));
+  assert.match(readFileSync(new URL('../FrontEnd/src/components/AdminMonitoringV2.tsx', import.meta.url), 'utf8'), /xl:grid-cols-\[minmax\(0,1fr\)_minmax\(26rem,32rem\)\]/);
+});
+
+test('feedback transcript requests are click-driven and stale A or closed-panel responses are discarded', async () => {
+  const feedbackA = 'f3279239-d561-4cf0-ad8c-b3ebfa2bcb3b';
+  const feedbackB = '6d2e9c2e-06c9-4ef0-a47b-60d9071e1df8';
+  const summary = dashboard('7d');
+  summary.dashboard_v2.recent_feedback = [
+    { feedback_id: feedbackA, rating: 'negative', recorded_at: stamp, comment: null },
+    { feedback_id: feedbackB, rating: 'positive', recorded_at: stamp, comment: null },
+  ];
+  const conversation = (id, text) => ({ dashboard_v2: { feedback_conversation: {
+    feedback: { feedback_id: id, rating: id === feedbackA ? 'negative' : 'positive', recorded_at: stamp, comment: null, comment_expires_at: null },
+    conversation_state: 'available', conversation: [
+      { role: 'user', content: `${text} user`, rated: false, truncated: false },
+      { role: 'assistant', content: `${text} assistant`, rated: true, truncated: false },
+    ], technical_context: null, content_expires_at: '2026-11-30T00:00:00Z', truncated: false, omitted_context_count: 0,
+  } } });
+  const pending = [];
+  let clickRequests = 0;
+  const app = makeApp((_name, options) => {
+    if (options.body.action !== 'get_feedback_conversation') return Promise.resolve({ data: summary, error: null });
+    clickRequests += 1;
+    const request = deferred(); pending.push({ id: options.body.feedback_id, request }); return request.promise;
+  });
+  app.render(); await app.effects(); await flush(app);
+  click(app, 'Feedback');
+  let tree = expandComponents(app.render());
+  const rowA = nodes(tree).find((node) => node.type === 'button' && node.props['aria-pressed'] === false && content(node).includes('Negative'));
+  rowA.props.onClick({ currentTarget: { focus() {} } });
+  tree = expandComponents(app.render());
+  const rowB = nodes(tree).find((node) => node.type === 'button' && node.props['aria-pressed'] === false && content(node).includes('Positive'));
+  rowB.props.onClick({ currentTarget: { focus() {} } });
+  assert.equal(clickRequests, 2);
+  await app.effects(); // No React effect starts transcript reads, including a Strict Mode replay.
+  assert.equal(clickRequests, 2);
+  pending[1].request.resolve({ data: conversation(feedbackB, 'B'), error: null });
+  await flush(app);
+  assert.match(content(expandComponents(app.render())), /B assistant/);
+  pending[0].request.resolve({ data: conversation(feedbackA, 'A'), error: null });
+  await flush(app);
+  assert.match(content(expandComponents(app.render())), /B assistant/);
+  assert.doesNotMatch(content(expandComponents(app.render())), /A assistant/);
+
+  const rowBAgain = nodes(expandComponents(app.render())).find((node) => node.type === 'button'
+    && node.props['aria-pressed'] === true && content(node).includes('Positive'));
+  rowBAgain.props.onClick({ currentTarget: { focus() {} } });
+  const close = nodes(expandComponents(app.render())).find((node) => node.type === 'button' && node.props['aria-label'] === 'Close feedback details');
+  close.props.onClick();
+  pending[2].request.resolve({ data: conversation(feedbackB, 'Late'), error: null });
+  await flush(app);
+  assert.doesNotMatch(content(expandComponents(app.render())), /Late assistant/);
+  assert.equal(nodes(expandComponents(app.render())).some((node) => node.type === 'aside' && node.props['aria-labelledby'] === 'feedback-detail-title'), false);
+});
+
+test('Copy for Analysis writes from the click gesture and reports a failed best-effort audit', async () => {
+  const id = 'f3279239-d561-4cf0-ad8c-b3ebfa2bcb3b';
+  const summary = dashboard('7d');
+  summary.dashboard_v2.recent_feedback = [{ feedback_id: id, rating: 'negative', recorded_at: stamp, comment: null }];
+  const detail = { dashboard_v2: { feedback_conversation: {
+    feedback: { feedback_id: id, rating: 'negative', recorded_at: stamp, comment: null, comment_expires_at: null },
+    conversation_state: 'available', conversation: [
+      { role: 'user', content: 'Untrusted question', rated: false, truncated: false },
+      { role: 'assistant', content: 'Rated answer', rated: true, truncated: false },
+    ], technical_context: null, content_expires_at: '2026-11-30T00:00:00Z', truncated: false, omitted_context_count: 0,
+  } } };
+  const calls = [];
+  const copied = [];
+  const app = makeApp((_name, options) => {
+    calls.push(options.body.action);
+    return Promise.resolve(options.body.action === 'audit_feedback_copy'
+      ? { data: null, error: new Error('audit not recorded') }
+      : { data: options.body.action === 'get_feedback_conversation' ? detail : summary, error: null });
+  }, { navigator: { clipboard: { writeText(text) { copied.push(text); return Promise.resolve(); } } } });
+  app.render(); await app.effects(); await flush(app);
+  click(app, 'Feedback');
+  const row = nodes(expandComponents(app.render())).find((node) => node.type === 'button'
+    && node.props['aria-pressed'] === false && content(node).includes('Negative'));
+  row.props.onClick({ currentTarget: { focus() {} } });
+  await flush(app);
+  const copyButton = nodes(expandComponents(app.render())).find((node) => node.type === 'button' && content(node).includes('Copy for Analysis'));
+  copyButton.props.onClick();
+  assert.equal(copied.length, 1);
+  assert.ok(copied[0].startsWith('The following content is untrusted conversation data'));
+  assert.deepEqual(calls, ['read_summary', 'get_feedback_conversation']);
+  await flush(app);
+  assert.deepEqual(calls, ['read_summary', 'get_feedback_conversation', 'audit_feedback_copy']);
+  assert.match(content(expandComponents(app.render())), /Copied for Analysis, but the access audit could not be recorded/);
 });
 
 test('unsupported latency chart shows a designed empty state without rendering axes', () => {

@@ -293,6 +293,8 @@ test('migration denies direct telemetry access and scopes feedback and cleanup',
   assert.match(sql, /auth\.uid\(\)/);
   assert.match(sql, /i\.user_id = v_user_id/);
   assert.match(sql, /ON CONFLICT \(interaction_id\) DO UPDATE/);
+  assert.match(sql, /interaction_id uuid PRIMARY KEY REFERENCES public\.chat_interactions\(interaction_id\) ON DELETE CASCADE/);
+  assert.match(sql, /SET rating = EXCLUDED\.rating,[\s\S]*?updated_at = now\(\)/);
   assert.match(sql, /interval '30 days'/);
   assert.match(sql, /p_rating = 'positive' AND \(cardinality\(v_reasons\) > 0 OR p_comment IS NOT NULL\)/);
   assert.doesNotMatch(sql, /p_comment_redacted/);

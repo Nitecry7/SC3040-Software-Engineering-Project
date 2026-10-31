@@ -172,6 +172,32 @@ raw messages or database error text. If start storage remains unavailable after
 retry, chat continues and no row can be guaranteed; a persisted `started` row
 whose final update fails is closed by scheduled cleanup after one hour.
 
+## Phase 7C.1cB feedback conversation inspection
+
+**Implemented in repository; hosted migrations, function version, and scheduled cleanup are not verified.** Migrations `20261031140000_phase7_feedback_inspection.sql` and `20261031141000_phase7_feedback_access_audit.sql` expand the bounded admin feedback list and add an isolated audit table. Apply them in timestamp order, then deploy the updated `admin-monitoring` Edge Function, then deploy the frontend. Do not deploy the frontend first: an older function will reject the transcript action and the UI will show the existing Monitoring Backend Upgrade Required state.
+
+The details panel and server-generated exports resolve a feedback ID through the existing unique `chat_feedback.interaction_id` link. Every action rechecks the signed-in admin. `get_feedback_conversation` writes the `view_transcript` audit action and fails closed unless the audit insert succeeds. The `export_markdown`, `export_text`, and `export_json` actions also fail closed unless the audit insert succeeds; each export is generated on the server after that insert. The client accepts only the three explicit export actions. `audit_feedback_copy` records the fixed `copy_for_analysis` action on a best-effort basis after the user directly requests a clipboard copy: clipboard writing remains usable if that separate audit request fails, and the UI says it was not audited. No action logs transcript or comment text.
+
+The audit table deliberately has no foreign key to feedback, interaction, or admin records, so expiry/deletion does not erase its access history. RLS is enabled; direct ordinary-client table access is revoked. The service-role-only write path records admin ID, feedback/interaction ID, action and timestamp, and no content. Indexes cover `(feedback_id, created_at DESC)` and `(admin_id, created_at DESC)`. `cleanup_feedback_access_audit()` removes entries older than 90 days. For a hosted rollout, configure and verify a daily Supabase Dashboard Cron job for `SELECT public.cleanup_feedback_access_audit();`; the migration alone does not schedule it. Authorized maintainers may inspect audit entries through the approved target-project Supabase SQL Editor using a narrow, read-only query such as:
+
+```sql
+SELECT admin_id, feedback_id, action, created_at
+FROM public.feedback_access_audit
+WHERE feedback_id = '<approved-feedback-uuid>'::uuid
+ORDER BY created_at DESC
+LIMIT 100;
+```
+
+Use approved project access and a specific operational purpose. There is no application audit UI, and ordinary browser clients must not query this table.
+
+Stored user and assistant messages are passed through the existing best-effort `redactTelemetryText` function before persistence. The viewer displays those stored redacted messages, but the pattern-based redactor is not comprehensive. Feedback comments have their own redaction path. Do not describe conversation text as fully anonymized. The panel and exports are bounded to the rated target turn plus at most six preceding same-conversation messages and 20,000 Unicode characters. The exact target comes from the feedback foreign-key link; timestamps select preceding context only. Oversized target messages are explicitly truncated at the end, oldest context is omitted first, and exports disclose per-message truncation, overall truncation and omitted-context count.
+
+Interaction messages and the conversation link expire 30 days after interaction creation; cleanup clears both message fields and `conversation_id`, while `content_expires_at` remains available for the details view. Ratings and structured reasons remain without a time-based expiry in that cleanup, although account/interaction deletion may cascade them. Written comments expire 30 days after feedback submission or update and cleanup clears them. Feedback may therefore remain after its transcript is unavailable; keep the rating visible and show Conversation Context Unavailable. The separate audit history has a 90-day retention target. Do not change these retention periods as part of this phase.
+
+Current stored telemetry includes provider, requested/resolved model, the maintained `prompt_version`, tool summary, provider outcomes, timings and timestamps. Writes are best effort; the prompt version is not automatically tied to every prompt/config change. Track stronger prompt/config traceability as a separate Phase 7C.1d follow-up rather than expanding this dashboard phase.
+
+For an approved deployment, verify each migration and function version in the intended non-production project before moving to the next step. Confirm authorization for every action, strict feedback-ID validation, no-store responses, audit-before-content behavior, safe failure when audit writes fail, exports' safe filenames/UTF-8/schema, feedback IDs without feedback rows returning no transcript, expiry behavior, old-function upgrade state, and a daily cleanup job. Do not use production user conversations as test fixtures. No migration apply, cron setup, Edge Function deployment, or frontend deployment is part of this repository change.
+
 ## Safety and rollback
 
 - Git merge does not automatically deploy every service. Supabase Edge Functions and migrations are separate operations; Render auto-deployment is disabled in the current Blueprint.

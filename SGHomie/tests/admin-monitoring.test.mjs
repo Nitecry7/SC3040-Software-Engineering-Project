@@ -19,6 +19,94 @@ const env = {
 const request = (body = {}) => edgeRequest(body, { headers: { Authorization: 'Bearer synthetic-user-session' } });
 const interactionId = 'f3279239-d561-4cf0-ad8c-b3ebfa2bcb3b';
 
+async function feedbackFixture(options = {}) {
+  const reads = [];
+  const writes = [];
+  const selectedId = options.feedbackId ?? interactionId;
+  const target = {
+    interaction_id: interactionId, request_id: interactionId, conversation_id: 'conversation-safe-id',
+    created_at: '2026-10-30T12:00:00.000Z', content_expires_at: '2026-11-29T12:00:00.000Z',
+    status: 'success', user_message_redacted: 'Question with [EMAIL_REDACTED]',
+    assistant_message_redacted: 'Answer with [PHONE_REDACTED]', provider: 'openrouter',
+    requested_model: 'model-requested', resolved_model: 'model-resolved', prompt_version: 'chatbot-v2',
+    tool_name: 'search_listings', tool_called: true, tool_success: true, tool_result_count: 2, total_latency_ms: 1500,
+    ...options.targetInteraction,
+  };
+  const feedback = options.noFeedback ? null : {
+    interaction_id: interactionId, rating: options.rating ?? 'negative', updated_at: '2026-10-31T00:00:00.000Z',
+    comment_redacted: options.comment === undefined ? 'Redacted feedback comment' : options.comment,
+    comment_expires_at: options.commentExpiresAt ?? '2026-11-30T00:00:00.000Z',
+  };
+  const prior = options.priorInteractions ?? [{
+    interaction_id: 'a0000000-0000-4000-8000-000000000001', conversation_id: target.conversation_id,
+    created_at: '2026-10-30T11:00:00.000Z', content_expires_at: '2026-11-29T11:00:00.000Z',
+    user_message_redacted: 'Earlier user question', assistant_message_redacted: 'Earlier assistant reply',
+  }];
+  const providerCalls = options.providerCalls ?? [{ sequence: 1, provider: 'openrouter', requested_model: 'model-requested',
+    resolved_model: 'model-resolved', status: 'success', latency_ms: 1200, error_code: 'must-not-return' }];
+  const { handler, logs } = await loadEdgeFunction('admin-monitoring', {
+    env,
+    createClient(_url, key, config) {
+      if (key === env.SUPABASE_ANON_KEY) return { auth: { getUser: async () => ({
+        data: { user: options.invalidAuth ? null : { id: 'synthetic-admin' } }, error: null,
+      }) } };
+      assert.equal(key, env.SUPABASE_SERVICE_ROLE_KEY);
+      return {
+        async rpc(name, args) {
+          reads.push({ type: 'rpc', name, args });
+          if (name === 'monitoring_feedback_prior_message_count') return { data: options.priorMessageCount ?? 2, error: options.countError ? new Error('private count error') : null };
+          throw new Error(`unexpected feedback RPC ${name}`);
+        },
+        from(table) {
+          return {
+            insert(record) {
+              writes.push({ table, record });
+              return Promise.resolve({ error: options.failedTable === table ? new Error('private audit failure') : null });
+            },
+            select(columns) {
+              const filters = {};
+              const query = {
+                eq(column, value) { filters[column] = value; return query; },
+                lt(column, value) { filters[`lt:${column}`] = value; return query; },
+                gt(column, value) { filters[`gt:${column}`] = value; return query; },
+                order(column, config = {}) { filters[`order:${column}`] = config.ascending; return query; },
+                limit(value) { filters.limit = value; return query.run(); },
+                async maybeSingle() { return query.run(true); },
+                async run(single = false) {
+                  reads.push({ type: 'select', table, columns, filters });
+                  if (table === 'user_profiles') return { data: options.nonAdmin ? { is_admin: false } : { is_admin: true }, error: null };
+                  if (table === 'chat_feedback') {
+                    if (options.feedbackReadError) return { data: null, error: new Error('private feedback read') };
+                    const exists = feedback && filters.interaction_id === selectedId && filters.interaction_id === interactionId;
+                    return { data: exists ? feedback : null, error: null };
+                  }
+                  if (table === 'chat_interactions' && filters.interaction_id) {
+                    return { data: options.interactionReadError ? null : (options.interactionMissing ? null : target), error: options.interactionReadError ? new Error('private interaction read') : null };
+                  }
+                  if (table === 'chat_interactions' && filters.conversation_id) {
+                    const before = filters['lt:created_at'];
+                    const expiresAfter = filters['gt:content_expires_at'];
+                    const rows = prior.filter((row) => row.conversation_id === filters.conversation_id
+                      && row.created_at < before && row.content_expires_at > expiresAfter)
+                      .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.interaction_id.localeCompare(a.interaction_id))
+                      .slice(0, filters.limit);
+                    return { data: rows, error: options.priorReadError ? new Error('private prior read') : null };
+                  }
+                  if (table === 'chat_provider_calls') return { data: providerCalls, error: options.providerCallsError ? new Error('private provider read') : null };
+                  return { data: null, error: null };
+                },
+              };
+              return query;
+            },
+          };
+        },
+      };
+    },
+    async fetch() { throw new Error('No health probes are expected for feedback actions'); },
+  });
+  return { handler, reads, writes, logs, target, feedback, prior };
+}
+
 async function fixture(options = {}) {
   const reads = [];
   const probes = [];
@@ -173,14 +261,15 @@ test('admin monitoring returns only safe bounded samples and readiness with vers
 
 test('recent written feedback is bounded, expiry-aware, and exposes only safe fields to an admin', async () => {
   const { handler, rpcCalls } = await fixture({ feedback: [
-    { rating: 'negative', recorded_at: '2026-10-31T00:00:00Z', comment: '[EMAIL_REDACTED] Helpful note', user_id: 'private-user', interaction_id: interactionId },
+    { feedback_id: interactionId, rating: 'negative', recorded_at: '2026-10-31T00:00:00Z', comment: '[EMAIL_REDACTED] Helpful note', user_id: 'private-user', interaction_id: interactionId },
+    { feedback_id: '6d2e9c2e-06c9-4ef0-a47b-60d9071e1df8', rating: 'positive', recorded_at: '2026-10-30T22:00:00Z', comment: null },
   ] });
   const response = await handler(request({ action: 'read_summary', range: '7d' }));
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.deepEqual(body.dashboard_v2.recent_feedback, [{
-    rating: 'negative', recorded_at: '2026-10-31T00:00:00Z', comment: '[EMAIL_REDACTED] Helpful note',
-  }]);
+    feedback_id: interactionId, rating: 'negative', recorded_at: '2026-10-31T00:00:00Z', comment: '[EMAIL_REDACTED] Helpful note',
+  }, { feedback_id: '6d2e9c2e-06c9-4ef0-a47b-60d9071e1df8', rating: 'positive', recorded_at: '2026-10-30T22:00:00Z', comment: null }]);
   const feedbackArgs = rpcCalls.find((call) => call.name === 'monitoring_recent_feedback')?.args;
   assert.equal(feedbackArgs.p_start, '2026-10-30T00:00:00Z');
   assert.equal(feedbackArgs.p_end, '2026-10-31T00:00:00Z');
@@ -194,6 +283,119 @@ test('feedback detail query failure does not fail the monitoring dashboard', asy
   const body = await response.json();
   assert.equal(body.dashboard_v2.recent_feedback, null);
   assert.equal(body.dashboard_v2.range.range, '7d');
+});
+
+test('feedback conversation requires an existing feedback row and never resolves a naked interaction ID', async () => {
+  const orphanId = 'bd29dfb2-9255-4b12-9c49-4dcbf65bf30a';
+  const { handler, reads, writes } = await feedbackFixture({ noFeedback: true, feedbackId: orphanId });
+  const response = await handler(request({ action: 'get_feedback_conversation', feedback_id: orphanId }));
+  assert.equal(response.status, 404);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal(reads.some((item) => item.table === 'chat_interactions'), false);
+  assert.equal(writes.length, 0);
+  assert.doesNotMatch(await response.text(), /Question|Answer|conversation-safe-id/);
+});
+
+test('transcript lookup uses the feedback link as target despite timestamp ties and writes a minimal audit first', async () => {
+  const { handler, reads, writes, logs } = await feedbackFixture({ priorMessageCount: 0, priorInteractions: [{
+    interaction_id: 'a0000000-0000-4000-8000-000000000001', conversation_id: 'conversation-safe-id',
+    created_at: '2026-10-30T12:00:00.000Z', content_expires_at: '2026-11-29T12:00:00.000Z',
+    user_message_redacted: 'Equal-time earlier question', assistant_message_redacted: 'Equal-time earlier answer',
+  }] });
+  const response = await handler(request({ action: 'get_feedback_conversation', feedback_id: interactionId }));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  const body = await response.json();
+  const detail = body.dashboard_v2.feedback_conversation;
+  assert.deepEqual(detail.conversation.map((message) => [message.role, message.content, message.rated]), [
+    ['user', 'Question with [EMAIL_REDACTED]', false],
+    ['assistant', 'Answer with [PHONE_REDACTED]', true],
+  ]);
+  assert.equal(detail.feedback.feedback_id, interactionId);
+  assert.equal(detail.content_expires_at, '2026-11-29T12:00:00.000Z');
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].table, 'feedback_access_audit');
+  assert.equal(writes[0].record.admin_id, 'synthetic-admin');
+  assert.equal(writes[0].record.feedback_id, interactionId);
+  assert.equal(writes[0].record.action, 'view_transcript');
+  assert.ok(Number.isFinite(Date.parse(writes[0].record.created_at)));
+  assert.equal(Object.keys(writes[0].record).some((key) => /text|comment|conversation/i.test(key)), false);
+  assert.equal(reads.some((item) => item.table === 'chat_interactions' && item.filters?.interaction_id === interactionId), true);
+  assert.doesNotMatch(JSON.stringify(body), /must-not-return|conversation-safe-id|request_id|user_id|secret/);
+  assert.doesNotMatch(JSON.stringify(logs), /Question|Answer|Redacted feedback comment/);
+});
+
+test('missing or expired target content returns an audited unavailable state without exposing context', async () => {
+  for (const options of [
+    { interactionMissing: true },
+    { targetInteraction: { content_expires_at: '2026-10-01T00:00:00.000Z' } },
+    { targetInteraction: { conversation_id: null } },
+  ]) {
+    const { handler, writes } = await feedbackFixture(options);
+    const response = await handler(request({ action: 'get_feedback_conversation', feedback_id: interactionId }));
+    assert.equal(response.status, 200);
+    const item = (await response.json()).dashboard_v2.feedback_conversation;
+    assert.equal(item.conversation_state, 'unavailable');
+    assert.deepEqual(item.conversation, []);
+    assert.equal(writes[0].record.action, 'view_transcript');
+  }
+});
+
+test('feedback transcript access is admin-only, strict, and fails closed when its audit write fails', async () => {
+  const nonAdmin = await feedbackFixture({ nonAdmin: true });
+  assert.equal((await nonAdmin.handler(request({ action: 'get_feedback_conversation', feedback_id: interactionId }))).status, 403);
+  assert.equal(nonAdmin.reads.some((item) => item.table === 'chat_feedback'), false);
+
+  const { handler, writes } = await feedbackFixture({ failedTable: 'feedback_access_audit' });
+  for (const body of [
+    { action: 'get_feedback_conversation', feedback_id: interactionId, format: 'markdown' },
+    { action: 'get_feedback_conversation', feedback_id: 'not-a-uuid' },
+    { action: 'export_pdf', feedback_id: interactionId },
+  ]) assert.equal((await handler(request(body))).status, 400);
+  const response = await handler(request({ action: 'get_feedback_conversation', feedback_id: interactionId }));
+  assert.equal(response.status, 503);
+  assert.equal(writes.at(-1).record.action, 'view_transcript');
+  assert.doesNotMatch(await response.text(), /Question|Answer|Redacted feedback/);
+});
+
+test('server exports are audited before return and exclude private technical fields', async () => {
+  for (const [action, extension, type] of [
+    ['export_markdown', '.md', /text\/markdown/], ['export_text', '.txt', /text\/plain/], ['export_json', '.json', /application\/octet-stream/],
+  ]) {
+    const { handler, writes } = await feedbackFixture({ noComment: true, comment: null });
+    const response = await handler(request({ action, feedback_id: interactionId }));
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get('content-disposition'), new RegExp(`sg-homie-feedback-${interactionId}-.+\\${extension}`));
+    assert.match(response.headers.get('content-type'), type);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(writes[0].record.action, action);
+    const body = await response.text();
+    if (action === 'export_json') {
+      const parsed = JSON.parse(body);
+      assert.equal(parsed.schema_version, '1');
+      assert.equal(parsed.feedback.feedback_id, interactionId);
+      assert.equal(parsed.conversation.find((message) => message.rated).content, 'Answer with [PHONE_REDACTED]');
+      assert.equal(parsed.conversation.some((message) => message.rated && message.role !== 'assistant'), false);
+      assert.ok('omitted_context_count' in parsed && 'truncated' in parsed && 'technical_context' in parsed);
+    } else {
+      assert.match(body, /Stored, redacted text/);
+      assert.doesNotMatch(body, /conversation-safe-id|must-not-return|private-user|interaction_id/);
+    }
+  }
+  const failing = await feedbackFixture({ failedTable: 'feedback_access_audit' });
+  const response = await failing.handler(request({ action: 'export_json', feedback_id: interactionId }));
+  assert.equal(response.status, 503);
+  assert.doesNotMatch(await response.text(), /Question|Answer|Redacted feedback/);
+});
+
+test('copy audit uses its fixed action and never returns transcript content', async () => {
+  const { handler, writes } = await feedbackFixture();
+  const response = await handler(request({ action: 'audit_feedback_copy', feedback_id: interactionId }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(writes[0].record.action, 'copy_for_analysis');
+  assert.doesNotMatch(await response.text(), /Question|Answer/);
+  const failed = await feedbackFixture({ failedTable: 'feedback_access_audit' });
+  assert.equal((await failed.handler(request({ action: 'audit_feedback_copy', feedback_id: interactionId }))).status, 503);
 });
 
 test('Render uncertainty stays unknown; only explicit not-ready and confirmed version mismatch create incidents', async () => {
@@ -254,6 +456,11 @@ test('every admin action is independently authorized before reads, probes or wri
     { action: 'health_check', range: '7d' },
     { action: 'badge' },
     { action: 'detail', request_id: interactionId },
+    { action: 'get_feedback_conversation', feedback_id: interactionId },
+    { action: 'export_markdown', feedback_id: interactionId },
+    { action: 'export_text', feedback_id: interactionId },
+    { action: 'export_json', feedback_id: interactionId },
+    { action: 'audit_feedback_copy', feedback_id: interactionId },
     { action: 'acknowledge', alert_id: 1 },
     { action: 'resolve', alert_id: 1 },
   ]) {

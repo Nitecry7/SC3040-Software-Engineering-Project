@@ -1,4 +1,8 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.114.0';
+import {
+  boundFeedbackConversation, serializeFeedbackJson, serializeFeedbackMarkdown, serializeFeedbackText,
+  type FeedbackConversation, type FeedbackRating, type FeedbackTechnicalContext,
+} from '../_shared/feedbackConversation.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -25,6 +29,158 @@ const SAFE_VALUATION_FAILURES = new Set([
 function json(body: unknown, status = 200): Response {
   return Response.json(body, { status, headers: { ...corsHeaders, 'Cache-Control': 'no-store' } });
 }
+function attachment(body: string, filename: string, contentType: string): Response {
+  return new Response(body, { status: 200, headers: {
+    ...corsHeaders,
+    'Access-Control-Expose-Headers': 'Content-Disposition',
+    'Cache-Control': 'no-store',
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    'Content-Type': contentType,
+    'X-Content-Type-Options': 'nosniff',
+  } });
+}
+function optionalSafeText(value: unknown, max = 160): string | null {
+  return typeof value === 'string' && value.length > 0 && value.length <= max ? value : null;
+}
+function safeModelLabel(value: unknown): string | null {
+  return typeof value === 'string' && /^[a-z0-9][a-z0-9._:/-]{0,119}$/i.test(value) ? value : null;
+}
+function safeProvider(value: unknown): string | null {
+  return value === 'openai' || value === 'openrouter' ? value : null;
+}
+function safeInteractionOutcome(value: unknown): string | null {
+  return ['success', 'quota_denied', 'provider_error', 'tool_error', 'internal_error', 'aborted'].includes(String(value))
+    ? String(value) : null;
+}
+function safeProviderOutcome(value: unknown): string | null {
+  return ['success', 'provider_error', 'capacity_denied'].includes(String(value)) ? String(value) : null;
+}
+function safePromptVersion(value: unknown): string | null {
+  return typeof value === 'string' && /^[a-z0-9][a-z0-9._-]{0,79}$/i.test(value) ? value : null;
+}
+function exportFilename(feedbackId: string, recordedAt: string, extension: string): string {
+  const timestamp = new Date(recordedAt).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  return `sg-homie-feedback-${feedbackId}-${timestamp}.${extension}`;
+}
+async function writeFeedbackAudit(service: any, adminId: string, feedbackId: string, action: string): Promise<boolean> {
+  try {
+    const { error } = await service.from('feedback_access_audit').insert({
+      admin_id: adminId, feedback_id: feedbackId, action, created_at: new Date().toISOString(),
+    });
+    return !error;
+  } catch { return false; }
+}
+async function loadFeedbackConversation(service: any, feedbackId: string): Promise<
+  { state: 'found'; data: FeedbackConversation } | { state: 'missing' } | { state: 'error' }
+> {
+  try {
+    const feedbackResult = await service.from('chat_feedback')
+      .select('interaction_id,rating,updated_at,comment_redacted,comment_expires_at')
+      .eq('interaction_id', feedbackId).maybeSingle();
+    if (feedbackResult.error) return { state: 'error' };
+    const feedback = feedbackResult.data as Record<string, unknown> | null;
+    if (!feedback || feedback.interaction_id !== feedbackId
+      || !['positive', 'negative'].includes(String(feedback.rating))
+      || typeof feedback.updated_at !== 'string' || !Number.isFinite(Date.parse(feedback.updated_at))) return { state: 'missing' };
+
+    const interactionResult = await service.from('chat_interactions')
+      .select('interaction_id,conversation_id,created_at,content_expires_at,status,user_message_redacted,assistant_message_redacted,provider,requested_model,resolved_model,prompt_version,tool_name,tool_called,tool_success,tool_result_count,total_latency_ms')
+      .eq('interaction_id', feedback.interaction_id).maybeSingle();
+    if (interactionResult.error) return { state: 'error' };
+    const interaction = interactionResult.data as Record<string, unknown> | null;
+    if (interaction && interaction.interaction_id !== feedbackId) return { state: 'missing' };
+    const commentExpiresAt = typeof feedback.comment_expires_at === 'string'
+      && Number.isFinite(Date.parse(feedback.comment_expires_at)) ? feedback.comment_expires_at : null;
+    const comment = commentExpiresAt && Date.parse(commentExpiresAt) > Date.now()
+      && typeof feedback.comment_redacted === 'string' && feedback.comment_redacted.trim().length > 0
+      ? feedback.comment_redacted.slice(0, 1000) : null;
+    const metadata = {
+      feedback_id: feedbackId,
+      rating: feedback.rating as FeedbackRating,
+      recorded_at: feedback.updated_at,
+      comment,
+      comment_expires_at: comment ? commentExpiresAt : null,
+    };
+
+    if (!interaction) return { state: 'found', data: {
+      feedback: metadata, conversation_state: 'unavailable', conversation: [], technical_context: null,
+      content_expires_at: null, truncated: false, omitted_context_count: 0,
+    } };
+
+    const contentExpiresAt = typeof interaction.content_expires_at === 'string'
+      && Number.isFinite(Date.parse(interaction.content_expires_at)) ? interaction.content_expires_at : null;
+    const providerCallsPromise = service.from('chat_provider_calls')
+      .select('sequence,provider,requested_model,resolved_model,status,latency_ms')
+      .eq('interaction_id', feedbackId).order('sequence', { ascending: true }).limit(10);
+    const interactionAvailable = interaction.status === 'success'
+      && typeof interaction.created_at === 'string' && Number.isFinite(Date.parse(interaction.created_at))
+      && typeof interaction.conversation_id === 'string' && contentExpiresAt !== null
+      && Date.parse(contentExpiresAt) > Date.now()
+      && typeof interaction.user_message_redacted === 'string'
+      && typeof interaction.assistant_message_redacted === 'string';
+    const technicalPromise = providerCallsPromise.then((result: { data: unknown; error: unknown }) => {
+      if (result.error || !Array.isArray(result.data)) return null;
+      return result.data.flatMap((call: unknown) => {
+        if (typeof call !== 'object' || call === null || Array.isArray(call)) return [];
+        const row = call as Record<string, unknown>;
+        const outcome = safeProviderOutcome(row.status);
+        const provider = safeProvider(row.provider);
+        if (!outcome || !provider) return [];
+        return [{ provider, requested_model: safeModelLabel(row.requested_model),
+          resolved_model: safeModelLabel(row.resolved_model), outcome, latency_ms: nonnegative(row.latency_ms) }];
+      });
+    }).catch(() => null);
+    let priorCount = 0;
+    let precedingNearestFirst: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+    if (interactionAvailable) {
+      const [countResult, priorResult] = await Promise.all([
+        service.rpc('monitoring_feedback_prior_message_count', { p_feedback_id: feedbackId }),
+        service.from('chat_interactions')
+          .select('interaction_id,created_at,user_message_redacted,assistant_message_redacted')
+          .eq('conversation_id', interaction.conversation_id)
+          .lt('created_at', interaction.created_at)
+          .gt('content_expires_at', new Date().toISOString())
+          .order('created_at', { ascending: false }).order('interaction_id', { ascending: false }).limit(6),
+      ]);
+      if (countResult.error || !Number.isSafeInteger(countResult.data) || countResult.data < 0
+        || priorResult.error || !Array.isArray(priorResult.data)) return { state: 'error' };
+      priorCount = countResult.data;
+      const chronological = [...priorResult.data].reverse().flatMap((row: Record<string, unknown>) => [
+        ...(typeof row.user_message_redacted === 'string' ? [{ role: 'user' as const, content: row.user_message_redacted }] : []),
+        ...(typeof row.assistant_message_redacted === 'string' ? [{ role: 'assistant' as const, content: row.assistant_message_redacted }] : []),
+      ]).slice(-6);
+      precedingNearestFirst = chronological.reverse();
+    }
+    const technicalCalls = await technicalPromise;
+    const technical: FeedbackTechnicalContext = {
+      provider: safeProvider(interaction.provider),
+      requested_model: safeModelLabel(interaction.requested_model),
+      resolved_model: safeModelLabel(interaction.resolved_model),
+      prompt_version: safePromptVersion(interaction.prompt_version),
+      outcome: safeInteractionOutcome(interaction.status),
+      tool_summary: typeof interaction.tool_name === 'string' && /^[a-z0-9_]{1,64}$/i.test(interaction.tool_name)
+        && typeof interaction.tool_called === 'boolean'
+        ? { name: interaction.tool_name, called: interaction.tool_called,
+          succeeded: typeof interaction.tool_success === 'boolean' ? interaction.tool_success : null,
+          result_count: countValue(interaction.tool_result_count) ? interaction.tool_result_count : null } : null,
+      provider_calls: technicalCalls,
+      total_latency_ms: nonnegative(interaction.total_latency_ms),
+    };
+    if (!interactionAvailable) return { state: 'found', data: {
+      feedback: metadata, conversation_state: 'unavailable', conversation: [], technical_context: technical,
+      content_expires_at: contentExpiresAt, truncated: false, omitted_context_count: 0,
+    } };
+
+    const bounded = boundFeedbackConversation({
+      user: interaction.user_message_redacted as string,
+      assistant: interaction.assistant_message_redacted as string,
+    }, precedingNearestFirst, priorCount);
+    return { state: 'found', data: {
+      feedback: metadata, conversation_state: 'available', ...bounded,
+      technical_context: technical, content_expires_at: contentExpiresAt,
+    } };
+  } catch { return { state: 'error' }; }
+}
 function safeCode(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   if (SAFE_ERROR_CODES.has(value) || /^provider_http_[1-5][0-9]{2}$/.test(value)) return value;
@@ -32,6 +188,9 @@ function safeCode(value: unknown): string | null {
 }
 function nonnegative(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+function countValue(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 function countBy(rows: Record<string, unknown>[], field: string): Record<string, number> {
   const counts: Record<string, number> = {};
@@ -121,7 +280,50 @@ Deno.serve(async (request) => {
       }
     }
     const action = input.action === undefined ? 'summary' : input.action;
-    if (!['summary', 'read_summary', 'health_check', 'badge', 'detail', 'acknowledge', 'resolve'].includes(String(action))) return json({ error: 'Invalid monitoring action' }, 400);
+    const feedbackExportActions = ['export_markdown', 'export_text', 'export_json'] as const;
+    if (!['summary', 'read_summary', 'health_check', 'badge', 'detail', 'acknowledge', 'resolve',
+      'get_feedback_conversation', 'audit_feedback_copy', ...feedbackExportActions].includes(String(action))) {
+      return json({ error: 'Invalid monitoring action' }, 400);
+    }
+
+    if (action === 'get_feedback_conversation' || feedbackExportActions.includes(action as typeof feedbackExportActions[number])) {
+      if (typeof input.feedback_id !== 'string' || !UUID.test(input.feedback_id)
+        || Object.keys(input).length !== 2 || !Object.keys(input).every((key) => ['action', 'feedback_id'].includes(key))) {
+        return json({ error: 'Invalid feedback ID' }, 400);
+      }
+      const loaded = await loadFeedbackConversation(service, input.feedback_id);
+      if (loaded.state === 'missing') return json({ error: 'Feedback context unavailable' }, 404);
+      if (loaded.state === 'error') return json({ error: 'Feedback context unavailable' }, 503);
+      const auditAction = action === 'get_feedback_conversation' ? 'view_transcript' : String(action);
+      if (!await writeFeedbackAudit(service, authData.user.id, input.feedback_id, auditAction)) {
+        return json({ error: 'Feedback audit unavailable' }, 503);
+      }
+      if (action === 'get_feedback_conversation') {
+        return json({ dashboard_v2: { feedback_conversation: loaded.data } });
+      }
+      const format = action === 'export_markdown' ? 'markdown' : action === 'export_text' ? 'text' : 'json';
+      const content = format === 'markdown' ? serializeFeedbackMarkdown(loaded.data)
+        : format === 'text' ? serializeFeedbackText(loaded.data) : serializeFeedbackJson(loaded.data);
+      const extension = format === 'markdown' ? 'md' : format === 'text' ? 'txt' : 'json';
+      const contentType = format === 'markdown' ? 'text/markdown; charset=utf-8'
+        : format === 'text' ? 'text/plain; charset=utf-8' : 'application/octet-stream';
+      return attachment(content, exportFilename(input.feedback_id, loaded.data.feedback.recorded_at, extension), contentType);
+    }
+
+    if (action === 'audit_feedback_copy') {
+      if (typeof input.feedback_id !== 'string' || !UUID.test(input.feedback_id)
+        || Object.keys(input).length !== 2 || !Object.keys(input).every((key) => ['action', 'feedback_id'].includes(key))) {
+        return json({ error: 'Invalid feedback ID' }, 400);
+      }
+      const { data, error } = await service.from('chat_feedback').select('interaction_id')
+        .eq('interaction_id', input.feedback_id).maybeSingle();
+      if (error) return json({ error: 'Feedback audit unavailable' }, 503);
+      if (!data) return json({ error: 'Feedback context unavailable' }, 404);
+      if (!await writeFeedbackAudit(service, authData.user.id, input.feedback_id, 'copy_for_analysis')) {
+        return json({ error: 'Feedback audit unavailable' }, 503);
+      }
+      return json({ dashboard_v2: { feedback_copy_audited: true } });
+    }
 
     if (action === 'badge') {
       if (Object.keys(input).some((key) => key !== 'action')) return json({ error: 'Invalid monitoring request' }, 400);
@@ -203,10 +405,11 @@ Deno.serve(async (request) => {
           : feedback.data.slice(0, 20).flatMap((row: unknown) => {
             if (typeof row !== 'object' || row === null || Array.isArray(row)) return [];
             const item = row as Record<string, unknown>;
-            if (!['positive', 'negative'].includes(String(item.rating))
+            if (typeof item.feedback_id !== 'string' || !UUID.test(item.feedback_id)
+                || !['positive', 'negative'].includes(String(item.rating))
                 || typeof item.recorded_at !== 'string' || !Number.isFinite(Date.parse(item.recorded_at))
-                || typeof item.comment !== 'string' || item.comment.length > 1000) return [];
-            return [{ rating: item.rating, recorded_at: item.recorded_at, comment: item.comment }];
+                || !(item.comment === null || (typeof item.comment === 'string' && item.comment.length <= 1000))) return [];
+            return [{ feedback_id: item.feedback_id, rating: item.rating, recorded_at: item.recorded_at, comment: item.comment }];
           }),
       };
     };

@@ -1,3 +1,5 @@
+import type { FeedbackConversation, FeedbackRating } from '../../../BackEnd/supabase/functions/_shared/feedbackConversation.ts';
+
 export type MonitoringRange = '1h' | '24h' | '7d' | '30d';
 export type Percentile = { state: 'available' | 'insufficient_samples'; value_ms: number | null };
 export type DurationStats = { sample_count: number; p50: Percentile; p95: Percentile; p99: Percentile };
@@ -16,7 +18,7 @@ export type MonitoringDetail = MonitoringRequest & {
   authentication_ms: number | null; database_lookup_ms: number | null;
   request_construction_ms: number | null; render_fetch_ms: number | null;
 };
-export type MonitoringFeedback = { rating: 'positive' | 'negative'; recorded_at: string; comment: string };
+export type MonitoringFeedback = { feedback_id: string; rating: FeedbackRating; recorded_at: string; comment: string | null };
 export type MonitoringBucket = {
   bucket_start: string; label: string | null; request_count: number; success_count: number;
   failure_count: number; chatbot_request_count: number; chatbot_success_count: number;
@@ -95,6 +97,54 @@ export function parseMonitoringDetail(value: unknown, requestedId: string): Moni
   } as MonitoringDetail;
 }
 
+export function parseFeedbackConversation(value: unknown, requestedId: string): FeedbackConversation | null {
+  if (!object(value) || !object(value.dashboard_v2) || !object(value.dashboard_v2.feedback_conversation)) return null;
+  const item = value.dashboard_v2.feedback_conversation;
+  if (!object(item.feedback) || item.feedback.feedback_id !== requestedId
+    || typeof item.feedback.feedback_id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item.feedback.feedback_id)
+    || !['positive', 'negative'].includes(String(item.feedback.rating)) || !date(item.feedback.recorded_at)
+    || !(item.feedback.comment === null || (typeof item.feedback.comment === 'string' && item.feedback.comment.length <= 1000))
+    || !nullableDate(item.feedback.comment_expires_at)
+    || !['available', 'unavailable'].includes(String(item.conversation_state))
+    || !Array.isArray(item.conversation) || item.conversation.length > 8
+    || typeof item.truncated !== 'boolean' || !count(item.omitted_context_count)
+    || !nullableDate(item.content_expires_at)) return null;
+  const conversation = item.conversation;
+  if (!conversation.every((message: unknown) => object(message)
+    && ['user', 'assistant'].includes(String(message.role)) && typeof message.content === 'string'
+    && typeof message.rated === 'boolean' && typeof message.truncated === 'boolean'
+    && !(message.rated && message.role !== 'assistant'))
+    || conversation.reduce((sum: number, message: Record<string, unknown>) => sum + Array.from(message.content as string).length, 0) > 20_000) return null;
+  if (item.conversation_state === 'available'
+    && (conversation.filter((message: Record<string, unknown>) => message.rated).length !== 1
+      || conversation.filter((message: Record<string, unknown>) => message.rated && message.role === 'assistant').length !== 1
+      || !conversation.some((message: Record<string, unknown>) => message.role === 'user'))) return null;
+  if (item.conversation_state === 'unavailable' && conversation.length !== 0) return null;
+  if (item.technical_context !== null && !object(item.technical_context)) return null;
+  const tech = item.technical_context as Record<string, unknown> | null;
+  if (tech && (['provider', 'requested_model', 'resolved_model', 'prompt_version', 'outcome'].some((key) => !nullableText(tech[key]))
+    || !duration(tech.total_latency_ms) || !(tech.provider_calls === null || Array.isArray(tech.provider_calls))
+    || !(tech.tool_summary === null || object(tech.tool_summary)))) return null;
+  return {
+    feedback: {
+      feedback_id: item.feedback.feedback_id as string,
+      rating: item.feedback.rating as FeedbackRating,
+      recorded_at: item.feedback.recorded_at as string,
+      comment: item.feedback.comment as string | null,
+      comment_expires_at: item.feedback.comment_expires_at as string | null,
+    },
+    conversation_state: item.conversation_state as FeedbackConversation['conversation_state'],
+    conversation: conversation.map((message: Record<string, unknown>) => ({
+      role: message.role as 'user' | 'assistant', content: message.content as string,
+      rated: message.rated as boolean, truncated: message.truncated as boolean,
+    })),
+    technical_context: tech as FeedbackConversation['technical_context'],
+    content_expires_at: item.content_expires_at as string | null,
+    truncated: item.truncated,
+    omitted_context_count: item.omitted_context_count,
+  };
+}
+
 export function parseDashboard(value: unknown): MonitoringDashboard | 'upgrade_required' | null {
   if (!object(value) || !object(value.dashboard_v2)) return 'upgrade_required';
   const data = value.dashboard_v2;
@@ -140,13 +190,14 @@ export function parseDashboard(value: unknown): MonitoringDashboard | 'upgrade_r
   const feedback = data.recent_feedback;
   if (feedback !== undefined && feedback !== null && (!Array.isArray(feedback) || feedback.length > 20
     || !feedback.every((item) => object(item)
+      && typeof item.feedback_id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item.feedback_id)
       && ['positive', 'negative'].includes(String(item.rating))
-      && date(item.recorded_at) && typeof item.comment === 'string' && item.comment.length <= 1000))) return null;
+      && date(item.recorded_at) && (item.comment === null || (typeof item.comment === 'string' && item.comment.length <= 1000))))) return null;
   return {
     ...data,
-    recent_feedback: Array.isArray(feedback) ? feedback.filter((item) => (item.comment as string).trim().length > 0).map((item) => ({
-      rating: item.rating as MonitoringFeedback['rating'], recorded_at: item.recorded_at as string,
-      comment: item.comment as string,
+    recent_feedback: Array.isArray(feedback) ? feedback.map((item) => ({
+      feedback_id: item.feedback_id as string, rating: item.rating as MonitoringFeedback['rating'],
+      recorded_at: item.recorded_at as string, comment: item.comment as string | null,
     })) : null,
   } as MonitoringDashboard;
 }

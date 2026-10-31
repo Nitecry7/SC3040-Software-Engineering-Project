@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Activity, AlertTriangle, BarChart3, Bot, CheckCircle2, ChevronRight, Clock3, Cpu, Database, Gauge, Globe2, Info, LayoutDashboard, MessageCircle, MessageSquare, Monitor, Radar, RefreshCw, Search, ShieldAlert, ShieldCheck, ThumbsDown, ThumbsUp, Timer, TrendingUp, Wrench, X, type LucideIcon } from 'lucide-react';
+import { Activity, AlertTriangle, BarChart3, Bot, CheckCircle2, ChevronRight, ClipboardCopy, Clock3, Cpu, Database, Download, FileText, Gauge, Globe2, Info, LayoutDashboard, MessageCircle, MessageSquare, Monitor, Radar, RefreshCw, Search, ShieldAlert, ShieldCheck, ThumbsDown, ThumbsUp, Timer, TrendingUp, Wrench, X, type LucideIcon } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { supabase } from '../lib/supabase';
+import { serializeFeedbackCopyForAnalysis, type FeedbackConversation } from '../../../BackEnd/supabase/functions/_shared/feedbackConversation';
 import {
-  formatCount, formatDuration, formatSgt, formatSgtWithZone, isUnsupportedMonitoringAction, monitoringBucketLabel, monitoringDisplayLabel, parseHealthCheckResult,
+  formatCount, formatDuration, formatSgt, formatSgtWithZone, isUnsupportedMonitoringAction, monitoringBucketLabel, monitoringDisplayLabel, parseFeedbackConversation, parseHealthCheckResult,
   parseDashboard, parseMonitoringDetail, percentileMinimums,
   type DurationStats, type MonitoringAlert, type MonitoringDashboard, type MonitoringDetail, type MonitoringFeedback,
   type MonitoringRange,
@@ -280,13 +281,40 @@ function OutcomeBar({ label, success, total, tone = 'blue' }: { label: string; s
   const color = tone === 'teal' ? 'bg-teal-700' : 'bg-blue-700';
   return <div className="mt-3"><div className="flex flex-wrap items-baseline justify-between gap-2 text-sm"><strong className="text-slate-800">{label}</strong><span className="text-slate-600"><strong className="tabular-nums text-slate-900">{success}</strong> of {total} succeeded{total > 0 && ` · ${ratio.toFixed(1)}%`}</span></div><div className="mt-2 flex h-2 overflow-hidden rounded-full bg-slate-100" role="img" aria-label={`${label}: ${success} of ${total} succeeded`}><span className={color} style={{ width: `${ratio}%` }} /><span className="bg-rose-600" style={{ width: `${100 - ratio}%` }} /></div></div>;
 }
-function FeedbackList({ items, selected, onSelect }: { items: MonitoringFeedback[] | null; selected: number | null; onSelect: (index: number) => void }) {
-  if (items === null) return <div className="flex items-center gap-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4"><IconTile icon={MessageSquare} tone="teal" /><div><p className="font-semibold text-slate-800">Feedback Details Unavailable</p><p className="mt-0.5 text-sm text-slate-600">This monitoring backend does not include written feedback details. Ratings remain available above.</p></div></div>;
-  if (!items.length) return <div className="flex min-h-36 flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 text-center"><IconTile icon={MessageSquare} tone="teal" /><p className="mt-3 font-semibold text-slate-800">Only Ratings Are Recorded Here</p><p className="mt-1 text-sm text-slate-600">No unexpired written comments are available in this range.</p></div>;
-  return <ul className="divide-y divide-slate-100">{items.map((item, index) => <li key={`${item.recorded_at}-${index}`}><button type="button" aria-pressed={selected === index} onClick={() => onSelect(index)} className={`flex min-h-14 w-full items-center gap-3 rounded-lg px-2 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${selected === index ? 'bg-blue-50' : 'hover:bg-slate-50'}`}><IconTile icon={item.rating === 'positive' ? ThumbsUp : ThumbsDown} tone={item.rating === 'positive' ? 'green' : 'slate'} /><span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-slate-800">{monitoringDisplayLabel(item.rating)}</span><span className="block truncate text-xs text-slate-600">{item.comment}</span></span><time className="shrink-0 text-xs text-slate-500">{formatSgt(item.recorded_at)}</time></button></li>)}</ul>;
+function FeedbackList({ items, selected, onSelect }: { items: MonitoringFeedback[] | null; selected: string | null; onSelect: (item: MonitoringFeedback, target: HTMLButtonElement) => void }) {
+  if (items === null) return <div className="flex items-center gap-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 p-4"><IconTile icon={MessageSquare} tone="teal" /><div><p className="font-semibold text-slate-800">Feedback Details Unavailable</p><p className="mt-0.5 text-sm text-slate-600">The monitoring backend could not provide the recent feedback list. Ratings remain available above.</p></div></div>;
+  if (!items.length) return <div className="flex min-h-36 flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 text-center"><IconTile icon={MessageSquare} tone="teal" /><p className="mt-3 font-semibold text-slate-800">No Feedback In This Range</p><p className="mt-1 text-sm text-slate-600">Recorded ratings appear here when available.</p></div>;
+  return <ul className="divide-y divide-slate-100">{items.map((item) => <li key={item.feedback_id}><button type="button" aria-pressed={selected === item.feedback_id} onClick={(event) => onSelect(item, event.currentTarget)} className={`flex min-h-16 w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 ${selected === item.feedback_id ? 'bg-blue-50' : 'hover:bg-slate-50'}`}><IconTile icon={item.rating === 'positive' ? ThumbsUp : ThumbsDown} tone={item.rating === 'positive' ? 'green' : 'slate'} /><span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-slate-800">{monitoringDisplayLabel(item.rating)}</span><span className="block truncate text-xs text-slate-600">{item.comment?.trim() || 'No Written Comment'}</span></span><time className="shrink-0 text-xs text-slate-500">{formatSgt(item.recorded_at)}</time><ChevronRight className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" /></button></li>)}</ul>;
 }
-function FeedbackDetails({ item, onClose }: { item: MonitoringFeedback; onClose: () => void }) {
-  return <aside className="h-fit rounded-xl border border-gray-200 bg-white p-4" aria-label="Feedback details" aria-live="polite"><div className="flex items-start justify-between gap-3"><div><h3 className="text-base font-semibold text-slate-900">Feedback Details</h3><p className="mt-1 text-xs text-slate-500">Written comment only. Conversation contents are not shown.</p></div><button type="button" aria-label="Close feedback details" onClick={onClose} className={button}><X className="h-4 w-4" aria-hidden="true" /></button></div><dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><MetricDatum label="Rating" value={monitoringDisplayLabel(item.rating)} /><MetricDatum label="Recorded" value={formatSgtWithZone(item.recorded_at)} /></dl><div className="mt-4"><h4 className="text-xs font-semibold text-slate-500">Feedback Text</h4><p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-3 text-sm leading-6 text-slate-700">{item.comment}</p></div></aside>;
+function FeedbackDetails({ item, context, loading, error, actionPending, actionMessage, onClose, onExport, onCopy, panelRef }: {
+  item: MonitoringFeedback; context: FeedbackConversation | null; loading: boolean; error: 'upgrade' | 'read' | null;
+  actionPending: string | null; actionMessage: string | null; onClose: () => void;
+  onExport: (format: 'export_markdown' | 'export_text' | 'export_json') => void; onCopy: () => void;
+  panelRef: React.RefObject<HTMLElement>;
+}) {
+  const feedback = context?.feedback;
+  const technical = context?.technical_context;
+  const displayedComment = context
+    ? feedback?.comment ?? 'No Written Comment'
+    : item.comment ?? 'No Written Comment';
+  return <aside ref={panelRef} tabIndex={-1} aria-labelledby="feedback-detail-title" className="max-h-[calc(100vh-7rem)] min-w-0 overflow-y-auto rounded-xl border border-gray-200 bg-white p-4 outline-none focus-visible:ring-2 focus-visible:ring-blue-600 xl:sticky xl:top-4 sm:p-5">
+    <div className="flex items-start justify-between gap-3"><div><h3 id="feedback-detail-title" className="text-lg font-semibold text-slate-900">Feedback Details</h3><p className="mt-1 text-xs leading-5 text-slate-600">Stored redacted text may still contain details the redactor does not detect.</p></div><button type="button" aria-label="Close feedback details" onClick={onClose} className={button}><X className="h-4 w-4" aria-hidden="true" /></button></div>
+    <dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><MetricDatum label="Rating" value={monitoringDisplayLabel(feedback?.rating ?? item.rating)} /><MetricDatum label="Recorded" value={formatSgtWithZone(feedback?.recorded_at ?? item.recorded_at)} /></dl>
+    <div className="mt-4"><h4 className="text-xs font-semibold text-slate-500">Feedback Comment</h4><p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-3 text-sm leading-6 text-slate-700">{displayedComment}</p>{feedback?.comment_expires_at && <p className="mt-2 text-xs text-slate-500">Comment retained until {formatSgtWithZone(feedback.comment_expires_at)}.</p>}</div>
+    <section className="mt-5 border-t border-slate-100 pt-4" aria-labelledby="feedback-conversation-title"><h4 id="feedback-conversation-title" className="text-sm font-semibold text-slate-900">Conversation Context</h4>
+      {loading && <p role="status" className="mt-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">Loading stored conversation context…</p>}
+      {error === 'upgrade' && <div role="status" className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3"><p className="font-medium text-slate-800">Monitoring Backend Upgrade Required</p><p className="mt-1 text-sm text-slate-600">Deploy the current admin-monitoring function to inspect feedback conversations.</p></div>}
+      {error === 'read' && <p role="alert" className="mt-3 rounded-lg bg-slate-50 p-3 text-sm text-slate-600">Conversation context could not be retrieved. Feedback details remain available; try opening this item again.</p>}
+      {!loading && !error && context?.conversation_state === 'unavailable' && <div className="mt-3 rounded-lg bg-slate-50 p-3"><p className="font-medium text-slate-800">Conversation Context Unavailable</p><p className="mt-1 text-sm leading-5 text-slate-600">Stored conversation text is retained for up to 30 days after the interaction. Ratings remain available after transcript expiry.</p>{context.content_expires_at && <p className="mt-2 text-xs text-slate-500">Stored content expiry date: {formatSgtWithZone(context.content_expires_at)}. The transcript is not available for this feedback item.</p>}</div>}
+      {!loading && !error && context?.conversation_state === 'available' && <>
+        <p className="mt-1 text-xs leading-5 text-slate-500">Stored redacted text · up to six preceding messages · {context.content_expires_at ? `available until ${formatSgtWithZone(context.content_expires_at)}` : 'retention date unavailable'}.</p>
+        {context.conversation.map((message, index) => <article key={`${message.role}-${index}`} aria-label={message.rated ? 'Rated assistant response' : message.role === 'user' ? 'User message' : 'Assistant response'} className={`mt-3 rounded-lg p-3 ${message.rated ? 'border border-blue-200 bg-blue-50' : 'bg-slate-50'}`}><div className="flex flex-wrap items-center justify-between gap-2"><h5 className="text-xs font-semibold text-slate-700">{message.role === 'user' ? 'User' : message.rated ? 'Assistant Response · Rated' : 'Assistant'}</h5>{message.truncated && <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-700">Truncated</span>}</div><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{message.content}</p></article>)}
+        {(context.truncated || context.omitted_context_count > 0) && <p className="mt-3 text-xs text-slate-600">Some context was omitted to fit the display limits. {context.omitted_context_count} earlier messages omitted.</p>}
+      </>}
+    </section>
+    {technical && <details className="mt-5 border-t border-slate-100 pt-4"><summary className="cursor-pointer rounded-sm text-sm font-semibold text-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600">Technical Context</summary><dl className="mt-3 grid grid-cols-2 gap-3 text-xs">{([['Provider', technical.provider], ['Requested Model', technical.requested_model], ['Resolved Model', technical.resolved_model], ['Prompt Version', technical.prompt_version], ['Outcome', technical.outcome], ['Total Latency', technical.total_latency_ms === null ? null : `${technical.total_latency_ms} ms`]] as const).filter(([, value]) => value !== null).map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-slate-500">{label}</dt><dd className="break-words text-slate-800">{value}</dd></div>)}</dl>{technical.tool_summary && <p className="mt-3 break-words text-xs text-slate-600">Tool: {technical.tool_summary.name} · {technical.tool_summary.called ? 'called' : 'not called'}{technical.tool_summary.succeeded === null ? '' : technical.tool_summary.succeeded ? ' · succeeded' : ' · failed'}</p>}{technical.provider_calls?.length ? <ul className="mt-3 space-y-2 text-xs text-slate-600">{technical.provider_calls.map((call, index) => <li key={`${call.provider}-${index}`}>{call.provider} · {call.outcome}{call.resolved_model ? ` · ${call.resolved_model}` : ''}{call.latency_ms === null ? '' : ` · ${call.latency_ms} ms`}</li>)}</ul> : null}</details>}
+    {context && <section className="mt-5 border-t border-slate-100 pt-4"><h4 className="text-sm font-semibold text-slate-900">Exports</h4><p className="mt-1 text-xs leading-5 text-slate-600">Conversation exports may contain user-provided information. Handle them according to project data-handling requirements.</p><div className="mt-3 grid grid-cols-2 gap-2"><button type="button" disabled={actionPending !== null} onClick={() => onExport('export_markdown')} className={button}><Download className="mr-1 inline h-4 w-4" aria-hidden="true" />Markdown</button><button type="button" disabled={actionPending !== null} onClick={() => onExport('export_text')} className={button}><FileText className="mr-1 inline h-4 w-4" aria-hidden="true" />Text</button><button type="button" disabled={actionPending !== null} onClick={() => onExport('export_json')} className={button}><Download className="mr-1 inline h-4 w-4" aria-hidden="true" />JSON</button><button type="button" disabled={actionPending !== null} onClick={onCopy} className={button}><ClipboardCopy className="mr-1 inline h-4 w-4" aria-hidden="true" />Copy for Analysis</button></div>{actionPending && <p role="status" className="mt-2 text-xs text-slate-600">Preparing {actionPending.replace('export_', '')} export…</p>}{actionMessage && <p role="status" aria-live="polite" className="mt-2 text-xs text-slate-600">{actionMessage}</p>}</section>}
+  </aside>;
 }
 function OperationalRequestDetails({ detail, onClose, panelRef }: { detail: MonitoringDetail; onClose: () => void; panelRef: React.RefObject<HTMLElement> }) {
   return <aside ref={panelRef} tabIndex={-1} aria-labelledby="operational-detail-title" className="h-fit min-w-0 rounded-xl border border-slate-200 bg-white p-4 outline-none focus-visible:ring-2 focus-visible:ring-blue-600 sm:p-5">
@@ -332,13 +360,33 @@ export default function AdminMonitoringV2({
   const [notice, setNotice] = useState<string | null>(null);
   const [upgrade, setUpgrade] = useState(false);
   const [detail, setDetail] = useState<MonitoringDetail | null>(null);
-  const [feedbackDetail, setFeedbackDetail] = useState<number | null>(null);
+  const [feedbackDetail, setFeedbackDetail] = useState<string | null>(null);
+  const [feedbackContext, setFeedbackContext] = useState<FeedbackConversation | null>(null);
+  const [feedbackLoading, setFeedbackLoading] = useState(false);
+  const [feedbackError, setFeedbackError] = useState<'upgrade' | 'read' | null>(null);
+  const [feedbackActionPending, setFeedbackActionPending] = useState<string | null>(null);
+  const [feedbackActionMessage, setFeedbackActionMessage] = useState<string | null>(null);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [requestId, setRequestId] = useState('');
   const [alertPending, setAlertPending] = useState(false);
   const sequence = useRef(0);
+  const feedbackRequestSequence = useRef(0);
   const detailPanelRef = useRef<HTMLElement>(null);
+  const feedbackPanelRef = useRef<HTMLElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
+  const feedbackReturnFocus = useRef<HTMLButtonElement | null>(null);
+
+  const clearFeedbackDetails = useCallback((restoreFocus = false) => {
+    feedbackRequestSequence.current += 1;
+    setFeedbackDetail(null);
+    setFeedbackContext(null);
+    setFeedbackLoading(false);
+    setFeedbackError(null);
+    setFeedbackActionPending(null);
+    setFeedbackActionMessage(null);
+    if (restoreFocus) feedbackReturnFocus.current?.focus();
+    feedbackReturnFocus.current = null;
+  }, []);
 
   const read = useCallback(async (requested: MonitoringRange) => {
     const id = ++sequence.current;
@@ -351,32 +399,37 @@ export default function AdminMonitoringV2({
       if (error) throw error;
       const parsed = parseDashboard(response);
       if (id !== sequence.current || requested !== rangeRef.current) return;
-      if (parsed === 'upgrade_required') { setUpgrade(true); setData(null); return; }
+      if (parsed === 'upgrade_required') { setUpgrade(true); setData(null); clearFeedbackDetails(); return; }
       if (!parsed || parsed.range.range !== requested) throw new Error('Invalid monitoring dashboard response');
       setUpgrade(false);
-      setFeedbackDetail(null);
+      clearFeedbackDetails();
       setData(parsed);
     } catch (error) {
       if (id === sequence.current && requested === rangeRef.current) {
-        if (isUnsupportedMonitoringAction(error)) { setUpgrade(true); setData(null); }
+        if (isUnsupportedMonitoringAction(error)) { setUpgrade(true); setData(null); clearFeedbackDetails(); }
         else setNotice('Couldn’t refresh monitoring data. This is a dashboard read error, not a service outage.');
       }
     } finally {
       if (id === sequence.current) { setUpdating(false); setInitialLoading(false); }
     }
-  }, []);
+  }, [clearFeedbackDetails]);
   useEffect(() => {
     void read(range);
     return () => { sequence.current += 1; };
   }, [read, range]);
+  useEffect(() => () => { feedbackRequestSequence.current += 1; }, []);
   useEffect(() => {
     if (!detail) return;
     detailPanelRef.current?.focus();
   }, [detail]);
+  useEffect(() => {
+    if (!feedbackDetail) return;
+    feedbackPanelRef.current?.focus();
+  }, [feedbackDetail]);
   const changeRange = (next: MonitoringRange) => {
     if (next === rangeRef.current) return;
     rangeRef.current = next;
-    setFeedbackDetail(null);
+    clearFeedbackDetails();
     onRangeChange(next);
   };
   const runHealth = async () => {
@@ -402,7 +455,7 @@ export default function AdminMonitoringV2({
         setNotice('Health check could not provide a recorded Render/model readiness observation. Previous dashboard data remains visible.');
         return;
       }
-      setFeedbackDetail(null);
+      clearFeedbackDetails();
       setData(parsed);
     } catch {
       if (id === sequence.current && requested === rangeRef.current)
@@ -412,6 +465,87 @@ export default function AdminMonitoringV2({
       setHealthPending(false);
       if (id === sequence.current) setInitialLoading(false);
     }
+  };
+  const openFeedbackDetails = async (item: MonitoringFeedback, target: HTMLButtonElement) => {
+    const requestId = ++feedbackRequestSequence.current;
+    feedbackReturnFocus.current = target;
+    setFeedbackDetail(item.feedback_id);
+    setFeedbackContext(null);
+    setFeedbackError(null);
+    setFeedbackActionMessage(null);
+    setFeedbackLoading(true);
+    try {
+      const { data: response, error } = await supabase.functions.invoke('admin-monitoring', {
+        body: { action: 'get_feedback_conversation', feedback_id: item.feedback_id },
+      });
+      if (requestId !== feedbackRequestSequence.current) return;
+      if (error) {
+        setFeedbackError(isUnsupportedMonitoringAction(error) ? 'upgrade' : 'read');
+        return;
+      }
+      const parsed = parseFeedbackConversation(response, item.feedback_id);
+      if (!parsed) { setFeedbackError('read'); return; }
+      setFeedbackContext(parsed);
+    } catch {
+      if (requestId === feedbackRequestSequence.current) setFeedbackError('read');
+    } finally {
+      if (requestId === feedbackRequestSequence.current) setFeedbackLoading(false);
+    }
+  };
+  const closeFeedbackDetails = () => clearFeedbackDetails(true);
+  const exportFeedback = async (action: 'export_markdown' | 'export_text' | 'export_json') => {
+    const feedbackId = feedbackDetail;
+    if (!feedbackId || feedbackActionPending) return;
+    const requestId = feedbackRequestSequence.current;
+    setFeedbackActionPending(action);
+    setFeedbackActionMessage(null);
+    try {
+      const { data: response, error, response: httpResponse } = await supabase.functions.invoke('admin-monitoring', {
+        body: { action, feedback_id: feedbackId },
+      });
+      if (requestId !== feedbackRequestSequence.current) return;
+      if (error) {
+        if (isUnsupportedMonitoringAction(error)) setFeedbackError('upgrade');
+        setFeedbackActionMessage('Export could not be prepared. No file was downloaded.');
+        return;
+      }
+      const body = typeof response === 'string' ? response : null;
+      if (requestId !== feedbackRequestSequence.current) return;
+      if (body === null && !(response instanceof Blob)) { setFeedbackActionMessage('Export could not be prepared. No file was downloaded.'); return; }
+      const extension = action === 'export_markdown' ? 'md' : action === 'export_text' ? 'txt' : 'json';
+      const fallbackName = `sg-homie-feedback-${feedbackId}-${new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')}.${extension}`;
+      const disposition = httpResponse?.headers.get('content-disposition') ?? '';
+      const filename = disposition.match(/filename="(sg-homie-feedback-[a-f0-9-]+-[0-9TZ]+\.(?:md|txt|json))"/i)?.[1] ?? fallbackName;
+      const type = action === 'export_markdown' ? 'text/markdown;charset=utf-8' : action === 'export_text' ? 'text/plain;charset=utf-8' : 'application/json;charset=utf-8';
+      const fileBlob = response instanceof Blob ? response.slice(0, response.size, type) : new Blob([body ?? ''], { type });
+      const objectUrl = URL.createObjectURL(fileBlob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl; anchor.download = filename; anchor.click();
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+      setFeedbackActionMessage(`${extension.toUpperCase()} export downloaded. Access audit recorded.`);
+    } catch {
+      if (requestId === feedbackRequestSequence.current) setFeedbackActionMessage('Export could not be prepared. No file was downloaded.');
+    } finally { if (requestId === feedbackRequestSequence.current) setFeedbackActionPending(null); }
+  };
+  const copyFeedbackForAnalysis = () => {
+    const context = feedbackContext;
+    if (!context) return;
+    const clipboard = typeof navigator !== 'undefined' ? navigator.clipboard : undefined;
+    if (!clipboard?.writeText) { setFeedbackActionMessage('Clipboard access is unavailable. Use a server-generated export instead.'); return; }
+    const text = serializeFeedbackCopyForAnalysis(context);
+    const requestId = feedbackRequestSequence.current;
+    // Invoke clipboard synchronously from the click before best-effort auditing.
+    void clipboard.writeText(text).then(async () => {
+      if (requestId === feedbackRequestSequence.current) setFeedbackActionMessage('Copied for Analysis. Recording the access audit…');
+      try {
+        const { error } = await supabase.functions.invoke('admin-monitoring', {
+          body: { action: 'audit_feedback_copy', feedback_id: context.feedback.feedback_id },
+        });
+        if (requestId === feedbackRequestSequence.current) setFeedbackActionMessage(error
+          ? 'Copied for Analysis, but the access audit could not be recorded.'
+          : 'Copied for Analysis. Access audit recorded.');
+      } catch { if (requestId === feedbackRequestSequence.current) setFeedbackActionMessage('Copied for Analysis, but the access audit could not be recorded.'); }
+    }).catch(() => { if (requestId === feedbackRequestSequence.current) setFeedbackActionMessage('Clipboard access failed. No content was copied.'); });
   };
   const openDetail = async (id: string) => {
     if (!uuid.test(id)) { setDetailError('Enter a valid request UUID.'); return; }
@@ -436,6 +570,7 @@ export default function AdminMonitoringV2({
     void read(rangeRef.current);
   };
   const current = data;
+  const selectedFeedback = current?.recent_feedback?.find((item) => item.feedback_id === feedbackDetail) ?? null;
   const rangeCaption: Record<MonitoringRange, string> = {
     '1h': 'Rolling Last 1 Hour', '24h': 'Rolling Last 24 Hours',
     '7d': 'Rolling Last 7 Days', '30d': 'Rolling Last 30 Days',
@@ -551,10 +686,12 @@ export default function AdminMonitoringV2({
       </div>}
       {tab === 'feedback' && <div className="space-y-4">
         <div className="grid gap-3 md:grid-cols-3"><MetricTile icon={MessageSquare} tone="teal" label="Recorded Feedback" value={formatCount(current.chatbot.feedback_count)} note="Ratings recorded in this range" /><MetricTile icon={ThumbsUp} tone="green" label="Positive" value={current.chatbot.feedback_ratings.positive ?? 0} note="Recorded positive ratings" /><MetricTile icon={ThumbsDown} tone="slate" label="Negative" value={current.chatbot.feedback_ratings.negative ?? 0} note="Recorded negative ratings" /></div>
-        <div className={feedbackDetail !== null && current.recent_feedback?.[feedbackDetail] ? 'grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.42fr)]' : ''}>
+        <div className={selectedFeedback ? 'grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(26rem,32rem)]' : ''}>
           <div className="min-w-0 space-y-4"><Panel title="Rating Distribution" icon={Activity} tone="green"><RatingDistribution values={current.chatbot.feedback_ratings} /><p className="mt-3 text-xs text-slate-500">Recorded ratings only. No rate or trend comparison is shown without a matching denominator.</p></Panel>
-            <Panel title="Recent Written Feedback" icon={MessageSquare} tone="teal" note="Redacted comments · up to 30 days"><FeedbackList items={current.recent_feedback} selected={feedbackDetail} onSelect={setFeedbackDetail} /></Panel></div>
-          {feedbackDetail !== null && current.recent_feedback?.[feedbackDetail] && <FeedbackDetails item={current.recent_feedback[feedbackDetail]} onClose={() => setFeedbackDetail(null)} />}
+            <Panel title="Recent Feedback" icon={MessageSquare} tone="teal" note="Ratings and unexpired comments"><FeedbackList items={current.recent_feedback} selected={feedbackDetail} onSelect={(item, target) => void openFeedbackDetails(item, target)} /></Panel></div>
+          {selectedFeedback && <FeedbackDetails item={selectedFeedback} context={feedbackContext} loading={feedbackLoading} error={feedbackError}
+            actionPending={feedbackActionPending} actionMessage={feedbackActionMessage} onClose={closeFeedbackDetails}
+            onExport={(action) => void exportFeedback(action)} onCopy={copyFeedbackForAnalysis} panelRef={feedbackPanelRef} />}
         </div>
       </div>}
     </div>}

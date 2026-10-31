@@ -1,6 +1,9 @@
 import { readFile } from 'node:fs/promises';
 import { stripTypeScriptTypes } from 'node:module';
 import vm from 'node:vm';
+import {
+  boundFeedbackConversation, serializeFeedbackJson, serializeFeedbackMarkdown, serializeFeedbackText,
+} from '../../BackEnd/supabase/functions/_shared/feedbackConversation.ts';
 
 // Run the actual Deno handler in an isolated realm. Only external SDK imports,
 // secrets, network and logging are substituted; business logic is unchanged.
@@ -8,11 +11,13 @@ export async function loadEdgeFunction(name, { env = {}, createClient, fetch, SM
   const path = new URL(`../../BackEnd/supabase/functions/${name}/index.ts`, import.meta.url);
   const source = (await readFile(path, 'utf8'))
     .replace(/^import \{ createClient \} from 'npm:@supabase\/supabase-js@2\.114\.0';\r?\n/m, '')
+    .replace(/^import \{[\s\S]*?\} from '\.\.\/_shared\/feedbackConversation\.ts';\r?\n/m, '')
     .replace(/^import \{ SMTPClient \} from "npm:emailjs@4\.0\.3";\r?\n/m, '');
   let handler;
   const logs = [];
   const context = vm.createContext({
     createClient: createClient ?? (() => { throw new Error('Unexpected SDK call'); }),
+    boundFeedbackConversation, serializeFeedbackJson, serializeFeedbackMarkdown, serializeFeedbackText,
     SMTPClient: SMTPClient ?? class { constructor() { throw new Error('Unexpected SMTP call'); } },
     fetch: fetch ?? (() => { throw new Error('Unexpected network call'); }),
     Deno: { env: { get: key => env[key] }, serve: callback => { handler = callback; } },
