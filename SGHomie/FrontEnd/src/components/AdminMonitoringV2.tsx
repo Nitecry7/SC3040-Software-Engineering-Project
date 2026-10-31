@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { Activity, AlertTriangle, Bot, CheckCircle2, Clock3, Cpu, Database, Gauge, Globe2, Info, MessageCircle, MessageSquare, Monitor, Radar, RefreshCw, Search, ShieldAlert, ShieldCheck, ThumbsDown, ThumbsUp, Timer, TrendingUp, Wrench, X, type LucideIcon } from 'lucide-react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { Activity, AlertTriangle, BarChart3, Bot, CheckCircle2, ChevronRight, Clock3, Cpu, Database, Gauge, Globe2, Info, LayoutDashboard, MessageCircle, MessageSquare, Monitor, Radar, RefreshCw, Search, ShieldAlert, ShieldCheck, ThumbsDown, ThumbsUp, Timer, TrendingUp, Wrench, X, type LucideIcon } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { supabase } from '../lib/supabase';
 import {
@@ -24,10 +25,14 @@ const percentileCopy = {
   p95: ['P95 Slow Tail Latency', '95% of recorded requests completed within this time. Only the slowest 5% took longer.'],
   p99: ['P99 Extreme Tail Latency', '99% of recorded requests completed within this time. This highlights rare, unusually slow requests.'],
 } as const;
+const validSamplesHelp = {
+  title: 'Valid Samples',
+  text: 'The number of usable recorded measurements available for this timing. P50 requires at least 5 valid samples, P95 requires 20, and P99 requires 100.',
+};
 const metricIcons: Record<string, LucideIcon> = {
   valuation_total_edge: Timer, valuation_authentication: ShieldCheck, valuation_database_lookup: Database,
   valuation_request_construction: Wrench, valuation_render_fetch: Globe2, render_total: Cpu,
-  catboost_prediction: Cpu, conformal_interval: Gauge, chat_total_interaction: MessageCircle,
+  catboost_prediction: TrendingUp, conformal_interval: BarChart3, chat_total_interaction: MessageCircle,
   chat_provider: Bot, chat_tool: Wrench, chat_first_output: Activity,
 };
 function IconTile({ icon: Icon, tone = 'blue' }: { icon: LucideIcon; tone?: 'blue' | 'teal' | 'green' | 'amber' | 'slate' }) {
@@ -42,11 +47,41 @@ function IconTile({ icon: Icon, tone = 'blue' }: { icon: LucideIcon; tone?: 'blu
 }
 function HelpTip({ title, text, required }: { title: string; text: string; required?: string }) {
   const tooltipId = useId();
-  return <span className="group relative inline-flex align-middle">
-    <button type="button" aria-label={`Help: ${title}`} aria-describedby={tooltipId} className="rounded-full text-slate-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"><Info className="h-4 w-4" aria-hidden="true" /></button>
-    <span id={tooltipId} role="tooltip" className="pointer-events-none invisible absolute bottom-full left-1/2 z-50 mb-2 w-64 -translate-x-1/2 rounded-lg bg-slate-900 px-3 py-2 text-left text-xs font-normal leading-5 text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100">
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const tooltipRef = useRef<HTMLSpanElement>(null);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [position, setPosition] = useState({ top: 0, left: 8 });
+  const open = hovered || focused;
+  useLayoutEffect(() => {
+    if (!open) return undefined;
+    const update = () => {
+      const anchor = triggerRef.current?.getBoundingClientRect();
+      const tooltip = tooltipRef.current?.getBoundingClientRect();
+      if (!anchor || !tooltip) return;
+      const left = Math.max(8, Math.min(anchor.left + anchor.width / 2 - tooltip.width / 2, window.innerWidth - tooltip.width - 8));
+      const above = anchor.top - tooltip.height - 8;
+      const top = above >= 8 ? above : Math.min(anchor.bottom + 8, window.innerHeight - tooltip.height - 8);
+      setPosition({ top, left });
+    };
+    update();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  }, [open]);
+  const tooltip = <span ref={tooltipRef} id={tooltipId} role="tooltip" style={{ position: 'fixed', top: position.top, left: position.left, visibility: open ? 'visible' : 'hidden', opacity: open ? 1 : 0 }} className="pointer-events-none z-[1000] w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-left text-xs font-normal leading-5 text-white shadow-lg transition-opacity">
       <strong className="block text-white">{title}</strong>{text}{required && <span className="mt-1 block text-slate-300">Requires at least {required} valid observations.</span>}
-    </span>
+    </span>;
+  return <span className="inline-flex align-middle">
+    <button ref={triggerRef} type="button" aria-label={`Help: ${title}`} aria-describedby={tooltipId} aria-expanded={open}
+      onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+      onKeyDown={(event) => { if (event.key === 'Escape') { setHovered(false); setFocused(false); } }}
+      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"><Info className="h-4 w-4" aria-hidden="true" /></button>
+    {typeof document === 'undefined' ? null : createPortal(tooltip, document.body)}
   </span>;
 }
 function SampleValue({ stats, percentile }: { stats: DurationStats | { state: 'unavailable' } | undefined; percentile: 'p50' | 'p95' | 'p99' }) {
@@ -59,11 +94,11 @@ function SampleValue({ stats, percentile }: { stats: DurationStats | { state: 'u
     <span className="mt-1 block text-xs text-slate-500">{stats.sample_count} of {needed} valid</span></span>;
 }
 
-function Panel({ title, note, children, icon, tone = 'blue' }: { title: string; note?: string; children: React.ReactNode; icon?: LucideIcon; tone?: 'blue' | 'teal' | 'green' | 'amber' | 'slate' }) {
-  return <section className={card} aria-label={title}>
+function Panel({ title, note, children, icon, tone = 'blue', help, className = '' }: { title: string; note?: string; children: React.ReactNode; icon?: LucideIcon; tone?: 'blue' | 'teal' | 'green' | 'amber' | 'slate'; help?: { title: string; text: string }; className?: string }) {
+  return <section className={`${card} ${className}`} aria-label={title}>
     <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
-      <h3 className="flex items-center gap-3 text-base font-semibold text-gray-900">{icon && <IconTile icon={icon} tone={tone} />}{title}</h3>
-      {note && <p className="text-xs text-gray-600">{note}</p>}
+      <h3 className="flex items-center gap-3 text-base font-semibold text-gray-900">{icon && <IconTile icon={icon} tone={tone} />}{title}{help && <HelpTip {...help} />}</h3>
+      {note && <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">{note}</span>}
     </div>
     {children}
   </section>;
@@ -97,11 +132,11 @@ function LegendItems({ items }: { items: Array<{ name: string; color: string; da
 export function VolumeChart({ data }: { data: MonitoringDashboard }) {
   const points = data.valuation.series.map((bucket) => ({
     label: monitoringBucketLabel(bucket.label, bucket.bucket_start, data.range.range), valuation: bucket.request_count,
-    chatbot: bucket.chatbot_request_count, today: bucket.label === 'Today so far' || bucket.label === 'Today (Partial)',
+    chatbot: bucket.chatbot_request_count, today: bucket.label === 'Today so far' || bucket.label === 'Today (Partial)' || bucket.label === 'Today',
   }));
   return <Panel title="Recorded Request Volume" icon={Activity} note={`${data.range.range} · ${data.aggregation_timezone}`}>
     <p id="volume-summary" className="sr-only">Recorded valuation and chatbot events for each Singapore time bucket. A table follows the chart.</p>
-    <LegendItems items={[{ name: 'Valuation', color: '#2563eb' }, { name: 'Chatbot', color: '#0f766e' }, { name: 'Today (Partial)', color: '', dashed: true }]} />
+    <LegendItems items={[{ name: 'Valuation', color: '#2563eb' }, { name: 'Chatbot', color: '#0f766e' }, { name: 'Today', color: '', dashed: true }]} />
     {points.length === 0 ? <div className="mt-3 flex min-h-48 flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-center"><IconTile icon={TrendingUp} tone="blue" /><h4 className="mt-3 font-semibold text-slate-800">No Recorded Activity in This Range</h4><p className="mt-1 text-sm text-slate-600">Recorded request counts will appear here when events are available.</p></div> : <div role="img" aria-labelledby="volume-summary" className="mt-3 h-56 w-full">
       <ResponsiveContainer width="100%" height="100%">
         <BarChart data={points} margin={{ top: 8, right: 8, bottom: 0, left: -25 }}>
@@ -154,7 +189,7 @@ export function LatencyChart({ data }: { data: MonitoringDashboard }) {
     </div></>}
     <details className="mt-2 text-sm"><summary className="cursor-pointer text-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600">View data as table</summary>
       <div className="mt-2 overflow-x-auto"><table className="min-w-full text-left text-xs"><caption className="sr-only">Edge latency percentiles by Singapore time bucket</caption>
-        <thead><tr><th className="p-2">Bucket (SGT)</th><th className="p-2">Valid n</th><th className="p-2">P50</th><th className="p-2">P95</th><th className="p-2">P99</th></tr></thead>
+        <thead><tr><th className="p-2">Bucket (SGT)</th><th className="p-2">Valid Samples <HelpTip {...validSamplesHelp} /></th><th className="p-2">P50</th><th className="p-2">P95</th><th className="p-2">P99</th></tr></thead>
         <tbody>{points.map((point, index) => <tr key={index} className="border-t border-gray-100"><th className="p-2 font-normal">{point.label}</th><td className="p-2">{point.count}</td><td className="p-2">{point.p50 === null ? 'Insufficient Samples' : formatDuration(point.p50)}</td><td className="p-2">{point.p95 === null ? 'Insufficient Samples' : formatDuration(point.p95)}</td><td className="p-2">{point.p99 === null ? 'Insufficient Samples' : formatDuration(point.p99)}</td></tr>)}</tbody>
       </table></div>
     </details>
@@ -182,8 +217,8 @@ function Incidents({ data, onAction, pending }: { data: MonitoringDashboard; onA
 }
 
 function MetricTile({ icon, label, value, note, tone = 'blue', help }: { icon: LucideIcon; label: string; value: React.ReactNode; note: string; tone?: 'blue' | 'teal' | 'green' | 'amber' | 'slate'; help?: { title: string; text: string } }) {
-  return <section className="min-w-0 rounded-xl border border-gray-200 bg-white p-3" aria-label={label}>
-    <div className="flex items-start gap-3"><IconTile icon={icon} tone={tone} /><div className="min-w-0"><p className="flex items-center gap-1 text-xs font-medium text-slate-600">{label}{help && <HelpTip title={help.title} text={help.text} />}</p><div className="mt-1 break-words text-2xl font-semibold tabular-nums leading-7 text-slate-900">{value}</div><p className="mt-1 text-xs text-slate-500">{note}</p></div></div>
+  return <section className="min-w-0 rounded-xl border border-gray-200 bg-white p-4" aria-label={label}>
+    <div className="flex min-w-0 items-start gap-3"><IconTile icon={icon} tone={tone} /><div className="min-w-0 flex-1"><p className="flex items-center gap-1 text-xs font-medium text-slate-600">{label}{help && <HelpTip title={help.title} text={help.text} />}</p><div className="mt-1 break-words text-2xl font-semibold tabular-nums leading-7 text-slate-900">{value}</div><p className="mt-1 text-xs text-slate-500">{note}</p></div></div>
   </section>;
 }
 function PercentileTile({ percentile, stats, tone }: { percentile: 'p50' | 'p95' | 'p99'; stats: DurationStats | { state: 'unavailable' } | undefined; tone: 'blue' | 'teal' | 'slate' }) {
@@ -208,11 +243,14 @@ function ServiceStrip({ data }: { data: MonitoringDashboard }) {
     <IconTile icon={item.icon} tone={item.tone} /><div className="min-w-0"><div className="flex flex-wrap items-center gap-1.5"><p className="text-sm font-semibold text-slate-800">{item.name}</p><StatePill value={item.state} />{item.help && <HelpTip {...item.help} />}</div><p className="mt-0.5 truncate text-xs text-slate-500">{item.evidence}</p></div>
   </div>)}</div>;
 }
-function ServiceCard({ icon, name, state, evidence, copy, tone = 'slate' }: { icon: LucideIcon; name: string; state: string; evidence: string; copy: string; tone?: 'green' | 'slate' }) {
-  return <Panel title={name}><div className="flex items-center justify-between gap-3"><span className="flex items-center gap-3"><IconTile icon={icon} tone={tone} /><strong className="text-slate-800">{name}</strong></span><StatePill value={state} /></div><p className="mt-3 text-sm text-slate-600">{copy}</p><p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-500"><span className="font-medium text-slate-600">Evidence</span><span className="ml-3 font-semibold text-slate-700">{evidence}</span></p></Panel>;
+function ServiceCard({ icon, name, state, evidence, copy, tone = 'slate', help, lastObserved, className = '' }: { icon: LucideIcon; name: string; state: string; evidence: string; copy: string; tone?: 'green' | 'slate' | 'teal'; help?: { title: string; text: string }; lastObserved?: string | null; className?: string }) {
+  return <Panel title={name} icon={icon} tone={tone} help={help} className={className}><div className="flex items-center justify-between gap-3"><StatePill value={state} /></div><p className="mt-3 text-sm leading-5 text-slate-600">{copy}</p><dl className="mt-3 grid gap-2 border-t border-slate-100 pt-3 text-xs sm:grid-cols-2"><div><dt className="font-medium text-slate-500">Evidence</dt><dd className="mt-0.5 font-semibold text-slate-700">{evidence}</dd></div>{lastObserved !== undefined && <div><dt className="font-medium text-slate-500">Last Observed</dt><dd className="mt-0.5 font-semibold text-slate-700">{lastObserved ?? 'Unavailable'}</dd></div>}</dl></Panel>;
 }
 function MetricDatum({ label, value }: { label: string; value: string | null | undefined }) {
   return <div><dt className="font-medium text-slate-500">{label}</dt><dd className="mt-0.5 break-words font-semibold text-slate-800">{value || 'Unavailable'}</dd></div>;
+}
+function ValueChip({ label, value }: { label: string; value: string | null | undefined }) {
+  return <div className="min-w-0"><dt className="font-medium text-slate-500">{label}</dt><dd className="mt-1"><span className="inline-flex max-w-full break-all rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{value || 'Unavailable'}</span></dd></div>;
 }
 function QuotaOutcomes({ values }: { values: Record<string, number> }) {
   const entries = Object.entries(values);
@@ -248,13 +286,23 @@ function FeedbackList({ items, selected, onSelect }: { items: MonitoringFeedback
   return <ul className="divide-y divide-slate-100">{items.map((item, index) => <li key={`${item.recorded_at}-${index}`}><button type="button" aria-pressed={selected === index} onClick={() => onSelect(index)} className={`flex min-h-14 w-full items-center gap-3 rounded-lg px-2 py-2 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${selected === index ? 'bg-blue-50' : 'hover:bg-slate-50'}`}><IconTile icon={item.rating === 'positive' ? ThumbsUp : ThumbsDown} tone={item.rating === 'positive' ? 'green' : 'slate'} /><span className="min-w-0 flex-1"><span className="block text-sm font-semibold text-slate-800">{monitoringDisplayLabel(item.rating)}</span><span className="block truncate text-xs text-slate-600">{item.comment}</span></span><time className="shrink-0 text-xs text-slate-500">{formatSgt(item.recorded_at)}</time></button></li>)}</ul>;
 }
 function FeedbackDetails({ item, onClose }: { item: MonitoringFeedback; onClose: () => void }) {
-  return <aside className="h-fit rounded-xl border border-gray-200 bg-white p-4" aria-label="Feedback details"><div className="flex items-start justify-between gap-3"><div><h3 className="text-base font-semibold text-slate-900">Feedback Details</h3><p className="mt-1 text-xs text-slate-500">Written comment only. Conversation contents are not shown.</p></div><button type="button" aria-label="Close feedback details" onClick={onClose} className={button}><X className="h-4 w-4" aria-hidden="true" /></button></div><dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><MetricDatum label="Rating" value={monitoringDisplayLabel(item.rating)} /><MetricDatum label="Recorded" value={formatSgtWithZone(item.recorded_at)} /></dl><div className="mt-4"><h4 className="text-xs font-semibold text-slate-500">Feedback Text</h4><p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-3 text-sm leading-6 text-slate-700">{item.comment}</p></div></aside>;
+  return <aside className="h-fit rounded-xl border border-gray-200 bg-white p-4" aria-label="Feedback details" aria-live="polite"><div className="flex items-start justify-between gap-3"><div><h3 className="text-base font-semibold text-slate-900">Feedback Details</h3><p className="mt-1 text-xs text-slate-500">Written comment only. Conversation contents are not shown.</p></div><button type="button" aria-label="Close feedback details" onClick={onClose} className={button}><X className="h-4 w-4" aria-hidden="true" /></button></div><dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><MetricDatum label="Rating" value={monitoringDisplayLabel(item.rating)} /><MetricDatum label="Recorded" value={formatSgtWithZone(item.recorded_at)} /></dl><div className="mt-4"><h4 className="text-xs font-semibold text-slate-500">Feedback Text</h4><p className="mt-2 whitespace-pre-wrap break-words rounded-lg bg-slate-50 p-3 text-sm leading-6 text-slate-700">{item.comment}</p></div></aside>;
+}
+function OperationalRequestDetails({ detail, onClose, panelRef }: { detail: MonitoringDetail; onClose: () => void; panelRef: React.RefObject<HTMLElement> }) {
+  return <aside ref={panelRef} tabIndex={-1} aria-labelledby="operational-detail-title" className="h-fit min-w-0 rounded-xl border border-slate-200 bg-white p-4 outline-none focus-visible:ring-2 focus-visible:ring-blue-600 sm:p-5">
+    <div className="flex items-start justify-between gap-3"><div><h3 id="operational-detail-title" className="text-lg font-semibold text-gray-900">Operational Request Details</h3><p className="mt-1 text-xs text-gray-600">No property, user, price or feature data is shown.</p></div><button type="button" onClick={onClose} aria-label="Close request details" className={button}><X className="h-4 w-4" aria-hidden="true" /></button></div>
+    <p className="mt-4 break-all rounded-lg bg-slate-50 p-3 font-mono text-xs text-slate-700">{detail.request_id}</p>
+    <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">{([['Recorded', formatSgtWithZone(detail.created_at)], ['Status', monitoringDisplayLabel(detail.status)], ['Category', detail.failure_category ? monitoringDisplayLabel(detail.failure_category) : 'Unavailable'], ['Sanity Result', detail.prediction_sanity ? monitoringDisplayLabel(detail.prediction_sanity) : 'Unavailable'], ['Model Version', detail.model_version ?? 'Unavailable']] as const).map(([name, value]) => <div key={name} className="min-w-0"><dt className="text-gray-600">{name}</dt><dd className="break-words font-medium text-gray-900">{value}</dd></div>)}</dl>
+    <h4 className="mt-6 text-sm font-semibold text-gray-900">Measured Edge Timings</h4>
+    <dl className="mt-2 space-y-2">{([['Edge Total', detail.total_edge_ms], ['Authentication', detail.authentication_ms], ['Database Lookup', detail.database_lookup_ms], ['Request Construction', detail.request_construction_ms], ['Render Fetch', detail.render_fetch_ms]] as const).map(([name, value]) => <div key={name} className="flex justify-between gap-3 border-b border-gray-100 py-2 text-sm"><dt>{name}{name === 'Request Construction' && <HelpTip title={name} text="Includes eligibility checks, feature preparation, and trusted request preparation." />}{name === 'Render Fetch' && <HelpTip title={name} text="Measures the full outbound HTTP request duration." />}</dt><dd className="tabular-nums">{formatDuration(value)}</dd></div>)}</dl>
+    <p className="mt-4 text-xs text-gray-600">Render total, CatBoost and conformal historical timings are unavailable. Use this request ID in approved service logs for the full trace.</p>
+  </aside>;
 }
 function TimingMatrix({ rows, label, metrics }: { rows: Array<{ key: string; name: string; description: string }>; label: string; metrics: MonitoringDashboard['metrics'] }) {
   return <Panel title={label} icon={Timer} note="Each timing uses its own valid observations">
     <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm">
       <caption className="sr-only">{label} percentiles and valid sample counts</caption>
-      <thead className="border-b border-slate-200 text-xs text-slate-500"><tr><th className="py-3 pr-4">Timing</th>{(['p50', 'p95', 'p99'] as const).map((p) => <th key={p} className="px-3 py-3">{percentileCopy[p][0]} <HelpTip title={percentileCopy[p][0]} text={percentileCopy[p][1]} required={String(percentileMinimums[p])} /></th>)}<th className="px-3 py-3 text-right">Valid n</th></tr></thead>
+      <thead className="border-b border-slate-200 text-xs text-slate-500"><tr><th className="py-3 pr-4">Timing</th>{(['p50', 'p95', 'p99'] as const).map((p) => <th key={p} className="px-3 py-3">{percentileCopy[p][0]} <HelpTip title={percentileCopy[p][0]} text={percentileCopy[p][1]} required={String(percentileMinimums[p])} /></th>)}<th className="px-3 py-3 text-right">Valid Samples <HelpTip {...validSamplesHelp} /></th></tr></thead>
       <tbody>{rows.map((row) => {
         const stats = metrics[row.key];
         const n = stats && 'sample_count' in stats ? stats.sample_count : null;
@@ -289,7 +337,7 @@ export default function AdminMonitoringV2({
   const [requestId, setRequestId] = useState('');
   const [alertPending, setAlertPending] = useState(false);
   const sequence = useRef(0);
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const detailPanelRef = useRef<HTMLElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
 
   const read = useCallback(async (requested: MonitoringRange) => {
@@ -306,6 +354,7 @@ export default function AdminMonitoringV2({
       if (parsed === 'upgrade_required') { setUpgrade(true); setData(null); return; }
       if (!parsed || parsed.range.range !== requested) throw new Error('Invalid monitoring dashboard response');
       setUpgrade(false);
+      setFeedbackDetail(null);
       setData(parsed);
     } catch (error) {
       if (id === sequence.current && requested === rangeRef.current) {
@@ -322,11 +371,12 @@ export default function AdminMonitoringV2({
   }, [read, range]);
   useEffect(() => {
     if (!detail) return;
-    dialogRef.current?.focus();
+    detailPanelRef.current?.focus();
   }, [detail]);
   const changeRange = (next: MonitoringRange) => {
     if (next === rangeRef.current) return;
     rangeRef.current = next;
+    setFeedbackDetail(null);
     onRangeChange(next);
   };
   const runHealth = async () => {
@@ -352,6 +402,7 @@ export default function AdminMonitoringV2({
         setNotice('Health check could not provide a recorded Render/model readiness observation. Previous dashboard data remains visible.');
         return;
       }
+      setFeedbackDetail(null);
       setData(parsed);
     } catch {
       if (id === sequence.current && requested === rangeRef.current)
@@ -385,25 +436,26 @@ export default function AdminMonitoringV2({
     void read(rangeRef.current);
   };
   const current = data;
-  const rangeCaption = range === '7d' ? 'Today (Partial) + previous 6 Singapore days'
-    : range === '30d' ? 'Today (Partial) + previous 29 Singapore days'
-      : range === '1h' ? 'Rolling last hour' : 'Rolling last 24 hours';
-  return <section aria-labelledby="monitoring-title" className="space-y-4">
+  const rangeCaption: Record<MonitoringRange, string> = {
+    '1h': 'Rolling Last 1 Hour', '24h': 'Rolling Last 24 Hours',
+    '7d': 'Rolling Last 7 Days', '30d': 'Rolling Last 30 Days',
+  };
+  return <section aria-labelledby="monitoring-title" className="min-h-[calc(100vh-12rem)] space-y-4 bg-[#F6F8FB] px-4 py-5 sm:px-6 sm:py-6 lg:px-8">
     <header className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
       <div><div className="flex flex-wrap items-center gap-2"><h2 id="monitoring-title" className="text-2xl font-bold tracking-tight text-gray-900">System Monitoring</h2><span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600">Recorded Data</span></div>
-        <p className="mt-1 text-sm text-gray-600">{rangeCaption} · Recorded events only · SGT</p></div>
+        <p className="mt-1 text-sm text-gray-600">{rangeCaption[range]} · Recorded events only · Singapore Time (SGT)</p></div>
       <div className="flex flex-wrap items-center gap-2">
         <div role="group" aria-label="Monitoring time range" className="inline-flex rounded-lg border border-gray-200 bg-gray-100 p-1">
           {ranges.map((option) => <button key={option} type="button" aria-pressed={range === option}
             onClick={() => changeRange(option)}
-            className={`rounded-md px-2.5 py-1.5 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${range === option ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-700 hover:bg-gray-200'}`}>{option}</button>)}
+            className={`rounded-md px-2.5 py-1.5 text-sm font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${range === option ? 'bg-white text-blue-700' : 'text-gray-700 hover:bg-gray-200'}`}>{option}</button>)}
         </div>
         <span className="flex items-center gap-1.5 text-xs text-gray-600">{current && <Clock3 className="h-4 w-4" aria-hidden="true" />}{current ? `Data as of ${formatSgtWithZone(current.generated_at)}` : 'No data loaded'}</span>
         <button className={button} onClick={() => void read(rangeRef.current)}><RefreshCw className="mr-1 inline h-4 w-4" aria-hidden="true" />Refresh Data</button>
-        <button className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-60"
+        <span className="inline-flex items-center gap-1"><button className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:opacity-60"
           onClick={() => void runHealth()} disabled={healthPending}>
           <Activity className="mr-1 inline h-4 w-4" aria-hidden="true" />{healthPending ? 'Running Health Check…' : 'Run Health Check'}
-        </button>
+        </button><HelpTip title="Run Health Check" text="Runs a one-time Render/model readiness check. It may record an observation or update alerts. It is not a browser uptime monitor, hosted canary, or chatbot replay." /></span>
       </div>
     </header>
     {(healthPending || updating || notice) && <div role={notice ? 'alert' : 'status'} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
@@ -417,14 +469,14 @@ export default function AdminMonitoringV2({
     {!initialLoading && !current && !upgrade && <div className={card}><h3 className="font-semibold text-gray-900">Monitoring data unavailable</h3><p className="mt-2 text-sm text-gray-600">Try refreshing the dashboard.</p></div>}
     {current && <div aria-busy={updating || healthPending} className={updating || healthPending ? 'opacity-80' : ''}>
       <nav aria-label="Monitoring sections" className="mb-4 flex flex-wrap gap-1 border-b border-gray-200 pb-2">
-        {tabs.map((item) => { const Icon = ({ overview: Activity, services: Database, chatbot: MessageCircle, valuation: TrendingUp, security: ShieldCheck, feedback: MessageSquare })[item]; return <button key={item} aria-current={tab === item ? 'page' : undefined} onClick={() => onViewChange(item)}
+        {tabs.map((item) => { const Icon = ({ overview: LayoutDashboard, services: Database, chatbot: MessageCircle, valuation: TrendingUp, security: ShieldCheck, feedback: MessageSquare })[item]; return <button key={item} aria-current={tab === item ? 'page' : undefined} onClick={() => onViewChange(item)}
           className={`inline-flex min-h-10 items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600 ${tab === item ? 'bg-blue-50 text-blue-800' : 'text-gray-700 hover:bg-gray-100'}`}><Icon className="h-4 w-4" aria-hidden="true" />{tabLabels[item]}</button>; })}
       </nav>
       {tab === 'overview' && <div className="space-y-4">
         <ServiceStrip data={current} />
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
-          <MetricTile icon={TrendingUp} label="Valuation Requests" value={formatCount(current.valuation.recorded_events)} note={`${current.valuation.successful_events} succeeded · recorded`} />
-          <MetricTile icon={MessageCircle} tone="teal" label="Chat Interactions" value={formatCount(current.chatbot.recorded_interactions)} note={`${current.chatbot.successful_interactions} succeeded · recorded`} />
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+          <MetricTile icon={TrendingUp} label="Valuation Requests" value={formatCount(current.valuation.recorded_events)} note={`${current.valuation.successful_events} succeeded · recorded`} help={{ title: 'Recorded Valuation Requests', text: 'Completed valuation events recorded by monitoring. Best-effort telemetry may undercount activity.' }} />
+          <MetricTile icon={MessageCircle} tone="teal" label="Chat Interactions" value={formatCount(current.chatbot.recorded_interactions)} note={`${current.chatbot.successful_interactions} succeeded · recorded`} help={{ title: 'Recorded Chat Interactions', text: 'Stored interaction outcomes for this range. They do not indicate live chatbot availability.' }} />
           {(['p50', 'p95', 'p99'] as const).map((p, i) => <PercentileTile key={p} percentile={p} stats={current.metrics.valuation_total_edge} tone={i === 0 ? 'blue' : i === 1 ? 'teal' : 'slate'} />)}
           <MetricTile icon={AlertTriangle} tone="amber" label="Unresolved Incidents" value={current.unresolved_alert_count === null ? 'Unavailable' : String(current.unresolved_alert_count)} note={`${current.active_unacknowledged_alert_count} active unacknowledged`} />
         </div>
@@ -444,14 +496,14 @@ export default function AdminMonitoringV2({
       </div>}
       {tab === 'services' && <div className="space-y-4">
         <ServiceStrip data={current} />
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          <ServiceCard icon={Monitor} name="Application" state="Unknown" evidence="None collected" copy="No outside-in monitor exists, so browser availability is unknown." />
-          <ServiceCard icon={Database} name="Database" state="Data Read OK" tone="green" evidence="Monitoring data read" copy="The monitoring data read succeeded. This does not establish continuous availability." />
-          <ServiceCard icon={Bot} name="Chatbot" state="Live Health Unknown" evidence="Stored chat records" copy="Stored interactions describe past outcomes. They do not test live provider health." />
-          <Panel title="Render Model" icon={Cpu} tone="green"><div className="flex items-center justify-between gap-3"><StatePill value={current.health[0]?.status === 'healthy' ? 'Observed Ready' : current.health[0]?.status ?? 'Unknown'} /></div>
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
+          <ServiceCard className="xl:col-span-2" icon={Monitor} name="Application" state="Unknown" evidence="None Collected" copy="No outside-in monitor exists, so browser availability is unknown." help={{ title: 'Application Monitoring', text: 'No external browser availability monitor is configured. Unknown does not mean healthy.' }} />
+          <ServiceCard className="xl:col-span-2" icon={Database} name="Database" state="Data Read OK" tone="green" evidence="Telemetry Read" lastObserved={formatSgtWithZone(current.generated_at)} copy="The monitoring data read succeeded. This timestamp describes the latest summary read, not continuous database availability." help={{ title: 'Database Evidence', text: 'A successful telemetry read confirms this summary query completed. It does not measure ongoing database uptime.' }} />
+          <ServiceCard className="xl:col-span-2" icon={Bot} name="Chatbot" state="Live Health Unknown" tone="teal" evidence="Stored Chat Records" copy="Stored interactions describe past outcomes. They do not test live provider health." help={{ title: 'Chatbot Monitoring', text: 'Historical interactions show recorded outcomes only; they do not probe live chatbot or provider availability.' }} />
+          <Panel className="xl:col-span-4" title="Render Model" icon={Cpu} tone="green" help={{ title: 'Admin Check', text: 'This is a point-in-time Render/model readiness check, not continuous monitoring.' }}><div className="flex items-center justify-between gap-3"><StatePill value={current.health[0]?.status === 'healthy' ? 'Observed Ready' : current.health[0]?.status ?? 'Unknown'} /></div>
             <p className="mt-3 text-sm text-slate-600">Readiness reflects the last admin check and is not observed continuously.</p>
-            <dl className="mt-4 grid gap-x-4 gap-y-3 text-xs sm:grid-cols-2"><MetricDatum label="Expected Model" value={current.health[0]?.expected_model_version} /><MetricDatum label="Loaded Model" value={current.health[0]?.loaded_model_version} /><MetricDatum label="Version Comparison" value={current.health[0]?.expected_model_version && current.health[0]?.loaded_model_version ? current.health[0].expected_model_version === current.health[0].loaded_model_version ? 'Match' : 'Mismatch' : 'Not Compared'} /><MetricDatum label="Last Admin Check" value={current.health[0] ? formatSgtWithZone(current.health[0].checked_at) : null} /><MetricDatum label="Source" value={current.health[0] ? current.health[0].source === 'admin_view' ? 'Admin Check' : monitoringDisplayLabel(current.health[0].source) : null} /></dl></Panel>
-          <ServiceCard icon={Radar} name="Hosted Canary" state="Not Yet Verified" evidence="Deferred" copy="An end-to-end hosted canary run has not been recorded." />
+            <dl className="mt-4 grid gap-x-4 gap-y-3 text-xs sm:grid-cols-2 lg:grid-cols-3"><ValueChip label="Expected Model" value={current.health[0]?.expected_model_version} /><ValueChip label="Loaded Model" value={current.health[0]?.loaded_model_version} /><ValueChip label="Version Comparison" value={current.health[0]?.expected_model_version && current.health[0]?.loaded_model_version ? current.health[0].expected_model_version === current.health[0].loaded_model_version ? 'Match' : 'Mismatch' : 'Not Compared'} /><ValueChip label="Last Admin Check" value={current.health[0] ? formatSgtWithZone(current.health[0].checked_at) : null} /><ValueChip label="Source" value={current.health[0] ? current.health[0].source === 'admin_view' ? 'Admin Check' : monitoringDisplayLabel(current.health[0].source) : null} /></dl></Panel>
+          <ServiceCard className="xl:col-span-2" icon={Radar} name="Hosted Canary" state="Not Yet Verified" evidence="Deferred" copy="An end-to-end hosted canary run has not been recorded." help={{ title: 'Hosted Canary', text: 'An end-to-end hosted canary run is deferred and is not part of Run Health Check.' }} />
         </div>
       </div>}
       {tab === 'chatbot' && <div className="space-y-4">
@@ -464,7 +516,8 @@ export default function AdminMonitoringV2({
         ]} />
         <div className="grid gap-4 md:grid-cols-2"><Panel title="Provider Outcomes"><Counts values={current.chatbot.provider_statuses} empty="No provider calls recorded in this period." /><p className="mt-3 text-xs text-slate-500">Only statuses with at least one recorded call are listed.</p></Panel><Panel title="Failure Categories"><Counts values={current.chatbot.failure_categories} empty="No failures recorded in this period." /></Panel></div>
       </div>}
-      {tab === 'valuation' && <div className="space-y-4">
+      {tab === 'valuation' && <div className={detail ? 'grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.42fr)]' : ''}>
+        <div className="min-w-0 space-y-4">
         <div className="grid gap-3 md:grid-cols-2"><Panel title="Model Observation" icon={Cpu} tone="green"><div className="flex items-center justify-between gap-3"><StatePill value={current.health[0]?.status === 'healthy' ? 'Observed Ready' : current.health[0]?.status ?? 'Unknown'} /></div><dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2"><MetricDatum label="Last Admin Check" value={current.health[0] ? formatSgtWithZone(current.health[0].checked_at) : null} /><MetricDatum label="Expected Model" value={current.health[0]?.expected_model_version} /><MetricDatum label="Loaded Model" value={current.health[0]?.loaded_model_version} /><MetricDatum label="Version Comparison" value={current.health[0]?.expected_model_version && current.health[0]?.loaded_model_version ? current.health[0].expected_model_version === current.health[0].loaded_model_version ? 'Match' : 'Mismatch' : 'Not Compared'} /><MetricDatum label="Source" value={current.health[0]?.source ? monitoringDisplayLabel(current.health[0].source) : null} /></dl></Panel>
           <Panel title="Recorded Valuation Activity" icon={TrendingUp}><div className="flex items-center gap-3"><div><p className="text-3xl font-semibold tabular-nums text-slate-900">{formatCount(current.valuation.recorded_events)}</p><p className="text-sm text-slate-600">requests recorded</p></div></div><div className="mt-3 flex flex-wrap gap-2"><span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-800">{current.valuation.successful_events} succeeded</span><span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800">{current.valuation.prediction_sanity_failures} sanity warnings</span><span className="rounded-full bg-rose-50 px-2.5 py-1 text-xs font-medium text-rose-800">{current.valuation.failed_events} failed</span></div></Panel></div>
         <TimingMatrix label="Stage Timings" metrics={current.metrics} rows={[
@@ -487,36 +540,23 @@ export default function AdminMonitoringV2({
           {detailError && <p role="alert" className="mb-2 text-sm text-rose-800">{detailError}</p>}
           {current.recent_valuation_requests === null ? <p className="text-sm text-gray-600">Recent request list unavailable.</p>
             : current.recent_valuation_requests.length === 0 ? <p className="text-sm text-gray-600">No valuation requests recorded in this range.</p>
-              : <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="text-xs text-slate-500"><tr><th className="p-2">Request ID</th><th className="p-2">Time (SGT)</th><th className="p-2">Outcome</th><th className="p-2 text-right">Edge Total</th></tr></thead><tbody>{current.recent_valuation_requests.map((item) => <tr key={item.request_id} className="border-t border-slate-100"><td className="p-2"><button aria-label={`Open request ${item.request_id}`} className="max-w-36 truncate text-left text-blue-700 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-600" onClick={() => void openDetail(item.request_id)}>{item.request_id}</button></td><td className="p-2">{formatSgt(item.created_at)}</td><td className="p-2"><StatePill value={item.failure_category ?? item.status} /></td><td className="p-2 text-right tabular-nums">{formatDuration(item.total_edge_ms)}</td></tr>)}</tbody></table></div>}
+              : <div className="overflow-x-auto"><table className="min-w-full text-left text-sm"><thead className="text-xs text-slate-500"><tr><th className="p-2">Request ID</th><th className="p-2">Time (SGT)</th><th className="p-2">Outcome</th><th className="p-2 text-right">Edge Total</th><th className="p-2"><span className="sr-only">Open details</span></th></tr></thead><tbody>{current.recent_valuation_requests.map((item) => <tr key={item.request_id} className="border-t border-slate-100 transition-colors hover:bg-slate-50"><td className="p-2"><button aria-label={`Open request ${item.request_id}`} className="max-w-36 truncate text-left text-blue-700 underline focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600" onClick={() => void openDetail(item.request_id)}>{item.request_id}</button></td><td className="p-2">{formatSgt(item.created_at)}</td><td className="p-2"><StatePill value={item.failure_category ?? item.status} /></td><td className="p-2 text-right tabular-nums">{formatDuration(item.total_edge_ms)}</td><td className="p-2 text-right"><button type="button" aria-label={`View operational details for ${item.request_id}`} className="inline-flex h-9 w-9 items-center justify-center rounded-md text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600" onClick={() => void openDetail(item.request_id)}><ChevronRight className="h-4 w-4" aria-hidden="true" /></button></td></tr>)}</tbody></table></div>}
         </Panel>
+        </div>
+        {detail && <OperationalRequestDetails detail={detail} onClose={closeDetail} panelRef={detailPanelRef} />}
       </div>}
       {tab === 'security' && <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
         <Panel title="Recorded Quota Outcomes" icon={Gauge} note={`${Object.values(current.chatbot.quota_outcomes).reduce((sum, n) => sum + n, 0)} recorded · ${range}`}><QuotaOutcomes values={current.chatbot.quota_outcomes} /></Panel>
-        <Panel title="Coverage"><div className="flex items-center gap-3"><IconTile icon={ShieldAlert} tone="slate" /><StatePill value="Recorded Events Only" /></div><p className="mt-3 text-sm leading-6 text-slate-600">Only stored and persisted classifications appear here. Events blocked before telemetry begins are not counted.</p><div className="mt-4 rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">Authorization categories and quota outcomes describe recorded events. No security events are inferred.</div></Panel>
+        <Panel title="Coverage" help={{ title: 'Recorded Security Classifications', text: 'Only classifications persisted after monitoring began are counted. This is not a complete audit of blocked or unrecorded activity.' }}><div className="flex items-center gap-3"><IconTile icon={ShieldAlert} tone="slate" /><StatePill value="Recorded Events Only" /></div><p className="mt-3 text-sm leading-6 text-slate-600">Only stored and persisted classifications appear here. Events blocked before telemetry begins are not counted.</p><div className="mt-4 rounded-lg bg-slate-50 p-3 text-xs leading-5 text-slate-600">Authorization categories and quota outcomes describe recorded events. No security events are inferred.</div></Panel>
       </div>}
       {tab === 'feedback' && <div className="space-y-4">
         <div className="grid gap-3 md:grid-cols-3"><MetricTile icon={MessageSquare} tone="teal" label="Recorded Feedback" value={formatCount(current.chatbot.feedback_count)} note="Ratings recorded in this range" /><MetricTile icon={ThumbsUp} tone="green" label="Positive" value={current.chatbot.feedback_ratings.positive ?? 0} note="Recorded positive ratings" /><MetricTile icon={ThumbsDown} tone="slate" label="Negative" value={current.chatbot.feedback_ratings.negative ?? 0} note="Recorded negative ratings" /></div>
-        <div className="grid gap-4 xl:grid-cols-[1.6fr_1fr]">
-          <div className="space-y-4"><Panel title="Rating Distribution" icon={Activity} tone="green"><RatingDistribution values={current.chatbot.feedback_ratings} /><p className="mt-3 text-xs text-slate-500">Recorded ratings only. No rate or trend comparison is shown without a matching denominator.</p></Panel>
+        <div className={feedbackDetail !== null && current.recent_feedback?.[feedbackDetail] ? 'grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,0.42fr)]' : ''}>
+          <div className="min-w-0 space-y-4"><Panel title="Rating Distribution" icon={Activity} tone="green"><RatingDistribution values={current.chatbot.feedback_ratings} /><p className="mt-3 text-xs text-slate-500">Recorded ratings only. No rate or trend comparison is shown without a matching denominator.</p></Panel>
             <Panel title="Recent Written Feedback" icon={MessageSquare} tone="teal" note="Redacted comments · up to 30 days"><FeedbackList items={current.recent_feedback} selected={feedbackDetail} onSelect={setFeedbackDetail} /></Panel></div>
           {feedbackDetail !== null && current.recent_feedback?.[feedbackDetail] && <FeedbackDetails item={current.recent_feedback[feedbackDetail]} onClose={() => setFeedbackDetail(null)} />}
         </div>
       </div>}
-    </div>}
-    {detail && <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onMouseDown={(event) => { if (event.target === event.currentTarget) closeDetail(); }}>
-      <div ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="operational-detail-title" onKeyDown={(event) => {
-        if (event.key === 'Escape') closeDetail();
-        if (event.key === 'Tab') { const button = dialogRef.current?.querySelector('button'); if (button) { event.preventDefault(); button.focus(); } }
-      }} className="h-full w-full max-w-xl overflow-y-auto border-l border-slate-200 bg-white p-5 shadow-xl outline-none sm:p-6">
-        <div className="flex items-start justify-between gap-3"><div><h3 id="operational-detail-title" className="text-lg font-semibold text-gray-900">Operational Request Details</h3><p className="mt-1 text-xs text-gray-600">No property, user, price or feature data is shown.</p></div><button onClick={closeDetail} aria-label="Close request details" className={button}><X className="h-4 w-4" /></button></div>
-        <p className="mt-4 break-all rounded-lg bg-slate-50 p-3 font-mono text-xs text-slate-700">{detail.request_id}</p>
-        <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-          {([['Recorded', formatSgtWithZone(detail.created_at)], ['Status', monitoringDisplayLabel(detail.status)], ['Category', detail.failure_category ? monitoringDisplayLabel(detail.failure_category) : 'Unavailable'], ['Sanity Result', detail.prediction_sanity ? monitoringDisplayLabel(detail.prediction_sanity) : 'Unavailable'], ['Model Version', detail.model_version ?? 'Unavailable']] as const).map(([name, value]) => <div key={name} className="min-w-0"><dt className="text-gray-600">{name}</dt><dd className="break-words font-medium text-gray-900">{value}</dd></div>)}
-        </dl>
-        <h4 className="mt-6 text-sm font-semibold text-gray-900">Measured Edge Timings</h4>
-        <dl className="mt-2 space-y-2">{([['Edge Total', detail.total_edge_ms], ['Authentication', detail.authentication_ms], ['Database Lookup', detail.database_lookup_ms], ['Request Construction', detail.request_construction_ms], ['Render Fetch', detail.render_fetch_ms]] as const).map(([name, value]) => <div key={name} className="flex justify-between gap-3 border-b border-gray-100 py-2 text-sm"><dt>{name}{name === 'Request Construction' && <HelpTip title={name} text="Includes eligibility checks, feature preparation, and trusted request preparation." />}{name === 'Render Fetch' && <HelpTip title={name} text="Measures the full outbound HTTP request duration." />}</dt><dd className="tabular-nums">{formatDuration(value)}</dd></div>)}</dl>
-        <p className="mt-4 text-xs text-gray-600">Render total, CatBoost and conformal historical timings are unavailable. Use this request ID in approved service logs for the full trace.</p>
-      </div>
     </div>}
   </section>;
 }

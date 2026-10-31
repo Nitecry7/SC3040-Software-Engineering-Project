@@ -444,7 +444,7 @@ const AdminDashboard = () => {
           </div>
 
           {/* Tab content rendering based on the active tab */}
-          <div className="p-6">
+          <div className={activeTab === 'monitoring' ? 'p-0' : 'p-6'}>
             {activeTab === 'monitoring' && <Suspense fallback={<div role="status" className="rounded-xl bg-gray-100 p-6 text-sm text-gray-600">Loading System Monitoring…</div>}><AdminMonitoring
               onBadgeChanged={() => void refreshMonitoringBadge()}
               view={navigation.view}

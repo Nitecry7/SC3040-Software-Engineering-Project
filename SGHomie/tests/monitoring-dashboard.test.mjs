@@ -46,7 +46,7 @@ const dashboard = (range, count = 20) => ({
 });
 const flush = async (app) => { await setImmediate(); app.render(); await app.effects(); await setImmediate(); };
 function makeApp(invoke) {
-  const icons = Object.fromEntries(['Activity','AlertTriangle','Bot','CheckCircle2','Clock3','Cpu','Database','Gauge','Globe2','Info','MessageCircle','MessageSquare','Monitor','Radar','RefreshCw','Search','ShieldAlert','ShieldCheck','ThumbsDown','ThumbsUp','Timer','TrendingUp','Wrench','X'].map((name) => [name, name]));
+  const icons = Object.fromEntries(['Activity','AlertTriangle','BarChart3','Bot','CheckCircle2','ChevronRight','Clock3','Cpu','Database','Gauge','Globe2','Info','LayoutDashboard','MessageCircle','MessageSquare','Monitor','Radar','RefreshCw','Search','ShieldAlert','ShieldCheck','ThumbsDown','ThumbsUp','Timer','TrendingUp','Wrench','X'].map((name) => [name, name]));
   const props = {
     onBadgeChanged() {}, view: 'overview', range: '7d',
     onViewChange(view) { props.view = view; },
@@ -54,12 +54,13 @@ function makeApp(invoke) {
   };
   return componentHarness(new URL('../FrontEnd/src/components/AdminMonitoringV2.tsx', import.meta.url), {
     'lucide-react': icons,
+    'react-dom': { createPortal: (node) => node },
     recharts: Object.fromEntries(['Area', 'AreaChart', 'Bar', 'BarChart', 'CartesianGrid', 'Cell', 'ResponsiveContainer', 'Tooltip', 'XAxis', 'YAxis'].map((name) => [name, name])),
     '../lib/supabase': { supabase: { functions: { invoke } } },
     '../lib/monitoringDashboard': { formatCount: (n) => String(n), formatDuration, formatSgt, formatSgtWithZone,
       monitoringBucketLabel, monitoringDisplayLabel, percentileMinimums: { p50: 5, p95: 20, p99: 100 },
       isUnsupportedMonitoringAction, parseHealthCheckResult, parseDashboard, parseMonitoringDetail, percentileLabel },
-  }, props);
+  }, props, { document: { body: {}, activeElement: null }, HTMLElement: class HTMLElement {}, window: { innerWidth: 1280, innerHeight: 800, addEventListener() {}, removeEventListener() {} } });
 }
 const click = (app, text) => app.find((node) => node.type === 'button' && content(node).toLowerCase().includes(text.toLowerCase())).props.onClick();
 const expandComponents = (node) => {
@@ -91,7 +92,8 @@ test('versioned dashboard rejects malformed values and treats an older backend a
   assert.equal(formatSgtWithZone(null), 'Unavailable');
   assert.equal(monitoringDisplayLabel('CHAT_USER_BURST_LIMIT'), 'User Burst Limit');
   assert.equal(monitoringDisplayLabel('prediction_interval_invalid'), 'Prediction Interval Invalid');
-  assert.equal(monitoringBucketLabel('Today so far', stamp, '7d'), 'Today (Partial)');
+  assert.equal(monitoringBucketLabel('Today so far', stamp, '7d'), 'Today');
+  assert.equal(monitoringBucketLabel('Today (Partial)', stamp, '7d'), 'Today');
   assert.match(monitoringBucketLabel(null, stamp, '7d'), /Sat 31/);
   assert.match(monitoringBucketLabel(null, stamp, '24h'), /8 am/);
   assert.equal(parseMonitoringBadge({ dashboard_v2: { version: 2, active_unacknowledged_alert_count: 3 } }), 3);
@@ -227,10 +229,14 @@ test('monitoring chart source provides labelled accessible tables and lazy loadi
   assert.match(component, /<summary[^>]*>View data as table<\/summary>/);
   assert.match(component, /Valuation recorded/);
   assert.match(component, /Chatbot recorded/);
-  assert.match(component, /Valid n/);
+  assert.match(component, /Valid Samples/);
+  assert.doesNotMatch(component, /Valid n/);
+  assert.match(component, /The number of usable recorded measurements available for this timing/);
   assert.match(component, /Insufficient Samples/);
   assert.match(component, /role="tooltip"/);
-  assert.match(component, /group-focus-within:visible/);
+  assert.match(component, /createPortal\(tooltip, document\.body\)/);
+  assert.match(component, /onFocus=\{\(\) => setFocused\(true\)\}/);
+  assert.match(component, /window\.addEventListener\('scroll', update, true\)/);
   assert.match(component, /P50 Typical Latency/);
   assert.match(component, /50% of recorded requests completed within this time, while 50% took longer/);
   assert.match(component, /role="img" aria-labelledby="latency-summary"/);
@@ -255,7 +261,7 @@ test('chart tables expose the same recorded counts and supported percentile valu
   const bars = nodes(volume).find((node) => node.type === 'BarChart');
   assert.equal(bars.props.data[0].valuation, 20);
   assert.equal(bars.props.data[0].chatbot, 2);
-  assert.match(content(volume), /Today \(Partial\)/);
+  assert.match(content(volume), /Today/);
   assert.match(content(volume), /Valuation recorded/);
   assert.match(content(volume), /Chatbot recorded/);
   assert.ok(nodes(volume).some((node) => node.type === 'summary' && content(node) === 'View data as table'));
@@ -266,7 +272,7 @@ test('chart tables expose the same recorded counts and supported percentile valu
   assert.equal(area.props.data[0].p95, 300);
   assert.equal(area.props.data[0].p99, null);
   assert.match(content(latency), /Insufficient Samples/);
-  assert.match(content(latency), /Valid n/);
+  assert.match(content(latency), /Valid Samples/);
 });
 
 test('all six monitoring tabs and timing matrix are reachable', async () => {
@@ -286,6 +292,97 @@ test('all six monitoring tabs and timing matrix are reachable', async () => {
   assert.match(text, /10 succeeded/);
 });
 
+test('portal help tooltips open on keyboard focus and dismiss with Escape', async () => {
+  const app = makeApp(() => Promise.resolve({ data: dashboard('7d'), error: null }));
+  app.render(); await app.effects(); await flush(app);
+  let tree = expandComponents(app.render());
+  let trigger = nodes(tree).find((node) => node.type === 'button' && node.props['aria-label'] === 'Help: Run Health Check');
+  assert.ok(trigger);
+  trigger.props.onFocus();
+  tree = expandComponents(app.render());
+  const tip = nodes(tree).find((node) => node.type === 'span' && node.props.role === 'tooltip' && content(node).includes('one-time Render/model readiness check'));
+  assert.ok(tip);
+  assert.equal(tip.props.style.position, 'fixed');
+  assert.equal(tip.props.style.visibility, 'visible');
+  trigger = nodes(tree).find((node) => node.type === 'button' && node.props['aria-label'] === 'Help: Run Health Check');
+  trigger.props.onKeyDown({ key: 'Escape' });
+  tree = expandComponents(app.render());
+  const closed = nodes(tree).find((node) => node.type === 'span' && node.props.role === 'tooltip' && content(node).includes('one-time Render/model readiness check'));
+  assert.equal(closed.props.style.visibility, 'hidden');
+});
+
+test('overview KPI tiles omit sparklines while the request chart keeps real bucket counts', () => {
+  const app = makeApp(() => Promise.resolve({ data: dashboard('7d'), error: null }));
+  const source = readFileSync(new URL('../FrontEnd/src/components/AdminMonitoringV2.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /Sparkline|trend=\{/);
+  assert.equal(nodes(expandComponents(app.render())).some((node) => node.type === 'polyline'), false);
+  const raw = dashboard('7d');
+  raw.dashboard_v2.valuation.series.push({ ...raw.dashboard_v2.valuation.series[0], bucket_start: '2026-10-30T00:00:00Z', label: 'Fri 30', request_count: 4, chatbot_request_count: 1 });
+  const data = parseDashboard(raw);
+  assert.deepEqual(data.valuation.series.map((bucket) => bucket.request_count), [20, 4]);
+});
+
+test('Valid Samples help is available to keyboard users and valuation rows show an accessible chevron', async () => {
+  const id = '6d2e9c2e-06c9-4ef0-a47b-60d9071e1df8';
+  const summary = dashboard('7d');
+  summary.dashboard_v2.recent_valuation_requests = [{ request_id: id, created_at: stamp, status: 'success', failure_category: null, total_edge_ms: 100 }];
+  const app = makeApp((_name, options) => Promise.resolve({ data: summary, error: null }));
+  app.render(); await app.effects(); await flush(app);
+  click(app, 'Valuation');
+  let tree = expandComponents(app.render());
+  const validSamplesTip = nodes(tree).find((node) => node.type === 'button' && node.props['aria-label'] === 'Help: Valid Samples');
+  assert.ok(validSamplesTip);
+  validSamplesTip.props.onFocus();
+  tree = expandComponents(app.render());
+  const tooltip = nodes(tree).find((node) => node.props.role === 'tooltip' && content(node).includes('The number of usable recorded measurements available for this timing'));
+  assert.ok(tooltip);
+  assert.equal(tooltip.props.style.visibility, 'visible');
+  assert.match(content(tree), /CatBoost Prediction/);
+  assert.match(content(tree), /Conformal Interval/);
+  const row = nodes(tree).find((node) => node.type === 'tr' && content(node).includes(id));
+  assert.match(row.props.className, /hover:bg-slate-50/);
+  const arrow = nodes(row).find((node) => node.type === 'ChevronRight');
+  assert.ok(arrow);
+  assert.equal(arrow.props['aria-hidden'], 'true');
+  const detailButton = nodes(row).find((node) => node.type === 'button' && node.props['aria-label'] === `View operational details for ${id}`);
+  assert.match(detailButton.props.className, /focus-visible:outline/);
+  const component = readFileSync(new URL('../FrontEnd/src/components/AdminMonitoringV2.tsx', import.meta.url), 'utf8');
+  assert.match(component, /catboost_prediction: TrendingUp/);
+  assert.match(component, /conformal_interval: BarChart3/);
+  assert.doesNotMatch(component, /Valid n/);
+});
+
+test('range labels and service evidence stay clear and truthful', async () => {
+  const app = makeApp((_name, options) => Promise.resolve({ data: dashboard(options.body.range), error: null }));
+  app.render(); await app.effects(); await flush(app);
+  assert.match(viewText(app), /Rolling Last 7 Days/);
+  assert.doesNotMatch(viewText(app), /previous 6 Singapore days|Today \(Partial\)/);
+  click(app, 'Services');
+  const services = viewText(app);
+  assert.match(services, /Evidence/);
+  assert.match(services, /Telemetry Read/);
+  assert.match(services, /Last Observed/);
+  assert.match(services, /31 Oct 2026/);
+  assert.match(services, /Expected Model/);
+  assert.match(services, /Hosted Canary/);
+});
+
+test('valuation request details open inline without a modal or page dimming', async () => {
+  const id = '6d2e9c2e-06c9-4ef0-a47b-60d9071e1df8';
+  const summary = dashboard('7d');
+  summary.dashboard_v2.recent_valuation_requests = [{ request_id: id, created_at: stamp, status: 'success', failure_category: null, total_edge_ms: 100 }];
+  const detail = { dashboard_v2: { version: 2, request_detail: { request_id: id, created_at: stamp, completed_at: stamp, status: 'success', failure_category: null, total_edge_ms: 100, model_version: null, prediction_sanity: 'passed', authentication_ms: 1, database_lookup_ms: 2, request_construction_ms: 3, render_fetch_ms: 4 } } };
+  const app = makeApp((_name, options) => Promise.resolve({ data: options.body.action === 'detail' ? detail : summary, error: null }));
+  app.render(); await app.effects(); await flush(app);
+  click(app, 'Valuation');
+  const requestButton = nodes(expandComponents(app.render())).find((node) => node.type === 'button' && node.props['aria-label'] === `Open request ${id}`);
+  requestButton.props.onClick(); await flush(app);
+  const tree = expandComponents(app.render());
+  assert.ok(nodes(tree).some((node) => node.type === 'aside' && node.props['aria-labelledby'] === 'operational-detail-title'));
+  assert.equal(nodes(tree).some((node) => node.props?.role === 'dialog' || node.props?.['aria-modal'] === 'true'), false);
+  assert.doesNotMatch(readFileSync(new URL('../FrontEnd/src/components/AdminMonitoringV2.tsx', import.meta.url), 'utf8'), /fixed inset-0 z-50/);
+});
+
 test('written feedback detail uses plain text and excludes identity and conversation fields', async () => {
   const response = dashboard('7d');
   response.dashboard_v2.chatbot.feedback_count = 1;
@@ -302,6 +399,8 @@ test('written feedback detail uses plain text and excludes identity and conversa
   assert.match(content(feedback), /<script>plain text only<\/script>/);
   assert.doesNotMatch(content(feedback), /user_id|interaction_id|conversation/);
   assert.equal(nodes(feedback).some((node) => node.type === 'script'), false);
+  assert.ok(nodes(feedback).some((node) => node.type === 'aside' && node.props['aria-live'] === 'polite'));
+  assert.match(readFileSync(new URL('../FrontEnd/src/components/AdminMonitoringV2.tsx', import.meta.url), 'utf8'), /xl:grid-cols-\[minmax\(0,1fr\)_minmax\(20rem,0\.42fr\)\]/);
 });
 
 test('unsupported latency chart shows a designed empty state without rendering axes', () => {

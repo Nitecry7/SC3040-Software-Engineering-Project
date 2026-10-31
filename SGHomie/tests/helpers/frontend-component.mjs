@@ -30,6 +30,7 @@ export function componentHarness(file, dependencies = {}, props = {}, globals = 
       return state[slot];
     },
     useId() { return `:test-${cursor++}:`; },
+    useLayoutEffect(callback, dependencies) { return hooks.useEffect(callback, dependencies); },
     useEffect(callback, dependencies) {
       const slot = cursor++;
       if (!state[slot] || !dependencies || dependencies.some((value, index) => value !== state[slot][index])) {

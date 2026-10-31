@@ -207,7 +207,7 @@ export function monitoringDisplayLabel(value: string): string {
 }
 export const percentileMinimums = { p50: 5, p95: 20, p99: 100 } as const;
 export function monitoringBucketLabel(label: string | null, bucketStart: string, range?: MonitoringRange): string {
-  if (label === 'Today so far') return 'Today (Partial)';
+  if (label === 'Today so far' || label === 'Today (Partial)') return 'Today';
   if (label) return label;
   const d = new Date(bucketStart);
   const options: Intl.DateTimeFormatOptions = range === '7d' || range === '30d'
