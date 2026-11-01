@@ -251,7 +251,7 @@ The chatbot Edge Function controls:
 
 The LLM does not have arbitrary SQL access and does not directly control database reads or writes.
 
-### Monitoring and Feedback Architecture
+### 📈 Monitoring and Feedback Architecture
 
 Monitoring is application-level operational observability, not a continuous outside-in uptime platform. Chatbot and valuation operations persist bounded operational signals for the Admin Dashboard. Admin-initiated health checks run through `admin-monitoring` and record observations in PostgreSQL. Feedback is linked to chatbot interactions where supported; not every interaction has feedback. Authorized inspection happens server side, is audited before content is returned, and provides bounded conversation context. Stored text is subject to the implemented redaction and expiry controls; this does not make arbitrary chatbot conversations publicly accessible.
 
