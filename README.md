@@ -84,9 +84,9 @@ flowchart LR
 
     subgraph Supabase["Supabase trust boundary"]
         Auth["Auth<br/>User session"]
-        Data["PostgreSQL<br/>+ RLS"]
+        Data["PostgreSQL<br/>+ RLS<br/>app data · telemetry · alerts · feedback"]
         Storage["Property<br/>image storage"]
-        Functions["Edge Functions<br/>chatbot · valuation · HDB lookup"]
+        Functions["Edge Functions<br/>chatbot · valuation · HDB lookup · admin monitoring"]
     end
 
     subgraph Services["Server-side services"]
@@ -250,6 +250,42 @@ The chatbot Edge Function controls:
 - Provider requests
 
 The LLM does not have arbitrary SQL access and does not directly control database reads or writes.
+
+### Monitoring and Feedback Architecture
+
+Monitoring is application-level operational observability, not a continuous outside-in uptime platform. Chatbot and valuation operations persist bounded operational signals for the Admin Dashboard. Admin-initiated health checks run through `admin-monitoring` and record observations in PostgreSQL. Feedback is linked to chatbot interactions where supported; not every interaction has feedback. Authorized inspection happens server side, is audited before content is returned, and provides bounded conversation context. Stored text is subject to the implemented redaction and expiry controls; this does not make arbitrary chatbot conversations publicly accessible.
+
+```mermaid
+flowchart TD
+    Chatbot["Chatbot Edge Function"]
+    Valuation["Valuation Edge Function"]
+    Telemetry["Bounded safe operational telemetry"]
+    Database["PostgreSQL monitoring data"]
+    Health["Admin-initiated health check"]
+    Monitoring["admin-monitoring Edge Function"]
+    Dashboard["Admin Dashboard<br/>System Monitoring"]
+
+    Chatbot --> Telemetry
+    Valuation --> Telemetry
+    Telemetry --> Database
+    Health --> Monitoring
+    Monitoring -->|"records observations"| Database
+    Database -->|"monitoring summaries"| Monitoring
+    Monitoring --> Dashboard
+```
+
+```mermaid
+flowchart LR
+    Interaction["Chatbot interaction"] --> Submission["Feedback submission"]
+    Submission --> Feedback["chat_feedback<br/>linked by interaction ID"]
+    Dashboard["Admin Dashboard"] -->|"authorized request"| Monitoring["admin-monitoring Edge Function"]
+    Feedback -->|"service-only read"| Monitoring
+    Monitoring -->|"write audit before return"| Audit["Feedback access audit"]
+    Audit --> Context["Bounded, redacted context"]
+    Context --> Dashboard
+```
+
+The hosted Chatbot synthetic check remains deferred because service-to-service authentication integration was not completed for the final release. One hosted Valuation synthetic check was previously observed succeeding as a point-in-time check; neither that observation nor repository telemetry establishes continuous availability monitoring. See the [monitoring test plan](SGHomie/docs/operations/monitoring-test-plan.md) and [chatbot guide](SGHomie/docs/chatbot/README.md) for implementation details and verification limits.
 
 ---
 
