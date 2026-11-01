@@ -1,6 +1,3 @@
-## `PRODUCT.md`
-
-```md
 # Product
 
 <!-- impeccable:product-schema 1 -->
@@ -500,4 +497,3 @@ Do not claim that SG Homie currently provides any of the following unless the im
 15. Investment return guarantees.
 
 When such features are planned but not implemented, describe them as planned capabilities.
-```

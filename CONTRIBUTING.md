@@ -21,6 +21,7 @@ Install the following before starting:
 
 - Git
 - Node.js 20.19+ or 22.12+
+- Node.js 22.22.2 or a compatible newer release for the application test suite
 - npm
 - Supabase CLI and Docker only when running the local Supabase stack or disposable database tests
 
@@ -36,6 +37,8 @@ brew install supabase
 git clone https://github.com/Nitecry7/SC3040-Software-Engineering-Project.git
 cd SC3040-Software-Engineering-Project
 ```
+
+Unless otherwise stated, commands that change into an `SGHomie/` directory assume the terminal starts at the repository root.
 
 ## 2. Install Frontend Dependencies
 
@@ -88,7 +91,7 @@ python3 SGHomie/tests/run-database-tests.py --output .test-results/database.tap
 
 The harness applies repository migrations to its uniquely named temporary database and cleans it up. See the [test guide](SGHomie/tests/README.md#database-access-rules-and-migrations) for lifecycle and limitations. GitHub Actions runs the same database tests against its disposable local Supabase stack; CI does not connect to hosted Supabase.
 
-## 6. Hosted Supabase changes
+## 6. Hosted Supabase changes (optional for local development)
 
 Hosted migrations and Edge Functions are separate, deliberate deployment steps. From `SGHomie/BackEnd/`, confirm the target project, replace the project-reference placeholder, review migration history and pending changes, and preview before any approved hosted migration:
 
@@ -100,7 +103,7 @@ supabase db push --dry-run
 
 Apply a migration only to the explicitly confirmed project under the team's approved release process, using `supabase db push --linked`. Deploy changed Edge Functions separately and verify their versions. Never put service-role, provider, OneMap, or Render credentials in Vite variables. Provider secrets and optional provider/model settings belong in the intended project's Edge Function secrets/configuration; see the [Supabase deployment guide](SGHomie/BackEnd/supabase/README.md).
 
-## 7. Deploying the Chatbot Edge Function
+## 7. Deploying the Chatbot Edge Function (optional for local development)
 
 Deploy from `SGHomie/BackEnd` so the shared OpenRouter helper is included:
 
@@ -152,7 +155,7 @@ Avoid editing the production database directly when the change can be represente
 
 ## 10. Redeploying Function Changes
 
-Whenever an Edge Function or shared helper changes:
+Deploy each changed Edge Function, replacing the example name below. If a shared helper changes, deploy each function that uses it:
 
 ```bash
 cd SGHomie/BackEnd
@@ -171,19 +174,22 @@ supabase start
 npx supabase status
 ```
 
-The local API normally runs at `http://127.0.0.1:54321`. Keep local settings and credentials separate from hosted project configuration.
+The local API normally runs at `http://127.0.0.1:54321`. Use the local API URL and anonymous key shown by `npx supabase status` for `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in the frontend `.env`. Leave `VITE_SUPABASE_FUNCTIONS_URL` blank to use local functions, and restart Vite after changing these settings. Keep local settings and credentials separate from hosted project configuration.
+
+To run the chatbot locally, follow the [local provider setup](SGHomie/BackEnd/supabase/README.md#chatbot-provider-selection) and serve the function with its server-side environment file. AI responses require a provider key; other features may require their own service configuration.
 
 ## 12. Verify Changes Before Opening a Pull Request
 
 From `SGHomie/FrontEnd`:
 
 ```bash
+npm test
 npm run lint
 npx tsc --noEmit -p tsconfig.app.json
 npm run build
 ```
 
-The lint command may report existing warnings. New errors should be fixed before submitting a pull request.
+The lint command may report existing warnings. New errors should be fixed before submitting a pull request. See the [test guide](SGHomie/tests/README.md) for application, valuation, and local database test instructions.
 
 GitHub Actions runs the application, valuation, and disposable database jobs on pull requests, pushes, and manual dispatch. A passing workflow verifies its checks for that source revision; it does not deploy or verify Netlify, hosted Supabase, or Render.
 

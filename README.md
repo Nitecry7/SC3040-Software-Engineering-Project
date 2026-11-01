@@ -379,10 +379,16 @@ SC3040-Software-Engineering-Project/
 └── README.md                            # 📌 Project overview
 ```
 
+Within `SGHomie/FrontEnd/src/`, `App.tsx` defines the routes and application shell.
+`pages/` contains route pages, `components/` contains reusable UI, `contexts/`
+holds shared React context, and `lib/` contains application helpers and service
+integration logic. `hooks/` and `types/` contain shared hooks and TypeScript types.
+
 ## 📚 Documentation
 
 | Guide | What it covers |
 | --- | --- |
+| 🤝 [Contributing](CONTRIBUTING.md) | Local development, verification, and contribution guidance |
 | 🎯 [Product direction](PRODUCT.md) | Intended capabilities and current status |
 | 🎨 [Design system](DESIGN.md) | Existing product visual language |
 | 🔥 [Supabase backend and valuation serving](SGHomie/BackEnd/supabase/README.md) | Backend setup, migrations, RLS, and serving path |

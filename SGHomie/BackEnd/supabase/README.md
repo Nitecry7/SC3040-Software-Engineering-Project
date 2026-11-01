@@ -588,8 +588,8 @@ tools and are deliberately rejected by this adapter; use Luna/Sol instead.
 The official compatibility rules are documented in the
 [GPT-6 guide](https://developers.openai.com/api/docs/guides/latest-model).
 
-The chatbot has no application-level request rate limit. Each provider still
-enforces its own account limits, quotas, and model availability. Automated
+The chatbot enforces [application-level quotas and capacity limits](#chatbot-quotas-and-provider-capacity).
+Each provider also enforces its own account limits, quotas, and model availability. Automated
 adapter tests mock the provider; they do not verify access to a paid account.
 
 Adapter verification (from the repository root):
