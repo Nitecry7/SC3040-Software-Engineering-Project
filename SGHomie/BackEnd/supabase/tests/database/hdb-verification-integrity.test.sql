@@ -6,7 +6,7 @@
 BEGIN;
 CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA extensions;
 SET LOCAL search_path = public, extensions;
-SELECT plan(38);
+SELECT plan(40);
 
 INSERT INTO auth.users (id, email) VALUES
  ('60000000-0000-4000-8000-000000000001', 'verify-seller-a@example.invalid'),
@@ -40,6 +40,15 @@ INSERT INTO public.properties
  (id, title, price, location, type, image_url, bedrooms, bathrooms, area_sqft, detailed_location, seller_id, status)
 VALUES
  ('70000000-0000-4000-8000-000000000013', 'Synthetic legacy listing', 400000, 'BEDOK', 'HDB', '', 3, 2, 900, 'Legacy original text', '60000000-0000-4000-8000-000000000001', 'draft');
+
+-- Verified listing with no stored detailed location, written by a trusted write.
+INSERT INTO public.properties
+ (id, title, price, location, type, image_url, bedrooms, bathrooms, area_sqft, detailed_location, seller_id, status,
+  hdb_verified, postal_code, block_number, street_name, town, latitude, longitude, location_verified_at)
+VALUES
+ ('70000000-0000-4000-8000-000000000014', 'Synthetic verified listing without detailed location', 400000, 'BEDOK', 'HDB', '', 3, 2, 900, NULL,
+  '60000000-0000-4000-8000-000000000001', 'draft',
+  true, '111111', '11', 'ALPHA ROAD', 'BEDOK', 1.3300, 103.9400, '2026-11-01 00:00:00+00');
 
 SELECT set_config('request.jwt.claims', '{"sub":"60000000-0000-4000-8000-000000000001","email":"verify-seller-a@example.invalid","role":"authenticated"}', true);
 SET LOCAL ROLE authenticated;
@@ -229,6 +238,15 @@ SELECT ok(COALESCE((SELECT location = 'TAMPINES' AND town = 'TAMPINES' AND built
  AND detailed_location = 'Legacy edited text' AND NOT hdb_verified
  FROM public.properties WHERE id = '70000000-0000-4000-8000-000000000013'), false),
  'HV-11b unverified listing stores the edited location fields and stays unverified');
+
+-- An absent and an empty detailed location are treated as equal on a verified
+-- listing, as the seller edit form resends an absent value as an empty string.
+SELECT lives_ok($$UPDATE public.properties SET price = 460000, detailed_location = ''
+ WHERE id = '70000000-0000-4000-8000-000000000014'$$,
+ 'HV-14a edit that resends an absent detailed location as empty succeeds on a verified listing');
+SELECT ok(COALESCE((SELECT price = 460000 AND hdb_verified
+ FROM public.properties WHERE id = '70000000-0000-4000-8000-000000000014'), false),
+ 'HV-14b price edit is stored and the listing stays verified');
 RESET ROLE;
 
 -- Test 9: a write with no signed-in user keeps the trusted-write bypass.
