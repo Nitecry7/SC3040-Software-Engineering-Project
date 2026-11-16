@@ -59,6 +59,17 @@ The five mandatory slices are committed and CI verified at `0c12329`. The owner 
 | D16 | No password history. A user may return to a password used earlier, provided it meets the policy. Only a change to the current password is refused, and that refusal comes from Supabase. The `same_password` message reads "Your new password must be different from your current password." | Owner decision, 16 November 2026. The earlier wording implied a history rule that does not exist. |
 | D17 | The password-change form asks for the current password and checks it before the update. The hosted settings "Secure password change" and "Require current password when updating" are both off (owner-reported) and are not changed by this work. | With the hosted setting off, the server does not check the current password, so the form must, or the field would be decorative. The check is client-side and is described as such. |
 
+### Update, 17 November 2026: hosted Auth setting and Phase B
+
+Entries above are unchanged. D17 describes the settings as they were on 16 November.
+
+| ID | Decision | Reason |
+| --- | --- | --- |
+| D18 | The owner enabled the hosted setting "Require current password when updating". "Secure password change" stays off. The password policy is unchanged. | Owner action, reported 17 November 2026. The server now enforces what the change-password form previously checked only in the browser. |
+| D19 | In a synthetic check result, `edge_reached` is true only when the response carries validated evidence that the chatbot handler answered. False means execution was not confirmed. It does not mean the function did not run. Stored results are not rewritten. | The flag was set for every non-OK response, so the dashboard claimed evidence it did not have. |
+| D20 | The chatbot synthetic check's authorization is not changed until the hosted cause is confirmed and the owner approves a design. The service-role bearer is a hypothesis only. | Owner decision, 17 November 2026. |
+| D21 | Scheduled deep canaries will not store the owner's personal administrator session token or an unrestricted service-role key in GitHub Actions. No scheduling change is made until Phase B is repaired, reviewed and verified on hosted. | Owner decision, 17 November 2026. |
+
 ## Known limitation of the public listing fix
 
 After the fix, anonymous callers can no longer read seller contact and private address fields. Any signed-in account still can, on approved listings, as the property details page does today. Registration is open, so this remains a real privacy limitation. This work does not claim that all seller-data exposure is resolved.
