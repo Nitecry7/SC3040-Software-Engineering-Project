@@ -4,7 +4,6 @@
 | --- | --- |
 | From | Planning model |
 | To | Sonnet Medium |
-| Date | 16 November 2026 |
 | Budget | 1.5 hours |
 | Base | `bd6eb6e` (A1 and S5 committed, CI passed, S5 verified end to end by the owner) |
 

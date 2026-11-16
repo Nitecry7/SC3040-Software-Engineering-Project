@@ -4,7 +4,6 @@
 | --- | --- |
 | From | Planning model |
 | To | Sonnet Medium |
-| Date | 16 November 2026 |
 | Budget | 2 hours |
 
 If you exceed the budget or get stuck, stop and report status. Do not revert, delete or discard anything.

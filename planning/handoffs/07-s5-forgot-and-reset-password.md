@@ -4,7 +4,6 @@
 | --- | --- |
 | From | Planning model |
 | To | Sonnet Medium |
-| Date | 16 November 2026 |
 | Budget | 2.5 hours |
 | Depends on | A1 (handoff 06), present in the working tree, uncommitted |
 

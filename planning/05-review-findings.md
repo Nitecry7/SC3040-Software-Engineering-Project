@@ -2,7 +2,7 @@
 
 Independent reviews by the planning model of work produced by the implementation agent. Entries are added when a review happens.
 
-## S1 step 1: database regression tests (16 November 2026)
+## S1: Database regression tests
 
 **Reviewed:** `SGHomie/BackEnd/supabase/tests/database/hdb-verification-integrity.test.sql`, written by Sonnet at medium effort from handoff 01.
 
@@ -29,7 +29,7 @@ Independent reviews by the planning model of work produced by the implementation
 
 **Outcome:** the first CI run matched the prediction exactly. See `04-test-evidence.md`.
 
-## S1 step 2: migration (16 November 2026)
+## S1: Migration
 
 **Reviewed:** `SGHomie/BackEnd/supabase/migrations/20261101120000_hdb_verification_location_integrity.sql`, written by Sonnet at medium effort.
 
@@ -50,7 +50,7 @@ Independent reviews by the planning model of work produced by the implementation
 
 **Process note.** The detailed S1 handoff was included in the first push, earlier than the disclosure rule intended. The pushed test file describes the same invariant, so the added exposure is limited. No history was rewritten.
 
-## L0: home page explicit column list (16 November 2026)
+## L0: home page explicit column list
 
 **Reviewed:** the diff to `SGHomie/FrontEnd/src/components/FeaturedListings.tsx` and the new `SGHomie/tests/featured-listings.test.mjs`, written by Sonnet at medium effort from handoff 02.
 
@@ -71,7 +71,7 @@ Independent reviews by the planning model of work produced by the implementation
 - Behaviour against a real database. The test checks the requested column list only.
 - What the realtime new-listing notification delivers to a visitor who is not signed in.
 
-## S2: public listing column contract (16 November 2026)
+## S2: public listing column contract
 
 **Reviewed:** the migration `20261102120000_public_listing_column_contract.sql` and `public-listing-contract.test.sql`, written together by Sonnet at medium effort from handoff 03. Reviewed before the push. Nothing could be executed locally.
 
@@ -100,7 +100,7 @@ Both held in CI. See `04-test-evidence.md`.
 
 **Remaining limitation.** The change closes anonymous access only. Signed-in accounts keep their current access.
 
-## S3: Level 1 service monitoring runner (16 November 2026)
+## S3: Level 1 service monitoring runner
 
 **Reviewed:** `SGHomie/scripts/monitor/checks.mjs`, `classify.mjs`, `SGHomie/scripts/service-monitor.mjs` and `.github/workflows/service-monitor.yml`, read in full. Written by Sonnet at medium effort from handoff 04. The reviewer also ran the focused test and two fixture scenarios locally. No request was made to any real service.
 
@@ -136,7 +136,7 @@ Re-reviewed after the change: the new branch sits after the explicit not-ready c
 - No live run has been made. Hosted behaviour is unverified.
 - Periodic monitoring is not active. The schedule runs only from the default branch.
 
-## S4: sign-up password experience (16 November 2026)
+## S4: sign-up password experience
 
 **Reviewed:** the full diff to `SGHomie/FrontEnd/src/components/AuthModal.tsx` and the changes to the two `auth-modal` test files, written by Sonnet at medium effort from handoff 05. The reviewer re-ran the focused tests, the full Node suite, lint and the typecheck.
 
@@ -169,7 +169,7 @@ Re-reviewed after the change: the new branch sits after the explicit not-ready c
 - The migration must keep the two existing error messages word for word. The tests match on them.
 - The seller edit form resends the stored verification time. It is the same instant, so it does not count as a change today. The migration must not alter that comparison.
 
-## A1 review (16 November 2026, phase 2)
+## A1 review
 
 Outcome: accepted after one round of fixes.
 
@@ -187,7 +187,7 @@ Open, minor:
 - The password inputs have no `autocomplete` attribute. Chrome suggests `new-password` and `current-password`. Folded into the S5 handoff.
 - The strength estimate is a heuristic with a 52-entry word list. It is labelled as an estimate and is not a breach check.
 
-## S5 review (16 November 2026, phase 2)
+## S5 review
 
 Outcome: accepted after one round of fixes.
 
@@ -205,7 +205,7 @@ Open:
 - A reset link opened in a browser that holds another account's session replaces that session. This is client behaviour and unchanged.
 - The full round trip depends on hosted settings not yet confirmed: redirect allow-list, site URL, the default recovery email template, and email rate limits.
 
-## S6 review (16 November 2026, phase 2)
+## S6 review
 
 Outcome: accepted. The planner's code review requested no code change.
 
@@ -222,7 +222,7 @@ Open:
 - If the update fails after the verification sign-in, the browser holds the new session and the earlier session stays valid on the server until it expires.
 - No browser verification of this form.
 
-## B1. Synthetic check evidence flag and route tests (17 November 2026)
+## B1: Synthetic check evidence flag and route tests
 
 Outcome: accepted. The planner read the full diff and requested no change.
 
@@ -241,7 +241,7 @@ Open:
 - The hosted `AUTH_FAILURE` is not repaired and its cause is not confirmed.
 - The repaired flag takes effect on hosted only when `admin-monitoring` and the frontend are deployed.
 
-## B2. Chatbot synthetic check authorization (17 November 2026)
+## B2: Chatbot synthetic check authorization
 
 Outcome: accepted. The planner read the full diff and requested no change.
 
@@ -259,3 +259,21 @@ Open:
 - A pass will support the bearer explanation and will not prove the original cause.
 - The protection of the administrator flag is defined in the migrations and covered by a database test in CI. It has not been checked on the hosted database.
 - No per-administrator limit on synthetic checks, on either the dashboard path or the direct path. Global provider capacity is the only limit.
+
+## B3: Synthetic check validation and diagnostics
+
+Outcome: accepted. The planner read the full diff, probed the classifier by hand and requested no change.
+
+| # | Finding | Kind | Resolution |
+| --- | --- | --- | --- |
+| 1 | The handoff listed surrounding whitespace under both "exact" and "wrapped". | Planning ambiguity, reported by Sonnet. | Whitespace-only differences are "exact". Both classes pass, so the outcome is the same. |
+| 2 | Sonnet did not capture pass and fail counts for the red run of the route tests. | Reporting gap, stated by Sonnet. | Recorded as it is. The green run and the planner's full run are complete. |
+| 3 | A code fence with a language tag around the token is classified as "contains" and fails. | Planner observation from the probe. | Accepted. It keeps the rule narrow. The log will show the class if it happens on hosted. |
+| 4 | Diagnostics reach the log through a callback and are not part of the returned result. | Design choice by Sonnet. | Accepted. A test pins the response body to its ten existing keys. |
+
+What the change does not do: it does not make the check deterministic. The configured model is a free router, and a model that adds a sentence or reasons out loud will still fail, by design.
+
+Open:
+
+- Not deployed. Only `chatbot` needs deploying for this slice.
+- Under the owner's stopping rule, one hosted run follows the deployment. If it fails without an obvious minimal correction, the result and its diagnostic class are recorded as a known limitation.

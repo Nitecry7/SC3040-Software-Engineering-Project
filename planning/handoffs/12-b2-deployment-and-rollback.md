@@ -4,7 +4,6 @@
 | --- | --- |
 | From | Planning model |
 | To | Repository owner |
-| Date | 17 November 2026 |
 | Status | Prepared. Nothing here has been run against the hosted project. Every hosted step needs the owner's approval at the time. |
 
 ## What is deployed now (owner-reported)
@@ -29,7 +28,7 @@ No migration, secret or hosted setting is involved. The B1 dashboard wording is 
 Two sources. Prepare the first before any deployment.
 
 1. **Downloaded from hosted (authoritative).** With the Supabase CLI linked to the project, download both functions into a new folder outside the repository. Check the exact syntax with `supabase functions download --help` first; in current CLI versions it is `supabase functions download chatbot` and `supabase functions download admin-monitoring`. This reads from hosted and changes nothing there. Confirm that the download includes the `_shared` files each function imports.
-2. **Exported from Git (prepared, 17 November 2026).** The folder `sghomie-rollback-d520b64`, next to the repository folder, holds the functions directory and `config.toml` as they were at commit `d520b64` of 31 October: 24 files, including both functions and `_shared`. By Git history the chatbot folder has not changed since that commit, and `admin-monitoring` has changed only by the B1 edit. This copy is from Git, not from hosted. It has not been compared with the deployed code.
+2. **Exported from Git (prepared).** The folder `sghomie-rollback-d520b64`, next to the repository folder, holds the functions directory and `config.toml` as they were at commit `d520b64` of 31 October: 24 files, including both functions and `_shared`. By Git history the chatbot folder has not changed since that commit, and `admin-monitoring` has changed only by the B1 edit. This copy is from Git, not from hosted. It has not been compared with the deployed code.
 
 Before deploying, compare the two copies for `chatbot/`, `admin-monitoring/index.ts` and `_shared/`. If they differ, stop: the hosted code is not what the repository assumes, and the difference must be understood first.
 
@@ -75,3 +74,33 @@ Do not rerun repeatedly. Read the `synthetic_canary` event in the `admin-monitor
 3. Confirm ordinary chat and the admin dashboard.
 
 Rolling back returns the synthetic check to its current failing state and affects nothing else. It creates new version numbers; hosted does not return to versions 42 and 8 by number.
+
+## Addition: B3, chatbot only
+
+Status after B2: both functions were deployed by the owner on 17 November 2026. The check reaches the function and the provider and fails validation.
+
+B3 changes only the `chatbot` function. `admin-monitoring`, the frontend, the database and every setting are untouched.
+
+Before deploying:
+
+1. The B3 commit is pushed and CI has passed.
+2. The rollback source for `chatbot` is the B2 commit `450d02b`, which is what is deployed now. Either download the deployed function first, or redeploy from that commit if needed.
+
+Steps:
+
+1. Deploy `chatbot` only.
+2. Check ordinary chat: the signed-out onboarding reply on the site. No provider call.
+3. Run the Chatbot Synthetic Check once from the admin dashboard. One provider call.
+4. Read the `synthetic_chatbot_canary` event in the chatbot function's log and note four fields: `validation`, `finish_reason`, `served_model`, `output_chars`.
+
+Reading the result:
+
+| Dashboard | `validation` | Meaning |
+| --- | --- | --- |
+| Passed | `exact` or `wrapped` | The check passes on this run. One pass does not show reliability with a free router. |
+| Failed | `truncated`, or `finish_reason` is `length` | The output limit was reached. A higher limit is the obvious minimal correction. |
+| Failed | `contains` | The model added text around the token. No minimal correction that keeps validation strict. Record as a limitation. |
+| Failed | `unrelated` | The model did not follow the instruction. Record as a limitation. |
+| Failed, `INVALID_PROVIDER_RESPONSE` | `empty` | The model returned no visible text, which can happen when a model spends its output on reasoning. Record as a limitation. |
+
+Stopping rule, set by the owner: one deployment and one run. If it fails and the table shows no obvious minimal correction, record the observed result and stop.

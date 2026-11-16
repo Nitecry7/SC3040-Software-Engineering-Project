@@ -1,6 +1,6 @@
 # Authentication and security plan
 
-Findings come from reading source and SQL on 16 November 2026. Nothing here was executed against a database or a hosted service. Security findings are described generically until fixes are live, and this document contains no reproduction steps.
+Findings come from reading source and SQL before implementation began. Nothing here was executed against a database or a hosted service. Security findings are described generically until fixes are live, and this document contains no reproduction steps.
 
 ## Authentication
 
@@ -13,13 +13,13 @@ Findings come from reading source and SQL on 16 November 2026. Nothing here was 
 - Sign-up passes no redirect URL, so the hosted Site URL decides where confirmation links land.
 - The application does not handle the password recovery event or link error parameters, so an expired link currently shows nothing.
 
-### S4. Sign-up password experience (mandatory)
+### S4: Sign-up password experience (mandatory)
 
 - A confirm-password field in sign-up mode. A mismatch blocks submission with an inline message and makes no Supabase call.
 - A show or hide control that is keyboard-usable and labelled for screen readers.
 - Password strength rules stay with Supabase. Its errors are mapped to readable messages.
 
-### S5. Forgot and reset password (conditional)
+### S5: Forgot and reset password (conditional)
 
 - A "Forgot password?" entry in sign-in mode calls `resetPasswordForEmail` with a redirect to a public `/reset-password` route.
 - The confirmation message is identical whether or not an account exists.
@@ -30,7 +30,7 @@ Findings come from reading source and SQL on 16 November 2026. Nothing here was 
 
 Before implementation, the installed auth client is read to confirm when the link fragment is consumed and whether the recovery event can fire before the application subscribes.
 
-### S6. Authenticated password change (conditional)
+### S6: Authenticated password change (conditional)
 
 - A section on the Profile page with current, new and confirm fields.
 - The current password is verified by signing in again before `updateUser` is called. Supabase enforces a current password only when a hosted setting is enabled, and that setting is unverified.

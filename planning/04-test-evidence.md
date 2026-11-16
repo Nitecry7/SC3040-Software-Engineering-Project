@@ -184,7 +184,7 @@ from public.properties;
 - Zero counts mean only that these particular patterns were not found.
 - The migration prevents new inconsistencies through signed-in writes. It does not repair existing rows.
 
-## A1. Password policy and strength estimate (16 November 2026, phase 2)
+## A1: Password policy and strength estimate
 
 Status: implemented in the repository, verified locally. Not committed at the time of writing, not run in CI, not deployed.
 
@@ -214,7 +214,7 @@ Browser check, by the planner, with Playwright against a local dev server at `lo
 
 Limits: no screen reader was used, so the live-region announcement is unverified. Contrast was read from computed colours, not measured with an audit tool. The hosted Auth setting was reported by the owner and not observed.
 
-## S5. Forgot and reset password (16 November 2026, phase 2)
+## S5: Forgot and reset password
 
 Status: implemented in the repository, verified locally. Not committed at the time of writing, not run in CI, not deployed. No reset email has been requested and no real recovery link has been opened.
 
@@ -245,7 +245,7 @@ Not verified in a browser: the new-password form, the success page, the redirect
 
 Planner test-script errors, corrected in a second pass: a hash-only navigation did not reload the page, and a link lookup missed, so two first-pass readings were artefacts and were discarded.
 
-### Update, 16 November 2026: A1 and S5 committed, CI and hosted round trip (owner-reported)
+### Update: A1 and S5 committed, CI and hosted round trip (owner-reported)
 
 Reported by the repository owner. The planner did not observe these runs.
 
@@ -254,7 +254,7 @@ Reported by the repository owner. The planner did not observe these runs.
 
 This covers the items listed above as not verified in a browser for the form, the success page and the confirmation after a real request. Still not exercised: an expired real link, a link that falls back to the site URL, and the profile overlay for an account that still needs profile setup. The frontend changes are not deployed to the hosted site.
 
-## S6. Authenticated change password (16 November 2026, phase 2)
+## S6: Authenticated change password
 
 Status: implemented in the repository, verified locally in the Node suite only. Not committed at the time of writing, not run in CI, not deployed, not seen in a browser.
 
@@ -274,7 +274,7 @@ No browser check was made. The Profile page requires a signed-in session, and no
 
 Statements about server behaviour (recovery sessions exempt from the current-password requirement, other sessions signed out on a password change, the 24-hour rule for secure password change, `current_password` ignored when the setting is off) come from Sonnet's reading of the upstream Supabase Auth source through a summarising fetch tool. They were not checked against the hosted project.
 
-### Update, 17 November 2026: Phase A committed and hosted Auth checks (owner-observed)
+### Update: Phase A committed and hosted Auth checks (owner-observed)
 
 Phase A is committed at `1f8904f`. The results below were observed by the repository owner by hand, against hosted Supabase Auth, with a synthetic account. They are not Playwright runs and the planner did not observe them.
 
@@ -291,7 +291,7 @@ Hosted settings after these checks, owner-reported: "Require current password wh
 
 Not covered by this report: which individual error messages were seen, an expired real link, and behaviour on the deployed site. The frontend is still not deployed.
 
-## Phase B. Chatbot synthetic check (17 November 2026)
+## Phase B: Chatbot synthetic check
 
 ### Original observed failure
 
@@ -321,7 +321,7 @@ The Verify JWT setting is ruled out. Open alternatives:
 
 Still needed from hosted, read-only: the chatbot function's own log for the failed run, the deployed source of the two relevant code blocks, the deployed versions and dates, the state of the project's API key types, and whether the valuation check passes.
 
-### B1. Evidence flag and route tests (17 November 2026)
+### B1: Evidence flag and route tests
 
 Status: implemented in the repository, verified locally in the Node suite only. Not committed at the time of writing, not run in CI, not deployed. The hosted check still fails; this slice does not change its authorization.
 
@@ -339,7 +339,7 @@ The seven route tests for the chatbot function passed before any code change. Th
 
 All of these use a stubbed `fetch` and a stubbed provider. They show nothing about hosted behaviour. The validity of the stored rows against the table's constraints was checked by reading the migration, not by running it. The dashboard wording was checked in the component harness, not in a browser.
 
-### Update, 17 November 2026: B1 committed, further hosted evidence (owner-reported)
+### Update: B1 committed, further hosted evidence (owner-reported)
 
 B1 is committed at `247fa6b`.
 
@@ -364,7 +364,7 @@ Planner's checks in the repository:
 
 What the evidence supports: the request was answered with 401 or 403 before the chatbot function ran, while a request from the same function to the valuation function with an administrator's session token succeeded. What it does not establish: why. The legacy service-role key is a supported credential and is not shown to be invalid. The two requests differ in the bearer, the target function and its Verify JWT setting, and one custom header.
 
-### B2. Synthetic check authorization (17 November 2026)
+### B2: Synthetic check authorization
 
 Status: implemented in the repository, verified locally in the Node suite only. Not committed at the time of writing, not run in CI, not deployed. The hosted check has not been rerun and still fails as far as is known.
 
@@ -385,3 +385,87 @@ Not verified:
 - Hosted behaviour. No hosted or provider call was made. Whether the check passes after deployment is unknown.
 - The Edge Function code is not type-checked by the frontend TypeScript run, and Deno is not installed locally. The functions were exercised only through the Node test harness.
 - Browser preflight was checked at the handler level only.
+
+### Update: B2 committed, CI, deployed, one hosted check (owner-reported)
+
+B2 is committed at `450d02b`. The owner reports that GitHub CI passed on its second attempt; the reason for the first attempt's failure is not recorded here. The owner deployed `chatbot` and `admin-monitoring` and ran the Chatbot Synthetic Check once, at about 2:20 am SGT on 17 November 2026. The planner saw the screenshots and did not run or observe the check.
+
+| Observation (owner screenshots) | Before B2 | After B2 |
+| --- | --- | --- |
+| Dashboard result | Failed, `AUTH_FAILURE`, 19 ms | Failed, `CANARY_VALIDATION_FAILURE`, 4.2 s |
+| Chatbot function invocation | None recorded | One POST, HTTP 200 |
+| Chatbot function log | Nothing | One `synthetic_chatbot_canary` event |
+| Provider and model on the dashboard | Unavailable | OpenRouter, `openrouter/free` |
+| Dashboard evidence line | "Request reached the Edge Function" (unproven at that time) | "Request reached the Edge Function" (now from a validated result) |
+| Valuation synthetic check | Passes | Passes |
+
+What this shows:
+
+- The request is now authorized, reaches the chatbot function and reaches the provider. The authorization repair works on hosted.
+- This supports the explanation that the bearer was the difference. It does not prove why the earlier request was rejected.
+- The check as a whole still fails. The provider returned non-empty text that was not exactly the expected reply. The text is not logged or stored, so the reason is not known.
+
+The hosted check is therefore not yet passing. The acceptance criterion (a Passed result with the expected reply validated) is not met.
+
+### Update: owner-reported results from 16 November not recorded earlier
+
+The owner reported these when authorizing phase 2 on 16 November 2026. They were used in planning but were not written into this file at the time. The planner did not observe them. The section "S1 hosted data check (not yet run)" above is left as written; this entry supersedes its status.
+
+| Item | Owner-reported |
+| --- | --- |
+| S1 and S2 | Verified in CI. Not deployed. |
+| Migration dry run against the hosted project | Exactly two migrations pending: S1 and S2 |
+| Read-only data check on the hosted database | 54 verified listings. Zero matches for each of the four inconsistency checks. |
+| S3 service monitor workflow | Passed in CI. The live step ran with three targets `NOT_CONFIGURED`. |
+| Hosted password policy | At least 8 characters with a lowercase letter, an uppercase letter and a digit |
+
+The data check should be repeated immediately before the migrations are applied, because listings may have changed since.
+
+### B3: Synthetic check validation and diagnostics
+
+Status: implemented in the repository, verified locally in the Node suite only. Not committed at the time of writing, not run in CI, not deployed. No provider call was made.
+
+| Check | Run by | Result |
+| --- | --- | --- |
+| Red run before implementation | Sonnet | The unit test file failed to load because the classifier did not exist yet; the changed route tests failed on the prompt and the log fields. Sonnet did not capture pass and fail counts for the route file. |
+| Focused files after implementation | Sonnet | 67 of 67 pass |
+| Full Node suite (`npm test`) | Planner | 619 of 619 pass (609 plus 10) |
+| `npm run lint` | Planner | 0 errors, the same 2 existing warnings |
+| `npx tsc --noEmit -p tsconfig.app.json` | Planner | exit 0 |
+| `npm run build` | Planner | exit 0 |
+| `git diff --check` | Planner | exit 0 |
+| Classifier probe, 13 extra inputs, run by hand | Planner | Exact and cosmetically wrapped tokens pass. A code fence with a language tag, two trailing full stops, mismatched quotes, extra characters after the token, text before the token, a different case and a repeated token all fail. |
+
+Not verified: whether real free-tier models now return an accepted reply, and whether 128 output tokens is enough for them. Only a hosted run can show that, and one run cannot show reliability, because the configured router chooses a different model per request.
+
+### Final hosted verification: both synthetic checks pass (owner-observed)
+
+B3 is committed at `b49f4ec`, pushed, and the `chatbot` function was deployed by the owner. The owner then ran both synthetic checks from the Admin Monitoring dashboard on the hosted Supabase project. The planner did not run or observe them; the values below are as the owner reported them.
+
+| | Chatbot Synthetic Check | Valuation Synthetic Check |
+| --- | --- | --- |
+| Status | Success | Success |
+| Duration | 7.7 seconds | 52.9 seconds |
+| Provider and configured model | OpenRouter, `openrouter/free` | Not applicable |
+| Expected model version | Not applicable | `hdb-catboost-2025-12-v1` |
+| Observed model version | Not applicable | `hdb-catboost-2025-12-v1` |
+| Dashboard evidence line | Synthetic check passed | Synthetic check passed |
+
+The owner also reports that the `chatbot` and `admin-monitoring` function logs confirm both executions. The deployed functions are current. No further deployment is needed for this work.
+
+How the chatbot check got here:
+
+| Slice | What it changed | Hosted result after it |
+| --- | --- | --- |
+| Before | | `AUTH_FAILURE` in 19 ms. No chatbot invocation. The dashboard claimed the function was reached. |
+| B1 | Corrected the misleading evidence: the dashboard claims the function ran only when the response proves it | Not deployed on its own |
+| B2 | Repaired the authorization path: the administrator's session is forwarded and verified inside the chatbot function | The function and the provider were reached. `CANARY_VALIDATION_FAILURE`. |
+| B3 | A clearer fixed prompt, a larger output limit, acceptance of cosmetic wrapping only, and safe diagnostics | Success |
+
+What these results show, and what they do not:
+
+- Each is one point-in-time execution. It shows that, at that moment, the request was authorized, the function ran, the provider or model service answered, and the response passed validation.
+- They do not show continuous reliability. The chatbot's configured model is a free router that chooses a different model per request, so a later run can fail for reasons unrelated to this work.
+- The valuation check confirms that a prediction was returned in the expected shape from the expected model version. It says nothing about how accurate the model's estimates are.
+- The original rejection of the chatbot check was never explained. The B2 repair working is consistent with the bearer being the difference. It is not proof.
+- The valuation check's long duration is consistent with a free-tier model service waking from sleep. That was not measured.

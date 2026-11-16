@@ -4,10 +4,9 @@
 | --- | --- |
 | From | Planning model |
 | To | Sonnet Medium |
-| Date | 17 November 2026 |
 | Budget | 1 hour |
 | Base | `450d02b` (B2 committed and deployed) |
-| Status | Approved by the repository owner on 17 November 2026, including the tolerance for cosmetic wrapping. |
+| Status | Approved by the repository owner, including the tolerance for cosmetic wrapping. |
 
 If you exceed the budget or get stuck, stop and report status. Do not revert, delete or discard anything.
 

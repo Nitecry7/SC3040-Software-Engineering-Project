@@ -4,7 +4,6 @@
 | --- | --- |
 | From | Planning model |
 | To | Sonnet Medium |
-| Date | 16 November 2026 |
 | Budget | 45 minutes |
 | Starts when | The repository owner authorizes S4 |
 

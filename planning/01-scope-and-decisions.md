@@ -24,7 +24,7 @@ About one day of implementation time is available.
 
 ## How the scope changed
 
-The scope was revised twice during planning on 16 November 2026. Each revision came from the repository owner after reviewing the planner's analysis.
+The scope was revised twice during planning. Each revision came from the repository owner after reviewing the planner's analysis.
 
 1. **Initial brief.** Three workstreams, with an operations assistant ("OpsPilot") as the primary contribution: scheduled checks, incident deduplication, Telegram alerts and an AI investigator with read-only tools.
 2. **First revision.** With one day available, the owner asked for a critical comparison of security and authentication hardening against monitoring automation, without a runtime LLM. The planner recommended monitoring automation alone, because the database security work could not be tested locally.
@@ -46,7 +46,7 @@ The scope was revised twice during planning on 16 November 2026. Each revision c
 | D10 | The CI `database` job must pass before any hosted database change. Every deployment needs the owner's explicit approval. | Deployment safety takes priority over the time budget. |
 | D11 | Security findings are described generically in committed files until fixes are live. | The repository is public and the hosted site is not yet fixed. |
 
-### Update, 16 November 2026: phase 2 authorized
+### Update: phase 2 authorized
 
 The five mandatory slices are committed and CI verified at `0c12329`. The owner then authorized the work below. Entries above are unchanged.
 
@@ -56,21 +56,21 @@ The five mandatory slices are committed and CI verified at `0c12329`. The owner 
 | D13 | One minimum password policy applies to sign-up, password reset and password change: at least 8 characters with a lowercase letter, an uppercase letter and a digit. It mirrors the hosted Auth setting reported by the owner. Sign-in does not apply it. | Supabase remains the final authority. Applying the policy at sign-in would lock out accounts created under the earlier setting. |
 | D14 | The strength rating is an in-house, advisory estimate with no new dependency. It is labelled as an estimate and is not an authentication rule. | The component test harness stubs imports, so a library estimator would not be exercised by component tests, and the established libraries add large dictionaries to the bundle. |
 | D15 | No real sign-up, reset email, provider call, function deployment, hosted setting change or authenticated browser session happens without the owner's approval at the time. | Deployment and hosted-data safety. |
-| D16 | No password history. A user may return to a password used earlier, provided it meets the policy. Only a change to the current password is refused, and that refusal comes from Supabase. The `same_password` message reads "Your new password must be different from your current password." | Owner decision, 16 November 2026. The earlier wording implied a history rule that does not exist. |
+| D16 | No password history. A user may return to a password used earlier, provided it meets the policy. Only a change to the current password is refused, and that refusal comes from Supabase. The `same_password` message reads "Your new password must be different from your current password." | Owner decision. The earlier wording implied a history rule that does not exist. |
 | D17 | The password-change form asks for the current password and checks it before the update. The hosted settings "Secure password change" and "Require current password when updating" are both off (owner-reported) and are not changed by this work. | With the hosted setting off, the server does not check the current password, so the form must, or the field would be decorative. The check is client-side and is described as such. |
 
-### Update, 17 November 2026: hosted Auth setting and Phase B
+### Update: hosted Auth setting and Phase B
 
 Entries above are unchanged. D17 describes the settings as they were on 16 November.
 
 | ID | Decision | Reason |
 | --- | --- | --- |
-| D18 | The owner enabled the hosted setting "Require current password when updating". "Secure password change" stays off. The password policy is unchanged. | Owner action, reported 17 November 2026. The server now enforces what the change-password form previously checked only in the browser. |
+| D18 | The owner enabled the hosted setting "Require current password when updating". "Secure password change" stays off. The password policy is unchanged. | Owner action. The server now enforces what the change-password form previously checked only in the browser. |
 | D19 | In a synthetic check result, `edge_reached` is true only when the response carries validated evidence that the chatbot handler answered. False means execution was not confirmed. It does not mean the function did not run. Stored results are not rewritten. | The flag was set for every non-OK response, so the dashboard claimed evidence it did not have. |
-| D20 | The chatbot synthetic check's authorization is not changed until the hosted cause is confirmed and the owner approves a design. The service-role bearer is a hypothesis only. | Owner decision, 17 November 2026. |
-| D21 | Scheduled deep canaries will not store the owner's personal administrator session token or an unrestricted service-role key in GitHub Actions. No scheduling change is made until Phase B is repaired, reviewed and verified on hosted. | Owner decision, 17 November 2026. |
+| D20 | The chatbot synthetic check's authorization is not changed until the hosted cause is confirmed and the owner approves a design. The service-role bearer is a hypothesis only. | Owner decision. |
+| D21 | Scheduled deep canaries will not store the owner's personal administrator session token or an unrestricted service-role key in GitHub Actions. No scheduling change is made until Phase B is repaired, reviewed and verified on hosted. | Owner decision. |
 
-### Update, 17 November 2026: chatbot synthetic check authorization (B2)
+### Update: chatbot synthetic check authorization (B2)
 
 | ID | Decision | Reason |
 | --- | --- | --- |
@@ -78,6 +78,14 @@ Entries above are unchanged. D17 describes the settings as they were on 16 Novem
 | D23 | Accepted trade-off: an administrator can call the route directly, and such a call is not written to `synthetic_canary_runs`. It still runs only the fixed prompt, reserves global provider capacity and appears in the chatbot function's log. No new rate limiting in this slice. | Owner decision. |
 | D24 | The internal-action header is removed from the chatbot's browser CORS allow-list. CORS is not an authorization boundary; the administrator check is. | No browser code sends the header. |
 | D25 | A passing hosted check after deployment will support the bearer explanation. It will not prove the original cause. | Owner decision on evidence wording. |
+
+### Update: synthetic check validation (B3) and closure
+
+| ID | Decision | Reason |
+| --- | --- | --- |
+| D26 | The chatbot synthetic check accepts the expected token exactly, or with cosmetic wrapping only. Anything else fails. The check keeps the chatbot's configured model and does not get one of its own. Diagnostics are a fixed set of labels and a length, in the function log only. | Owner decision. A separate model would stop the check from testing the path users get. |
+| D27 | Troubleshooting of the synthetic check ends after one further deployment and one hosted run. A remaining failure is documented as a limitation. | Owner decision, to close the assessment. |
+| D28 | The session export stays out of the repository until the owner has read it and the two database fixes are applied on hosted. | It contains detailed discussion of findings covered by D11. |
 
 ## Known limitation of the public listing fix
 

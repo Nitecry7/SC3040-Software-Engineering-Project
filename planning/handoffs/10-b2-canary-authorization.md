@@ -4,10 +4,9 @@
 | --- | --- |
 | From | Planning model |
 | To | Sonnet Medium |
-| Date | 17 November 2026 |
 | Budget | 1.5 hours |
 | Base | `247fa6b` (B1 committed) |
-| Status | Approved by the repository owner on 17 November 2026. |
+| Status | Approved by the repository owner. |
 
 If you exceed the budget or get stuck, stop and report status. Do not revert, delete or discard anything.
 
@@ -52,7 +51,7 @@ Do not change `getAuthContext`. Confirm from its code, and state in your report,
 
 Remove `x-sghomie-internal-action` from `Access-Control-Allow-Headers`. The frontend never sends this header, and server-to-server calls are not subject to CORS. First search the repository to confirm nothing browser-side sends it; if something does, stop and report.
 
-## Owner requirements added on approval, 17 November 2026
+## Owner requirements added on approval
 
 - Status: approved by the owner (option B, with the CORS change). You may start.
 - The internal-action header and the fixed prompt stay. The route never accepts a prompt from the caller and never runs without a verified administrator.

@@ -4,7 +4,6 @@
 | --- | --- |
 | From | Planning model |
 | To | Repository owner, then Sonnet Medium once authorized |
-| Date | 17 November 2026 |
 | Status | Preparation only. Nothing here is implemented. |
 
 No scheduling change is made until Phase B is repaired, reviewed and verified on hosted (decision D21). No runtime LLM investigator, Telegram alert or new dashboard panel.

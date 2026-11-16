@@ -53,7 +53,7 @@ Database slices add new files only. No applied migration and no existing databas
 - **S2.** Anonymous callers receive only an explicit allow-list of listing fields. Access for signed-in accounts is unchanged, which leaves the limitation recorded in `01-scope-and-decisions.md`. Database-level regression tests assert the allow-list exactly, so a newly added field is private unless granted.
 - **L0** must be live before the S2 migration is applied to any hosted database, because the home page currently requests every field as an anonymous caller.
 
-## S3. Monitoring runner
+## S3: Monitoring runner
 
 | Module | Responsibility |
 | --- | --- |

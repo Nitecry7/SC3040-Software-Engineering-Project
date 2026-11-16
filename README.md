@@ -402,6 +402,7 @@ integration logic. `hooks/` and `types/` contain shared hooks and TypeScript typ
 | 🧪 [Historical testing report](SGHomie/docs/testing/test-report.md) | Original pre-merge results and preserved evidence |
 | 🔄 [Historical main merge verification](SGHomie/docs/testing/merge-verification.md) | 28 October 2026 `main` snapshot, retained as historical evidence |
 | ▶️ [Running the tests](SGHomie/tests/README.md) | Final `main` release verification, application, ML, local database, evidence capture, and CI commands |
+| 🧪 [NCS assessment overview](planning/README.md) | Assessment scope, agent workflow, evidence, reviews and release plan |
 | ⚠️ [Archived migrations](archived_migrations/README.md) | Historical migration notice |
 
 ## 👥 Contributors

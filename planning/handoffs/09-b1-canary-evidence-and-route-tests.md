@@ -4,7 +4,6 @@
 | --- | --- |
 | From | Planning model |
 | To | Sonnet Medium |
-| Date | 17 November 2026 |
 | Budget | 1 hour |
 | Base | `1f8904f`, working tree holds only planning edits |
 

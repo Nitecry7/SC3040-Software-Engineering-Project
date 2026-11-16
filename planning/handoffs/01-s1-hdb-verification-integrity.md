@@ -6,7 +6,6 @@
 | --- | --- |
 | From | Planning model |
 | To | Sonnet Medium |
-| Date | 16 November 2026 |
 | Budget | 1.5 hours |
 | Starts when | The repository owner authorizes S1 |
 
@@ -80,7 +79,7 @@ Never replace coordinates when `NEW.hdb_verified` is true and both coordinates a
 
 ### Decided: canonical `detailed_location`
 
-The repository owner decided on 16 November 2026 that consistency takes priority over preserving client formatting.
+The repository owner decided that consistency takes priority over preserving client formatting.
 
 - The seller dashboard already sends `Block <block> <street>`, so its listings are unchanged.
 - The chatbot sends the lookup's display address, a different string. After this change, chatbot-created listings store the canonical form instead. This is an intended, visible change.
