@@ -9,7 +9,7 @@ const env = { SUPABASE_URL: 'https://database.example', SUPABASE_ANON_KEY: 'publ
 globalThis.Deno = { env: { get(name) { return env[name]; } }, serve() {} };
 const { handleRequest } = await import('../BackEnd/supabase/functions/chatbot/index.ts');
 
-const FIXED_PROMPT = 'Reply with exactly this text and nothing else: SGHOMIE_CANARY_OK';
+const FIXED_PROMPT = 'Output only the following token. Do not add quotes, punctuation, formatting, reasoning or any other text.\nSGHOMIE_CANARY_OK';
 const REPLY = 'SGHOMIE_CANARY_OK';
 const ADMIN = 'Bearer synthetic-admin-session';
 const USER_ID = '44444444-4444-4444-8444-444444444444';
@@ -133,7 +133,7 @@ test('canary route 200 body contains no prompt, reply text, key or token', async
   const response = await handleRequest(canaryRequest(ADMIN));
   assert.equal(response.status, 200);
   const text = await response.text();
-  assert.doesNotMatch(text, /SGHOMIE_CANARY_OK|Reply with exactly/);
+  assert.doesNotMatch(text, /SGHOMIE_CANARY_OK|Output only the following token/);
   for (const secret of [SERVICE_KEY, PROVIDER_KEY, 'synthetic-admin-session']) assert.equal(text.includes(secret), false);
 });
 
@@ -176,4 +176,34 @@ test('canary route reports CANARY_VALIDATION_FAILURE for unexpected provider tex
   const text = await response.text();
   assert.equal(JSON.parse(text).synthetic_canary.failure_category, 'CANARY_VALIDATION_FAILURE');
   assert.equal(text.includes('private-unexpected-provider-text'), false);
+});
+
+test('canary route response body keeps exactly the same keys and no diagnostics', async (t) => {
+  t.mock.method(globalThis, 'fetch', buildFetch([]));
+  const body = await (await handleRequest(canaryRequest(ADMIN))).json();
+  assert.deepEqual(Object.keys(body), ['synthetic_canary']);
+  assert.deepEqual(Object.keys(body.synthetic_canary), ['status', 'failure_category', 'request_id', 'provider', 'model',
+    'edge_reached', 'upstream_reached', 'response_valid', 'canary_valid', 'duration_ms']);
+});
+
+test('canary route logs the four diagnostic fields and never the provider text', async (t) => {
+  t.mock.method(globalThis, 'fetch', buildFetch([], { providerText: 'private-unexpected-provider-text' }));
+  const info = t.mock.method(console, 'info', () => {});
+  assert.equal((await handleRequest(canaryRequest(ADMIN))).status, 200);
+  const lines = info.mock.calls.map((call) => String(call.arguments[0])).filter((line) => line.includes('synthetic_chatbot_canary'));
+  assert.equal(lines.length, 1);
+  const event = JSON.parse(lines[0]);
+  assert.equal(event.validation, 'unrelated');
+  assert.equal(event.finish_reason, 'stop');
+  assert.equal(event.served_model, 'gpt-6-luna-served');
+  assert.equal(event.output_chars, 'private-unexpected-provider-text'.length);
+  assert.equal(lines[0].includes('private-unexpected-provider-text'), false);
+  assert.doesNotMatch(lines[0], /Output only the following token/);
+});
+
+test('canary route accepts a wrapped provider reply as success', async (t) => {
+  t.mock.method(globalThis, 'fetch', buildFetch([], { providerText: '`SGHOMIE_CANARY_OK`' }));
+  const response = await handleRequest(canaryRequest(ADMIN));
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).synthetic_canary.status, 'success');
 });

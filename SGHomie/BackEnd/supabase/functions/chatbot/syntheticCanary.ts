@@ -1,5 +1,44 @@
-const CANARY_PROMPT = 'Reply with exactly this text and nothing else: SGHOMIE_CANARY_OK';
 const CANARY_REPLY = 'SGHOMIE_CANARY_OK';
+const CANARY_PROMPT = `Output only the following token. Do not add quotes, punctuation, formatting, reasoning or any other text.\n${CANARY_REPLY}`;
+
+export type CanaryValidation = 'exact' | 'wrapped' | 'truncated' | 'contains' | 'unrelated' | 'empty';
+export type CanaryDiagnostics = {
+  validation: CanaryValidation | null;
+  finish_reason: 'stop' | 'length' | 'content_filter' | 'tool_calls' | 'other' | null;
+  served_model: string | null;
+  output_chars: number;
+};
+
+// Cosmetic wrappers that may surround the token: paired quotes, backticks, emphasis markers.
+const WRAPPERS: Array<[string, string]> = [
+  ['```', '```'], ['**', '**'], ['__', '__'], ['"', '"'], ["'", "'"], ['`', '`'], ['*', '*'], ['_', '_'],
+  ['“', '”'], ['‘', '’'],
+];
+
+// Pure classifier. Only the token itself, optionally wrapped cosmetically, is accepted.
+export function classifyCanaryText(text: unknown): CanaryValidation {
+  if (typeof text !== 'string' || text.trim().length === 0) return 'empty';
+  const trimmed = text.trim();
+  if (trimmed === CANARY_REPLY) return 'exact';
+  let inner = trimmed;
+  let fullStopUsed = false;
+  for (let depth = 0; depth < 6 && inner !== CANARY_REPLY; depth += 1) {
+    if (!fullStopUsed && inner.endsWith('.')) { inner = inner.slice(0, -1).trim(); fullStopUsed = true; continue; }
+    const pair = WRAPPERS.find(([open, close]) => inner.length > open.length + close.length
+      && inner.startsWith(open) && inner.endsWith(close));
+    if (!pair) break;
+    inner = inner.slice(pair[0].length, inner.length - pair[1].length).trim();
+  }
+  if (inner === CANARY_REPLY) return 'wrapped';
+  if (CANARY_REPLY.startsWith(trimmed)) return 'truncated';
+  if (text.includes(CANARY_REPLY)) return 'contains';
+  return 'unrelated';
+}
+
+function safeFinishReason(value: unknown): CanaryDiagnostics['finish_reason'] {
+  if (typeof value !== 'string') return null;
+  return value === 'stop' || value === 'length' || value === 'content_filter' || value === 'tool_calls' ? value : 'other';
+}
 
 export type SyntheticChatbotCanary = {
   status: 'success' | 'failure' | 'unknown';
@@ -47,7 +86,9 @@ export async function runSyntheticChatbotCanary(dependencies: {
   reserveProviderCapacity: () => Promise<void>;
   requestId?: () => string;
   now?: () => number;
+  onDiagnostics?: (diagnostics: CanaryDiagnostics) => void;
 }): Promise<SyntheticChatbotCanary> {
+  const diagnostics: CanaryDiagnostics = { validation: null, finish_reason: null, served_model: null, output_chars: 0 };
   const now = dependencies.now ?? (() => performance.now());
   const startedAt = now();
   const requestId = (dependencies.requestId ?? (() => crypto.randomUUID()))();
@@ -68,7 +109,7 @@ export async function runSyntheticChatbotCanary(dependencies: {
       model: configured.model,
       messages: [{ role: 'user', content: CANARY_PROMPT }],
       temperature: 0,
-      max_tokens: 16,
+      max_tokens: 128,
       stream: false,
     });
     upstreamReached = true;
@@ -83,7 +124,13 @@ export async function runSyntheticChatbotCanary(dependencies: {
         && (choices[0] as { message: { content?: unknown } }).message !== null
         ? (choices[0] as { message: { content?: unknown } }).message.content : undefined;
       responseValid = typeof content === 'string' && content.trim().length > 0;
-      canaryValid = responseValid && content!.trim() === CANARY_REPLY;
+      const validation = classifyCanaryText(content);
+      const firstChoice = Array.isArray(choices) ? choices[0] as { finish_reason?: unknown } | null | undefined : undefined;
+      diagnostics.validation = validation;
+      diagnostics.finish_reason = safeFinishReason(firstChoice?.finish_reason);
+      diagnostics.served_model = safeLabel((response as { model?: unknown }).model);
+      diagnostics.output_chars = typeof content === 'string' ? Math.min(content.length, 9999) : 0;
+      canaryValid = validation === 'exact' || validation === 'wrapped';
       status = canaryValid ? 'success' : 'failure';
       failureCategory = canaryValid ? null : responseValid ? 'CANARY_VALIDATION_FAILURE' : 'INVALID_PROVIDER_RESPONSE';
     }
@@ -92,6 +139,7 @@ export async function runSyntheticChatbotCanary(dependencies: {
     status = failure.status;
     failureCategory = failure.category;
   }
+  try { dependencies.onDiagnostics?.(diagnostics); } catch { /* diagnostics must never change the result */ }
   return {
     status, failure_category: failureCategory, request_id: requestId,
     provider, model, edge_reached: true, upstream_reached: upstreamReached,

@@ -20,7 +20,7 @@ import { profileListingFilters } from './buyerRequirements.ts';
 import { buyOnboarding, onboardingAction, REGISTRATION_MESSAGE, SELL_ONBOARDING } from './onboarding.ts';
 import { ChatQuotaError, ChatQuotaUnavailableError, reserveProviderCapacity, reserveUserInteraction, type ChatQuotaSnapshot } from './quota.ts';
 import { createChatTelemetry, createTelemetryStore, containsContactInformation, CONTACT_INPUT_REPLY, detectSensitiveInput, observeChatStream, SENSITIVE_INPUT_WARNING, type InteractionStatus } from './telemetry.ts';
-import { runSyntheticChatbotCanary } from './syntheticCanary.ts';
+import { runSyntheticChatbotCanary, type CanaryDiagnostics } from './syntheticCanary.ts';
 
 // CORS is not an authorization boundary. The internal-action header is not listed because no browser
 // code sends it; the administrator check on the synthetic route is what protects that route.
@@ -852,7 +852,9 @@ export async function handleRequest(req: Request): Promise<Response> {
     if (!isAdmin) return jsonResponse({ error: 'Not found' }, 404);
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    let diagnostics = null as CanaryDiagnostics | null;
     const result = await runSyntheticChatbotCanary({
+      onDiagnostics: (value) => { diagnostics = value; },
       createProvider: () => createChatProvider(name => Deno.env.get(name)),
       reserveProviderCapacity: async () => {
         if (!supabaseUrl || !serviceRoleKey) throw new ChatQuotaUnavailableError();
@@ -862,7 +864,9 @@ export async function handleRequest(req: Request): Promise<Response> {
     });
     console.info(JSON.stringify({ event: 'synthetic_chatbot_canary', request_id: result.request_id,
       status: result.status, failure_category: result.failure_category, duration_ms: result.duration_ms,
-      provider: result.provider, model: result.model, upstream_reached: result.upstream_reached }));
+      provider: result.provider, model: result.model, upstream_reached: result.upstream_reached,
+      validation: diagnostics?.validation ?? null, finish_reason: diagnostics?.finish_reason ?? null,
+      served_model: diagnostics?.served_model ?? null, output_chars: diagnostics?.output_chars ?? 0 }));
     return jsonResponse({ synthetic_canary: result });
   }
 
