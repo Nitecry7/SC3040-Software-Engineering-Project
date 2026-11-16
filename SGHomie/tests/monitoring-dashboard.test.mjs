@@ -424,6 +424,25 @@ test('synthetic checks run only after an explicit click and show the persisted r
   assert.equal(calls.filter((call) => call.action === 'run_canary').length, 1);
 });
 
+test('synthetic check evidence says execution is not confirmed when the edge was not reached', async () => {
+  const pending = deferred();
+  const app = makeApp((_name, options) => options.body.action === 'run_canary' ? pending.promise
+    : Promise.resolve({ data: dashboard(options.body.range), error: null }));
+  app.render(); await app.effects(); await flush(app);
+  click(app, 'Services');
+  const cardNode = nodes(expandComponents(app.render())).find((node) => node.type === 'article' && content(node).includes('Chatbot Synthetic Check'));
+  nodes(cardNode).find((node) => node.type === 'button' && content(node).includes('Run Check')).props.onClick(); app.render();
+  pending.resolve({ data: { dashboard_v2: { synthetic_canary: {
+    canary_type: 'chatbot', status: 'failure', failure_category: 'AUTH_FAILURE', started_at: stamp,
+    completed_at: stamp, duration_ms: 19, request_id: null,
+    expected_model_version: null, observed_model_version: null, provider: null, model: null,
+    edge_reached: false, upstream_reached: false, response_valid: false, canary_valid: false,
+  } } }, error: null });
+  await flush(app);
+  assert.match(viewText(app), /Edge Function execution not confirmed/);
+  assert.doesNotMatch(viewText(app), /did not reach the Edge Function/);
+});
+
 test('valuation request details open inline without a modal or page dimming', async () => {
   const id = '6d2e9c2e-06c9-4ef0-a47b-60d9071e1df8';
   const summary = dashboard('7d');

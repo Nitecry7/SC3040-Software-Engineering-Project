@@ -120,8 +120,9 @@ async function runChatbotCanary(supabaseUrl: string, anonKey: string, serviceKey
       ? (payload as Record<string, unknown>).synthetic_canary : null;
     if (!response.ok || typeof result !== 'object' || result === null || Array.isArray(result)) {
       const category = response.status === 401 || response.status === 403 ? 'AUTH_FAILURE' : 'CHATBOT_EDGE_FAILURE';
-      return canaryFailure('chatbot', category, startedAt, performance.now() - started,
-        { edge_reached: true });
+      // edge_reached=false means "execution not confirmed", never "did not run": only a valid
+      // synthetic_canary object proves the chatbot function executed.
+      return canaryFailure('chatbot', category, startedAt, performance.now() - started);
     }
     const body = result as Record<string, unknown>;
     const status = ['success', 'failure', 'unknown'].includes(String(body.status)) ? body.status : 'unknown';
@@ -131,8 +132,7 @@ async function runChatbotCanary(supabaseUrl: string, anonKey: string, serviceKey
       && (body.provider === null || safeProvider(body.provider) !== null)
       && (body.model === null || safeModelLabel(body.model) !== null)
       && ['upstream_reached', 'response_valid', 'canary_valid'].every((key) => typeof body[key] === 'boolean');
-    if (!valid) return canaryFailure('chatbot', 'CHATBOT_EDGE_FAILURE', startedAt, performance.now() - started,
-      { edge_reached: true });
+    if (!valid) return canaryFailure('chatbot', 'CHATBOT_EDGE_FAILURE', startedAt, performance.now() - started);
     const normalizedStatus = status as 'success' | 'failure' | 'unknown';
     return safeCanaryResult({ canary_type: 'chatbot', status: normalizedStatus,
       failure_category: failureCategory, started_at: startedAt, completed_at: new Date().toISOString(),

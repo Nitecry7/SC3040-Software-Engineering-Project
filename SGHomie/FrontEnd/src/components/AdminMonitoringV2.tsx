@@ -271,7 +271,7 @@ function SyntheticCanaryCard({ type, result, pending, message, onRun }: {
       {type === 'chatbot' && result && <MetricDatum label="Model" value={result.model} />}
       {type === 'valuation' && result && <MetricDatum label="Expected Model" value={result.expected_model_version} />}
       {type === 'valuation' && result && <MetricDatum label="Observed Model" value={result.observed_model_version} />}
-      {result && <MetricDatum label="Evidence" value={result.canary_valid ? 'Synthetic check passed' : result.edge_reached ? 'Request reached the Edge Function' : 'Check did not reach the Edge Function'} />}
+      {result && <MetricDatum label="Evidence" value={result.canary_valid ? 'Synthetic check passed' : result.edge_reached ? 'Request reached the Edge Function' : 'Edge Function execution not confirmed'} />}
     </dl>
     {message && <p role="alert" className="mt-3 text-sm text-amber-800">{message}</p>}
     <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">

@@ -221,3 +221,22 @@ Open:
 - The current-password check is client-side while the hosted "Require current password when updating" setting is off. A caller with a valid session token can still change the password through the API without it.
 - If the update fails after the verification sign-in, the browser holds the new session and the earlier session stays valid on the server until it expires.
 - No browser verification of this form.
+
+## B1. Synthetic check evidence flag and route tests (17 November 2026)
+
+Outcome: accepted. The planner read the full diff and requested no change.
+
+| # | Finding | Kind | Resolution |
+| --- | --- | --- | --- |
+| 1 | The chatbot check set `edge_reached` to true for every rejected or malformed response, so the dashboard reported evidence it did not have. | Existing defect, found during the Phase B investigation. | Fixed. The flag is true only for a validated result object. False is worded as "execution not confirmed". |
+| 2 | No test covered the chatbot function's handling of the synthetic check route. | Existing gap. | Seven tests added. They passed without a code change. |
+| 3 | The valuation check sets the same flag to true for any response it receives, including a rejected one. | Existing, same class as finding 1. Reported by Sonnet at the planner's request. | Not changed. Outside this slice; for the owner to decide. |
+| 4 | Sonnet added one optional hook to the `admin-monitoring` test helper so the stubbed chatbot response can be set per test. | Permitted by the handoff. Existing tests behave as before. | Accepted. |
+| 5 | The route tests assert "provider not built" as "no network call was made". | Limit of the existing harness. | Accepted. A capacity reservation or provider request would be a network call, so both are covered. |
+
+No existing test was edited. Results stored before this change are not rewritten, so older rows may still carry the earlier, unproven flag.
+
+Open:
+
+- The hosted `AUTH_FAILURE` is not repaired and its cause is not confirmed.
+- The repaired flag takes effect on hosted only when `admin-monitoring` and the frontend are deployed.

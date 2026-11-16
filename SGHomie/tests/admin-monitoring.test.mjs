@@ -231,6 +231,7 @@ async function fixture(options = {}) {
     async fetch(url, init) {
       probes.push({ url: String(url), authorization: init.headers?.Authorization ?? null, signal: init.signal, redirect: init.redirect, body: init.body });
       if (options.networkError) throw new Error('private-network-error');
+      if (String(url).endsWith('/functions/v1/chatbot') && options.chatbotFetch) return options.chatbotFetch(url, init);
       if (String(url).endsWith('/functions/v1/chatbot')) return Response.json({ synthetic_canary: options.chatbotCanary ?? {
         status: 'success', failure_category: null, request_id: interactionId, provider: 'openrouter', model: 'openrouter/free',
         upstream_reached: true, response_valid: true, canary_valid: true,
@@ -343,6 +344,103 @@ test('on-demand chatbot synthetic check is admin-only, fixed-input, persisted, a
   assert.ok(probe.signal);
   assert.equal(run.rpcCalls.some((item) => item.name === 'record_monitoring_alert'), false);
   assert.doesNotMatch(JSON.stringify(body), /SGHOMIE_CANARY_OK|synthetic-service-secret|secret|response text/);
+});
+
+const validChatbotResult = (overrides = {}) => ({ status: 'success', failure_category: null, request_id: interactionId,
+  provider: 'openrouter', model: 'openrouter/free', upstream_reached: true, response_valid: true, canary_valid: true, ...overrides });
+const chatbotRun = async (chatbotFetch, req = request({ action: 'run_canary', canary_type: 'chatbot' }), options = {}) => {
+  const run = await fixture({ ...options, chatbotFetch });
+  const response = await run.handler(req);
+  const stored = run.writes.find((item) => item.table === 'synthetic_canary_runs')?.record;
+  return { run, response, body: await response.clone().json(), stored };
+};
+const assertNoLeak = (...values) => {
+  const text = JSON.stringify(values);
+  assert.doesNotMatch(text, /synthetic-service-secret|synthetic-user-session|SGHOMIE_CANARY_OK|Reply with exactly|private-reply|private-prompt/);
+};
+
+for (const [status, category] of [[401, 'AUTH_FAILURE'], [403, 'AUTH_FAILURE'], [404, 'CHATBOT_EDGE_FAILURE']]) {
+  test(`chatbot synthetic check records ${status} as ${category} without claiming the function ran`, async () => {
+    const { response, body, stored } = await chatbotRun(() => Response.json({ error: 'private-reply' }, { status }));
+    assert.equal(response.status, 200);
+    assert.equal(stored.failure_category, category);
+    assert.equal(stored.status, 'failure');
+    assert.equal(stored.edge_reached, false);
+    assert.equal(body.dashboard_v2.synthetic_canary.edge_reached, false);
+    assertNoLeak(body, stored);
+  });
+}
+
+test('chatbot synthetic check treats a 200 without synthetic_canary as an unconfirmed edge failure', async () => {
+  const { body, stored } = await chatbotRun(() => Response.json({ choices: [{ message: { content: 'private-reply' } }] }));
+  assert.equal(stored.failure_category, 'CHATBOT_EDGE_FAILURE');
+  assert.equal(stored.status, 'failure');
+  assert.equal(stored.edge_reached, false);
+  assertNoLeak(body, stored);
+});
+
+test('chatbot synthetic check treats a 200 with a non-UUID request_id as an unconfirmed edge failure', async () => {
+  const { body, stored } = await chatbotRun(() => Response.json({ synthetic_canary: validChatbotResult({ request_id: 'not-a-uuid' }) }));
+  assert.equal(stored.failure_category, 'CHATBOT_EDGE_FAILURE');
+  assert.equal(stored.edge_reached, false);
+  assertNoLeak(body, stored);
+});
+
+test('chatbot synthetic check marks the edge reached for a valid success result', async () => {
+  const { stored } = await chatbotRun(() => Response.json({ synthetic_canary: validChatbotResult() }));
+  assert.equal(stored.status, 'success');
+  assert.equal(stored.edge_reached, true);
+  assert.equal(stored.canary_valid, true);
+});
+
+test('chatbot synthetic check stores a valid failure result with edge_reached true', async () => {
+  const { body, stored } = await chatbotRun(() => Response.json({ synthetic_canary: validChatbotResult({
+    status: 'failure', failure_category: 'PROVIDER_UNAVAILABLE', upstream_reached: false, response_valid: false, canary_valid: false }) }));
+  assert.equal(stored.status, 'failure');
+  assert.equal(stored.failure_category, 'PROVIDER_UNAVAILABLE');
+  assert.equal(stored.edge_reached, true);
+  assert.equal(stored.upstream_reached, false);
+  assertNoLeak(body, stored);
+});
+
+test('chatbot synthetic check stores a valid unknown result with edge_reached true', async () => {
+  const { body, stored } = await chatbotRun(() => Response.json({ synthetic_canary: validChatbotResult({
+    status: 'unknown', failure_category: 'PROVIDER_TIMEOUT', upstream_reached: false, response_valid: false, canary_valid: false }) }));
+  assert.equal(stored.status, 'unknown');
+  assert.equal(stored.failure_category, 'PROVIDER_TIMEOUT');
+  assert.equal(stored.edge_reached, true);
+  assertNoLeak(body, stored);
+});
+
+test('chatbot synthetic check timeout is unknown and does not claim the edge was reached', async () => {
+  const { body, stored } = await chatbotRun(() => { throw Object.assign(new Error('private-reply'), { name: 'TimeoutError' }); });
+  assert.equal(stored.status, 'unknown');
+  assert.equal(stored.failure_category, 'PROVIDER_TIMEOUT');
+  assert.equal(stored.edge_reached, false);
+  assertNoLeak(body, stored);
+});
+
+test('chatbot synthetic check refuses non-admins and unauthenticated callers before any chatbot request', async () => {
+  const nonAdmin = await chatbotRun(() => assert.fail('chatbot must not be called'), undefined, { nonAdmin: true });
+  assert.equal(nonAdmin.response.status, 403);
+  assert.equal(nonAdmin.run.probes.length, 0);
+  assert.equal(nonAdmin.run.writes.length, 0);
+  assertNoLeak(nonAdmin.body);
+  const noAuth = await fixture({ chatbotFetch: () => assert.fail('chatbot must not be called') });
+  const response = await noAuth.handler(edgeRequest({ action: 'run_canary', canary_type: 'chatbot' }));
+  assert.equal(response.status, 401);
+  assert.equal(noAuth.probes.length, 0);
+  assert.equal(noAuth.writes.length, 0);
+  assertNoLeak(await response.json());
+});
+
+test('chatbot synthetic check rejects extra request keys with 400 and no chatbot request', async () => {
+  const { run, response, body } = await chatbotRun(() => assert.fail('chatbot must not be called'),
+    request({ action: 'run_canary', canary_type: 'chatbot', prompt: 'private-prompt' }));
+  assert.equal(response.status, 400);
+  assert.equal(run.probes.length, 0);
+  assert.equal(run.writes.length, 0);
+  assertNoLeak(body);
 });
 
 test('synthetic check requests reject arbitrary types and writes fail closed', async () => {

@@ -273,3 +273,68 @@ The change from X to Y and back to X is covered by a test against a stub that re
 No browser check was made. The Profile page requires a signed-in session, and no authenticated browser session was used. Layout, focus order and the real Supabase error shapes for this form are unverified.
 
 Statements about server behaviour (recovery sessions exempt from the current-password requirement, other sessions signed out on a password change, the 24-hour rule for secure password change, `current_password` ignored when the setting is off) come from Sonnet's reading of the upstream Supabase Auth source through a summarising fetch tool. They were not checked against the hosted project.
+
+### Update, 17 November 2026: Phase A committed and hosted Auth checks (owner-observed)
+
+Phase A is committed at `1f8904f`. The results below were observed by the repository owner by hand, against hosted Supabase Auth, with a synthetic account. They are not Playwright runs and the planner did not observe them.
+
+| Check | Result (owner-observed) |
+| --- | --- |
+| Sign-up password guidance, confirmation and show or hide | Work |
+| Forgot password | A real recovery email was sent |
+| Reset password | The password was changed |
+| Sign-in with the new password | Works |
+| Change password on the Profile page | Works |
+| Current-password and new-password validation | Behave correctly |
+
+Hosted settings after these checks, owner-reported: "Require current password when updating" is on, "Secure password change" is off, and the policy of eight characters with lowercase, uppercase and a digit is unchanged.
+
+Not covered by this report: which individual error messages were seen, an expired real link, and behaviour on the deployed site. The frontend is still not deployed.
+
+## Phase B. Chatbot synthetic check (17 November 2026)
+
+### Original observed failure
+
+On the hosted Admin Monitoring dashboard, the Chatbot Synthetic Check showed Failed, result detail "AUTH FAILURE", duration 19 ms, provider and model unavailable, evidence "Request reached the Edge Function" (owner screenshot, run at 12:38 am SGT on 17 November 2026).
+
+### Hosted evidence supplied by the owner (screenshots)
+
+| Evidence | What it shows |
+| --- | --- |
+| Chatbot function settings | "Verify JWT with legacy secret" is off, matching `config.toml` |
+| `admin-monitoring` logs, 00:35 to 00:40 | Two `synthetic_canary` events for the chatbot with `AUTH_FAILURE`, about 19 and 21 ms |
+| `admin-monitoring` overview | 9 invocations at 12:38 am, none counted as errors |
+| Chatbot overview | 0 invocations in a 15-minute window whose capture time is not known; deployed 16 days earlier |
+
+### Planner's reading of the repository
+
+- `admin-monitoring` reports `AUTH_FAILURE` only when the chatbot URL answers 401 or 403.
+- The repository's chatbot code answers a wrong credential on this route with 404. Nothing in the function, its imports or the shared modules returns 401 or 403 before or inside that branch.
+- The evidence flag was set to true for every non-OK response. The dashboard's "Request reached the Edge Function" was therefore not evidence.
+
+### Root cause: not confirmed
+
+The Verify JWT setting is ruled out. Open alternatives:
+
+1. The request was rejected before the chatbot function ran, for a reason connected to the credential sent as the bearer.
+2. The deployed chatbot or `admin-monitoring` code differs from the repository.
+
+Still needed from hosted, read-only: the chatbot function's own log for the failed run, the deployed source of the two relevant code blocks, the deployed versions and dates, the state of the project's API key types, and whether the valuation check passes.
+
+### B1. Evidence flag and route tests (17 November 2026)
+
+Status: implemented in the repository, verified locally in the Node suite only. Not committed at the time of writing, not run in CI, not deployed. The hosted check still fails; this slice does not change its authorization.
+
+| Check | Run by | Result |
+| --- | --- | --- |
+| Red run, focused files, new tests before implementation | Sonnet | 67 tests, 61 pass, 6 fail (five `edge_reached` assertions and the dashboard wording) |
+| Focused files after implementation | Sonnet | 67 of 67 pass |
+| Full Node suite (`npm test`) | Planner | 597 of 597 pass (578 plus 19) |
+| `npm run lint` | Planner | 0 errors, the same 2 existing warnings |
+| `npx tsc --noEmit -p tsconfig.app.json` | Planner | exit 0 |
+| `npm run build` | Planner | passed |
+| `git diff --check` | Planner | exit 0 |
+
+The seven route tests for the chatbot function passed before any code change. They record the current authorization of the route; they did not find a defect in it.
+
+All of these use a stubbed `fetch` and a stubbed provider. They show nothing about hosted behaviour. The validity of the stored rows against the table's constraints was checked by reading the migration, not by running it. The dashboard wording was checked in the component harness, not in a browser.
