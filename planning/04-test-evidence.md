@@ -69,3 +69,29 @@ Commit `5ef7cf7` contains the migration, the test file with 40 planned assertion
 - Nothing about the hosted database. CI uses synthetic rows only, and the migration has not been applied to any hosted project.
 
 **Status:** S1 is implemented and CI-verified in the repository. Not deployed.
+
+**How the two S1 runs relate.** The failing run and the passing run were separate CI runs. Each started its own Supabase stack and created its own throwaway database, applied the migrations present in that commit, ran the tests and dropped the database. They did not share a database. The comparison is between two fresh databases that differ by the one new migration and two added assertions.
+
+## S1 hosted data check (not yet run)
+
+A read-only query for the repository owner to run on the hosted database before any deployment decision. It has not been run.
+
+```sql
+select
+  count(*) filter (where hdb_verified)                                   as verified_total,
+  count(*) filter (where hdb_verified and (postal_code is null
+        or block_number is null or street_name is null))                 as missing_address,
+  count(*) filter (where hdb_verified and (latitude is null
+        or longitude is null))                                           as missing_coordinates,
+  count(*) filter (where hdb_verified and town is not null
+        and town <> location)                                            as town_differs_from_location,
+  count(*) filter (where hdb_verified and location_verified_at is null)  as missing_verified_time
+from public.properties;
+```
+
+**Limits of this check**
+
+- It detects a few obvious inconsistencies in stored rows. It is not proof that verified listings are consistent.
+- It cannot tell whether a stored address, town or coordinate is the one the original verification returned. No record of past verifications is kept beyond their short expiry.
+- Zero counts mean only that these particular patterns were not found.
+- The migration prevents new inconsistencies through signed-in writes. It does not repair existing rows.

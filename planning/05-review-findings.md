@@ -50,6 +50,27 @@ Independent reviews by the planning model of work produced by the implementation
 
 **Process note.** The detailed S1 handoff was included in the first push, earlier than the disclosure rule intended. The pushed test file describes the same invariant, so the added exposure is limited. No history was rewritten.
 
+## L0: home page explicit column list (16 November 2026)
+
+**Reviewed:** the diff to `SGHomie/FrontEnd/src/components/FeaturedListings.tsx` and the new `SGHomie/tests/featured-listings.test.mjs`, written by Sonnet at medium effort from handoff 02.
+
+**Result:** accepted. No changes requested.
+
+| Check | Finding |
+| --- | --- |
+| Scope | One component and one new test. Rendering is unchanged. |
+| Change | The query requests nine named columns: the eight the component renders and the row identifier. |
+| Type change | The component state type was narrowed to those nine columns. This was needed for the typecheck to pass and is correct. |
+| Test | Fails before the change and passes after it. It rejects a request for every column, rejects any column outside the rendered set, and requires each rendered column. |
+| Checks reported by the agent | 440 Node tests pass (439 baseline plus one), lint 0 errors with the same 2 warnings, typecheck and build pass. Not re-run by the reviewer. |
+
+**Correction to the agent's survey.** The agent reported that the chatbot's listing search can run without a signed-in user. The reviewer read the request handler: a request without a signed-in user returns onboarding text before the search is reached, so the search runs only for signed-in users. The fallback to the public key inside the search helper is defensive and is not reached from the chatbot today.
+
+**Unverified**
+
+- Behaviour against a real database. The test checks the requested column list only.
+- What the realtime new-listing notification delivers to a visitor who is not signed in.
+
 **Notes from step 1, carried into step 2**
 
 - The migration must keep the two existing error messages word for word. The tests match on them.
