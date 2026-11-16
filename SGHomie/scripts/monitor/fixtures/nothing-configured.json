@@ -1,0 +1,35 @@
+{
+  "description": "No target URL is configured.",
+  "observations": [
+    {
+      "target": "frontend",
+      "startedAt": "2026-11-16T00:00:00.000Z",
+      "durationMs": 0,
+      "httpStatus": null,
+      "errorKind": "not_configured",
+      "host": null,
+      "fields": {},
+      "version": null
+    },
+    {
+      "target": "render_model",
+      "startedAt": "2026-11-16T00:00:00.000Z",
+      "durationMs": 0,
+      "httpStatus": null,
+      "errorKind": "not_configured",
+      "host": null,
+      "fields": {},
+      "version": null
+    },
+    {
+      "target": "supabase_app",
+      "startedAt": "2026-11-16T00:00:00.000Z",
+      "durationMs": 0,
+      "httpStatus": null,
+      "errorKind": "not_configured",
+      "host": null,
+      "fields": {},
+      "version": null
+    }
+  ]
+}

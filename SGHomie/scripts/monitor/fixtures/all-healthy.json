@@ -1,0 +1,49 @@
+{
+  "description": "Every target answers as expected, and the model version matches.",
+  "observations": [
+    {
+      "target": "frontend",
+      "startedAt": "2026-11-16T00:00:00.000Z",
+      "durationMs": 240,
+      "httpStatus": 200,
+      "errorKind": null,
+      "host": "app.example.test",
+      "fields": {
+        "rootPresent": true
+      },
+      "version": null
+    },
+    {
+      "target": "render_model",
+      "startedAt": "2026-11-16T00:00:00.000Z",
+      "durationMs": 910,
+      "httpStatus": 200,
+      "errorKind": null,
+      "host": "model.example.test",
+      "fields": {
+        "bodyValid": true,
+        "statusOk": true,
+        "modelLoaded": true
+      },
+      "version": {
+        "httpStatus": 200,
+        "errorKind": null,
+        "bodyValid": true,
+        "match": true
+      }
+    },
+    {
+      "target": "supabase_app",
+      "startedAt": "2026-11-16T00:00:00.000Z",
+      "durationMs": 380,
+      "httpStatus": 200,
+      "errorKind": null,
+      "host": "project.supabase.example.test",
+      "fields": {
+        "bodyValid": true,
+        "replyPresent": true
+      },
+      "version": null
+    }
+  ]
+}
