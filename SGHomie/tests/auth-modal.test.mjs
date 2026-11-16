@@ -90,6 +90,7 @@ async function register(app) {
   assert.doesNotMatch(content(app.render()), /Sign up/i);
   app.input('email', 'buyer@example.invalid');
   app.input('password', 'test-password');
+  app.input('confirmPassword', 'test-password');
   await app.submit();
 }
 
@@ -152,4 +153,134 @@ test('successful sign in still closes the modal', async () => {
   assert.equal(app.render(), null);
   assert.deepEqual(app.successes, ['Successfully signed in!']);
   assert.deepEqual(app.errors, []);
+});
+
+const hasInput = (app, id) => nodes(app.render()).some(node => node.type === 'input' && node.props.id === id);
+const inputNode = (app, id) => nodes(app.render()).find(node => node.type === 'input' && node.props.id === id);
+const isToggle = node => node.type === 'button' && /^Show passwords?$/.test(node.props['aria-label'] ?? '');
+const toggleNode = app => nodes(app.render()).find(isToggle);
+const hasAlert = app => nodes(app.render()).some(node => node.props.role === 'alert');
+
+test('sign-up mode renders a confirm-password field and sign-in mode does not', () => {
+  const app = harness();
+  assert.equal(hasInput(app, 'confirmPassword'), false);
+  app.click("Don't have an account? Register");
+  assert.equal(hasInput(app, 'confirmPassword'), true);
+  assert.equal(inputNode(app, 'confirmPassword').props.type, 'password');
+  app.click('Already have an account? Sign in');
+  assert.equal(hasInput(app, 'confirmPassword'), false);
+});
+
+test('mismatched passwords show an associated alert, keep values and make no request', async () => {
+  const app = harness();
+  app.click("Don't have an account? Register");
+  app.input('email', 'buyer@example.invalid');
+  app.input('password', 'test-password');
+  app.input('confirmPassword', 'different-password');
+  await app.submit();
+  assert.equal(app.requests.length, 0);
+  assert.deepEqual(app.errors, []);
+  const tree = app.render();
+  const alert = nodes(tree).find(node => node.props.role === 'alert');
+  assert.ok(alert, 'Expected an alert');
+  assert.equal(content(alert), 'Passwords do not match.');
+  const field = inputNode(app, 'confirmPassword');
+  assert.equal(field.props['aria-invalid'], true);
+  assert.equal(field.props['aria-describedby'], alert.props.id);
+  assert.equal(app.value('password'), 'test-password');
+  assert.equal(app.value('confirmPassword'), 'different-password');
+  assert.equal(app.value('email'), 'buyer@example.invalid');
+  assert.match(content(tree), /Register/);
+});
+
+test('an empty confirm field counts as a mismatch', async () => {
+  const app = harness();
+  app.click("Don't have an account? Register");
+  app.input('email', 'buyer@example.invalid');
+  app.input('password', 'test-password');
+  await app.submit();
+  assert.equal(app.requests.length, 0);
+  assert.equal(hasAlert(app), true);
+});
+
+test('editing a password field clears the mismatch message', async () => {
+  const app = harness();
+  app.click("Don't have an account? Register");
+  app.input('email', 'buyer@example.invalid');
+  app.input('password', 'a');
+  app.input('confirmPassword', 'b');
+  await app.submit();
+  assert.equal(hasAlert(app), true);
+  app.input('confirmPassword', 'a');
+  assert.equal(hasAlert(app), false);
+  assert.notEqual(inputNode(app, 'confirmPassword').props['aria-invalid'], true);
+});
+
+test('matching passwords call signUp with only email and password', async () => {
+  const app = harness();
+  await register(app);
+  assert.deepEqual(app.requests, [{ method: 'register', email: 'buyer@example.invalid', password: 'test-password' }]);
+  assert.equal(hasAlert(app), false);
+});
+
+test('passwords start hidden and one show/hide control toggles both sign-up fields', () => {
+  const app = harness();
+  app.click("Don't have an account? Register");
+  assert.equal(inputNode(app, 'password').props.type, 'password');
+  assert.equal(inputNode(app, 'confirmPassword').props.type, 'password');
+  assert.equal(nodes(app.render()).filter(isToggle).length, 1);
+  assert.equal(toggleNode(app).props['aria-pressed'], false);
+  toggleNode(app).props.onClick();
+  assert.equal(inputNode(app, 'password').props.type, 'text');
+  assert.equal(inputNode(app, 'confirmPassword').props.type, 'text');
+  assert.equal(toggleNode(app).props['aria-pressed'], true);
+  toggleNode(app).props.onClick();
+  assert.equal(inputNode(app, 'password').props.type, 'password');
+  assert.equal(inputNode(app, 'confirmPassword').props.type, 'password');
+  assert.equal(toggleNode(app).props['aria-pressed'], false);
+});
+
+test('the show/hide control is a non-submitting button with a name that does not change with state', () => {
+  const app = harness();
+  assert.equal(toggleNode(app).props.type, 'button');
+  assert.equal(toggleNode(app).props['aria-label'], 'Show password');
+  toggleNode(app).props.onClick();
+  assert.equal(toggleNode(app).props['aria-label'], 'Show password');
+  assert.equal(toggleNode(app).props['aria-pressed'], true);
+  app.click("Don't have an account? Register");
+  assert.equal(toggleNode(app).props.type, 'button');
+  assert.equal(toggleNode(app).props['aria-label'], 'Show passwords');
+});
+
+test('switching mode hides passwords and clears confirm and the mismatch message', async () => {
+  const app = harness();
+  app.click("Don't have an account? Register");
+  app.input('password', 'a');
+  app.input('confirmPassword', 'b');
+  toggleNode(app).props.onClick();
+  await app.submit();
+  assert.equal(hasAlert(app), true);
+  app.click('Already have an account? Sign in');
+  assert.equal(inputNode(app, 'password').props.type, 'password');
+  app.click("Don't have an account? Register");
+  assert.equal(app.value('confirmPassword'), '');
+  assert.equal(inputNode(app, 'confirmPassword').props.type, 'password');
+  assert.equal(toggleNode(app).props['aria-pressed'], false);
+  assert.equal(hasAlert(app), false);
+});
+
+test('closing the modal hides passwords and clears confirm and the mismatch message', async () => {
+  const app = harness();
+  app.click("Don't have an account? Register");
+  app.input('password', 'a');
+  app.input('confirmPassword', 'b');
+  toggleNode(app).props.onClick();
+  await app.submit();
+  app.click('Close authentication popup');
+  app.toggle();
+  assert.equal(app.value('confirmPassword'), '');
+  assert.equal(app.value('password'), '');
+  assert.equal(inputNode(app, 'password').props.type, 'password');
+  assert.equal(toggleNode(app).props['aria-pressed'], false);
+  assert.equal(hasAlert(app), false);
 });

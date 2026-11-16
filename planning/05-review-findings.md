@@ -71,6 +71,99 @@ Independent reviews by the planning model of work produced by the implementation
 - Behaviour against a real database. The test checks the requested column list only.
 - What the realtime new-listing notification delivers to a visitor who is not signed in.
 
+## S2: public listing column contract (16 November 2026)
+
+**Reviewed:** the migration `20261102120000_public_listing_column_contract.sql` and `public-listing-contract.test.sql`, written together by Sonnet at medium effort from handoff 03. Reviewed before the push. Nothing could be executed locally.
+
+**Result:** migration accepted as written. One change requested to the test file, then accepted.
+
+| Check | Finding |
+| --- | --- |
+| Scope | Two new SQL files. No existing file edited. |
+| Migration | Two statements: revoke the anonymous role's read on the table, then grant read on twelve named columns. No row policy, other role or other privilege is changed. |
+| Allow-list | Matches the columns used by the three anonymous queries and the realtime notice. Free-text description is excluded. |
+| Coverage | Catalog check of the exact column set, each private column refused individually, refusal when filtering or ordering by a private column, unchanged row visibility, and unchanged access for a signed-in buyer, the owner and an admin. |
+
+**Finding 1, fixed.** The test calls a helper function while acting as the anonymous role, outside a guarded assertion. If that role could not execute it, the whole file would abort. Requested change: grant execute on the helper inside the test. Applied.
+
+**Risks recorded before the push, later resolved by CI**
+
+- Whether anonymous queries still work when the row policy refers to a column that role cannot read.
+- Whether the anonymous read was granted directly or through a shared grant that the revoke would not remove.
+
+Both held in CI. See `04-test-evidence.md`.
+
+**Still unverified**
+
+- Hosted grant state and hosted behaviour.
+- Realtime delivery for visitors who are not signed in.
+
+**Remaining limitation.** The change closes anonymous access only. Signed-in accounts keep their current access.
+
+## S3: Level 1 service monitoring runner (16 November 2026)
+
+**Reviewed:** `SGHomie/scripts/monitor/checks.mjs`, `classify.mjs`, `SGHomie/scripts/service-monitor.mjs` and `.github/workflows/service-monitor.yml`, read in full. Written by Sonnet at medium effort from handoff 04. The reviewer also ran the focused test and two fixture scenarios locally. No request was made to any real service.
+
+**Result:** accepted, with one classification rule left open for the repository owner.
+
+| Check | Finding |
+| --- | --- |
+| Scope | New files only. No existing file edited. No new dependency. |
+| Requests | One request per target, a timeout on each, no retries, redirects not followed. The optional model-version request is the only one that carries a credential, and it goes only to the configured model service. |
+| Output safety | Checks return status, timing, host and a few booleans. Response bodies are parsed locally and dropped. The classifier copies only validated fields, so extra data in an observation or fixture cannot reach the report. |
+| Classification | Pure and deterministic. Timeouts, network errors, redirects, unexpected statuses and missing configuration are `unknown`. |
+| Exit code | 1 only when a target is `failed`. Confirmed locally: a not-ready fixture exits 1, an unconfigured run exits 0. |
+| Workflow | Read-only permissions, no echo of variables or secrets, summary and artifact steps run even when the monitor exits 1, and a comment states that the schedule is inactive off the default branch. |
+
+**Verified by the reviewer:** focused test, 17 of 17 passed. Fixture `render-not-ready` printed the table and exited 1. Fixture `nothing-configured` reported three `unknown` results and exited 0.
+
+**Reported by the implementation agent, not re-run:** full Node suite 457 passed (440 plus 17), lint 0 errors with the same 2 warnings, typecheck and build passed.
+
+**Finding 1, fixed.** Any 5xx response was `failed` for every target. The handoff asked for that, so this was a planning error, not an implementation error. On review it conflicted with the existing dashboard's rule that an uncertain probe stays unknown: a sleeping free-tier model service can answer 502, 503 or 504 from its proxy while waking, and with no stored state the runner cannot tell a wake-up from an outage.
+
+The repository owner chose to change the rule for the model service only. A 502, 503 or 504 there, without the explicit not-ready message, is now `unknown` with reason `UPSTREAM_UNAVAILABLE`. The same statuses on the optional version request are `unknown` too. The explicit not-ready response, a 500, and every 5xx on the other two targets remain `failed`.
+
+Re-reviewed after the change: the new branch sits after the explicit not-ready check and before the generic 5xx check, so the order gives the intended result. The reviewer re-ran the focused test (22 of 22 passed), the new `render-waking` fixture (model service `unknown`, exit code 0), the full Node suite (462 passed) and lint (0 errors, the same 2 warnings).
+
+**Consequence of that choice.** A real outage of the model service that answers 502, 503 or 504 is also reported as `unknown` and does not fail the run.
+
+**Limitations**
+
+- The Supabase check uses a request the function answers from a constant. It shows the function runtime is reachable. It does not exercise the database.
+- The frontend check looks for the app's root element in the HTML. It does not detect a client-side crash after load.
+- A redirect is reported as `unknown`, so each configured URL must be the final one.
+- The workflow has not run. Its YAML is unvalidated until pushed.
+- No live run has been made. Hosted behaviour is unverified.
+- Periodic monitoring is not active. The schedule runs only from the default branch.
+
+## S4: sign-up password experience (16 November 2026)
+
+**Reviewed:** the full diff to `SGHomie/FrontEnd/src/components/AuthModal.tsx` and the changes to the two `auth-modal` test files, written by Sonnet at medium effort from handoff 05. The reviewer re-ran the focused tests, the full Node suite, lint and the typecheck.
+
+**Result:** accepted. One minor follow-up noted, not blocking.
+
+**The implementation agent stopped before writing code.** Adding a required confirm-password field would have failed the existing sign-up tests, because their two shared helpers fill only the email and password. The handoff told the agent to stop in that case. It reported the affected tests and two options.
+
+**Planner decision.** Update the two helpers with one added step each, filling the confirm field with the same synthetic password. The alternative, checking the confirm value only when it is non-empty, would have left every existing test untouched but made the new check bypassable. The helper change models a user completing the new required field. The reviewer confirmed from the diff that no existing line in either test file was removed or altered: the two files have 146 added lines and none removed.
+
+| Check | Finding |
+| --- | --- |
+| Scope | One component and two test files. No dependency or new component file. |
+| Unchanged | The arguments to the sign-up and sign-in calls, the duplicate-send guard and every existing message. |
+| Confirm field | Shown in sign-up mode only. A mismatch, including an empty confirm value, blocks submission before any loading state or Supabase call and keeps the entered values. |
+| Mismatch message | Text with an alert role, linked to the field and marked invalid. It does not rely on colour alone. It clears when either password is edited. |
+| Show or hide | One non-submitting button controlling both fields, with a constant accessible name and its state exposed. Passwords are hidden by default and hidden again on close, mode switch and sign-in. |
+
+**Verified by the reviewer:** focused tests 23 of 23 passed, full Node suite 472 passed (462 plus 10), lint 0 errors with the same 2 warnings, typecheck passed. The build was run by the implementation agent only.
+
+**Minor follow-up, not fixed.** The show or hide button's clickable area is the size of its 20 pixel icon. A slightly larger target would be easier to tap on a phone.
+
+**Unverified**
+
+- Browser rendering, keyboard order, visible focus, and what a screen reader announces. The tests run in a virtual harness and check properties only.
+- Colour contrast of the mismatch message.
+- The hosted password rules. Supabase still decides password strength.
+
 **Notes from step 1, carried into step 2**
 
 - The migration must keep the two existing error messages word for word. The tests match on them.

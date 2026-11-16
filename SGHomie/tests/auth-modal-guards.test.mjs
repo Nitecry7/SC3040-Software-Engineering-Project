@@ -37,6 +37,7 @@ async function harness({ result = { data: { session: null, user: { identities: [
   const register = async (email = 'buyer@example.invalid') => {
     input('email', email);
     input('password', 'synthetic-password');
+    input('confirmPassword', 'synthetic-password');
     await submit();
   };
   click("Don't have an account? Register");
@@ -104,4 +105,18 @@ test('FE-AUTH-08 an obfuscated existing-account success response gives the same 
   assert.match(content(app.render()), /Check your email or sign in/);
   assert.doesNotMatch(content(app.render()), /We've sent a verification link/);
   assert.equal(app.storage.size, 0);
+});
+
+test('FE-AUTH-09 a password mismatch is rejected before the duplicate-send guard and sends nothing', async () => {
+  const app = await harness();
+  await app.register();
+  app.click('Close authentication popup');
+  app.toggle();
+  app.input('email', 'buyer@example.invalid');
+  app.input('password', 'synthetic-password');
+  app.input('confirmPassword', 'other');
+  await app.submit();
+  assert.equal(app.requests.length, 1);
+  assert.doesNotMatch(content(app.render()), /Verification email already sent/);
+  assert.match(content(app.render()), /Passwords do not match\./);
 });

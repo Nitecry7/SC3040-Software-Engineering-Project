@@ -72,6 +72,94 @@ Commit `5ef7cf7` contains the migration, the test file with 40 planned assertion
 
 **How the two S1 runs relate.** The failing run and the passing run were separate CI runs. Each started its own Supabase stack and created its own throwaway database, applied the migrations present in that commit, ran the tests and dropped the database. They did not share a database. The comparison is between two fresh databases that differ by the one new migration and two added assertions.
 
+## L0: home page explicit column list
+
+**Local, run by the implementation agent on 16 November 2026 and reported to the planner. Not re-run by the reviewer.**
+
+| Check | Result |
+| --- | --- |
+| Focused test before the change | Failed: "select must not request every column" |
+| Focused test after the change | Passed |
+| Full Node suite | 440 passed, 0 failed (439 baseline plus the new test) |
+| Lint | 0 errors, the same 2 existing warnings |
+| Typecheck | Passed, after the component state type was narrowed |
+| Build | Passed |
+
+**CI:** the repository owner reports that GitHub run "Repository tests" #32, on the L0 commit `1133f92`, passed. The planner did not see the run output.
+
+**Status:** implemented and CI-verified in the repository. Not deployed.
+
+## S2: public listing column contract
+
+**Source:** reported by the repository owner on 16 November 2026. GitHub run "Repository tests" #33 on commit `ed2921c` passed all three jobs: `application`, `database` and `valuation`. The planner did not see the run output or the TAP artifact.
+
+Commit `ed2921c` contains the migration, the pgTAP file with 29 planned assertions and the slice handoff. The planner confirmed the commit contents from the local repository.
+
+**What this shows**
+
+- The migration applied on top of the 25 earlier migrations in a fresh disposable CI database.
+- The `database` job fails when any pgTAP assertion fails, so a passing job means none of the 29 new assertions failed, and none of the 168 assertions in the other four files failed.
+- In that database, after the migration: the anonymous role had no table-wide read on the listings table, its readable columns equalled the allow-list, the three anonymous query shapes still returned the approved row, and private columns were refused.
+- The two points that could not be checked before the run held in CI: anonymous queries still work although the row policy refers to a column the anonymous role can no longer read, and revoking from the anonymous role was enough to remove its table-wide read.
+
+**What this does not show**
+
+- No failing run was recorded for S2. Tests and migration were pushed together by design, so there is no red-then-green pair as there is for S1.
+- Nothing about the hosted database, where the grant state may differ from a fresh CI database.
+- Realtime behaviour for visitors who are not signed in.
+- Any change for signed-in accounts. They can still read seller contact and address fields of approved listings.
+
+**Status:** S2 is implemented and CI-verified in the repository. Not deployed. The hosted site is unchanged.
+
+## S3: Level 1 service monitoring runner
+
+**Local only, 16 November 2026. No request was made to any real service.**
+
+| Check | Result | Run by |
+| --- | --- | --- |
+| Focused test before the modules existed | Failed: module not found | Implementation agent |
+| Focused test, `service-monitor.test.mjs` | 17 passed, 0 failed | Implementation agent, then re-run by the reviewer |
+| Fixture `render-not-ready` | Table printed, model service `failed` with `NOT_READY`, exit code 1 | Reviewer |
+| Fixture `nothing-configured` | Three targets `unknown` with `NOT_CONFIGURED`, exit code 0 | Reviewer |
+| Full Node suite | 457 passed, 0 failed (440 plus 17) | Implementation agent |
+| Lint | 0 errors, the same 2 existing warnings | Implementation agent |
+| Typecheck and build | Passed | Implementation agent |
+
+After the classification change for the model service's 502, 503 and 504 responses:
+
+| Check | Result | Run by |
+| --- | --- | --- |
+| Focused test with the new cases, before the change | 22 tests: 17 passed, 5 failed | Implementation agent |
+| Focused test after the change | 22 passed, 0 failed | Implementation agent, then re-run by the reviewer |
+| Fixture `render-waking` | Model service `unknown` with `UPSTREAM_UNAVAILABLE`, exit code 0 | Reviewer |
+| Full Node suite | 462 passed, 0 failed | Reviewer |
+| Lint | 0 errors, the same 2 existing warnings | Reviewer |
+
+Typecheck and build were not re-run after this change. It touched only `.mjs` and JSON files, which neither covers.
+
+**Not verified:** the GitHub Actions workflow has not run. No live check has been made. The schedule is not active.
+
+**Status:** implemented and locally tested. Not pushed, not run in CI, not run against hosted services.
+
+## S4: sign-up password experience
+
+**Local only, 16 November 2026. Component tests in a virtual harness, not a browser.**
+
+| Check | Result | Run by |
+| --- | --- | --- |
+| Focused tests before the implementation | 23 tests: 1 passed, 22 failed | Implementation agent |
+| Focused tests after the implementation | 23 passed, 0 failed | Implementation agent, then re-run by the reviewer |
+| Full Node suite | 472 passed, 0 failed (462 plus 10) | Implementation agent, then re-run by the reviewer |
+| Lint | 0 errors, the same 2 existing warnings | Both |
+| Typecheck | Passed | Both |
+| Build | Passed | Implementation agent |
+
+In the failing run, the existing sign-up tests failed because their helpers now fill a confirm field that did not exist yet, and the new tests failed on missing behaviour.
+
+**Not verified:** behaviour in a real browser, with a keyboard, or with a screen reader. Not run in CI. Not deployed.
+
+**Status:** implemented and locally tested.
+
 ## S1 hosted data check (not yet run)
 
 A read-only query for the repository owner to run on the hosted database before any deployment decision. It has not been run.
