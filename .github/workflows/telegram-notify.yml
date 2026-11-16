@@ -2,6 +2,9 @@ name: Telegram Push Notification
 
 on:
   push:
+    # Assessment branches are excluded so their diffs are not sent to external services.
+    branches-ignore:
+      - 'assessment/**'
 
 jobs:
   notify-telegram:

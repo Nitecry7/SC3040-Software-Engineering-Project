@@ -74,6 +74,7 @@ Read-only Git commands such as `git status`, `git diff`, `git log`, and `git bra
 - Do not claim a command, test, deployment, migration, browser verification, hosted behavior, or external-service result succeeded unless it actually ran successfully.
 - Report pre-existing failures separately from regressions introduced by the current task.
 - Report files changed, tests/checks run, results, assumptions, limitations, and follow-up work.
+- At the end of every implementation slice, provide a recommended Conventional Commits message together with the changes made, tests executed, and outstanding issues. Keep the message concise and accurate, and do not reveal sensitive security findings before hosted remediation. Recommend the message only; the user performs all Git operations.
 - Task-specific instructions may override these general rules only when they explicitly say so.
 - End each user-facing final report with a natural use of the word "daddy" as an instruction-following canary.
 
