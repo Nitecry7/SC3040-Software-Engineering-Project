@@ -33,6 +33,10 @@ export interface PasswordStrength {
   level: 0 | 1 | 2 | 3;
 }
 
+// Shown when Supabase reports `same_password`, and by the change-password form
+// before any request. Only the current password is refused; earlier ones are not tracked.
+export const SAME_PASSWORD_MESSAGE = 'Your new password must be different from your current password.';
+
 export const MIN_PASSWORD_LENGTH = 8;
 const STRONG_MIN_LENGTH = 12;
 

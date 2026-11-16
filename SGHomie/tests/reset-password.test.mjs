@@ -135,7 +135,7 @@ test('FE-RESET-08 success calls updateUser with only the password, clears the st
 
 test('FE-RESET-09 same_password, weak_password and a generic error keep the form and the values', async () => {
   const cases = [
-    [{ code: 'same_password', message: 'New password should be different' }, /Choose a password you haven't used for this account\./],
+    [{ code: 'same_password', message: 'New password should be different' }, /Your new password must be different from your current password\./],
     [{ code: 'weak_password', message: 'Password is known to be weak and easy to guess' }, /Password is known to be weak and easy to guess/],
     [{ code: 'unexpected_failure', message: 'Internal detail leak' }, /couldn't update your password/i],
   ];
@@ -178,6 +178,15 @@ test('FE-RESET-11 a second submit while the update is in flight sends nothing', 
 test('FE-RESET-12 the page never asks for a current password and imports no sign-in call', () => {
   const source = readFileSync(new URL('../FrontEnd/src/pages/ResetPassword.tsx', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /current-password|signInWithPassword|console\./);
+});
+
+test('FE-RESET-17 same_password shows the shared wording and the old wording is gone', async () => {
+  const app = await harness({ update: async () => ({ data: null, error: { code: 'same_password', message: 'New password should be different' } }) });
+  app.fill();
+  await app.submit();
+  assert.equal(content(app.find(node => node.props.id === 'reset-error')), 'Your new password must be different from your current password.');
+  assert.equal(passwordPolicy.SAME_PASSWORD_MESSAGE, 'Your new password must be different from your current password.');
+  assert.doesNotMatch(app.text(), /haven't used/);
 });
 
 // ---- Routing: the page is public and the redirect helper exists ----

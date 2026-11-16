@@ -179,6 +179,7 @@ function profileHarness(auth) {
       assert.equal(table, 'user_profiles');
       return query;
     } } },
+    '../components/ChangePasswordForm': { default: () => null },
     'lucide-react': {},
     'react-hot-toast': { default: {
       success: message => successes.push(message), error: message => errors.push(message),

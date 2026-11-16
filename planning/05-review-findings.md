@@ -204,3 +204,20 @@ Open:
 
 - A reset link opened in a browser that holds another account's session replaces that session. This is client behaviour and unchanged.
 - The full round trip depends on hosted settings not yet confirmed: redirect allow-list, site URL, the default recovery email template, and email rate limits.
+
+## S6 review (16 November 2026, phase 2)
+
+Outcome: accepted. The planner's code review requested no code change.
+
+| # | Finding | Kind | Resolution |
+| --- | --- | --- | --- |
+| 1 | Three existing Profile sign-out tests failed, because a third test file has its own Profile harness that rejects unknown imports. Sonnet stopped and reported. | Planning omission: the handoff did not list that file. | Planner approved one dependency-map line in that file. All three pass. |
+| 2 | Sonnet added an `email` option to the Profile test harness, beyond the "dependency map only" wording. | Reported by Sonnet. Needed for the no-email test; existing tests are unaffected. | Accepted. |
+| 3 | The explicit sign-out of other sessions after a change duplicates what the server already does, by Sonnet's reading of the upstream source. | Planner addition that turned out redundant. | Kept. It is harmless, and the server behaviour is not confirmed for the hosted version. |
+| 4 | The S5 `same_password` message implied a password history rule. | Owner correction. | Replaced with "Your new password must be different from your current password.", shared by both forms. |
+
+Open:
+
+- The current-password check is client-side while the hosted "Require current password when updating" setting is off. A caller with a valid session token can still change the password through the API without it.
+- If the update fails after the verification sign-in, the browser holds the new session and the earlier session stays valid on the server until it expires.
+- No browser verification of this form.

@@ -244,3 +244,32 @@ Browser check, by the planner, with Playwright against a local dev server, signe
 Not verified in a browser: the new-password form, the success page, the redirect of a real recovery link that lands on another path, the neutral confirmation after a real request, and the profile overlay during recovery. Each needs a real recovery session. They are covered by harness tests only. The route wiring and the redirect component are checked by source pattern, plus the browser checks above.
 
 Planner test-script errors, corrected in a second pass: a hash-only navigation did not reload the page, and a link lookup missed, so two first-pass readings were artefacts and were discarded.
+
+### Update, 16 November 2026: A1 and S5 committed, CI and hosted round trip (owner-reported)
+
+Reported by the repository owner. The planner did not observe these runs.
+
+- The A1 and S5 commit was pushed to `assessment/ncs-opspilot` and the GitHub CI run passed.
+- S5 end to end, against the hosted Supabase project with the frontend on localhost: a real recovery email arrived, its link opened the reset form, the password was updated, the success page showed, and sign-in with the new password succeeded.
+
+This covers the items listed above as not verified in a browser for the form, the success page and the confirmation after a real request. Still not exercised: an expired real link, a link that falls back to the site URL, and the profile overlay for an account that still needs profile setup. The frontend changes are not deployed to the hosted site.
+
+## S6. Authenticated change password (16 November 2026, phase 2)
+
+Status: implemented in the repository, verified locally in the Node suite only. Not committed at the time of writing, not run in CI, not deployed, not seen in a browser.
+
+| Check | Run by | Result |
+| --- | --- | --- |
+| Red run, new and changed tests before implementation | Sonnet | 39 tests, 20 pass, 19 fail |
+| Focused: change-password, reset-password, profile-workflows, auth-recovery, both modal files | Sonnet | 95 of 95 pass |
+| Full Node suite after implementation | Sonnet | 578 tests, 575 pass, 3 fail (existing Profile sign-out tests, harness import; see review findings) |
+| Full Node suite after the one-line harness entry (`npm test`) | Planner | 578 of 578 pass (559 plus 19) |
+| `npm run lint` | Planner | 0 errors, the same 2 existing warnings |
+| `npx tsc --noEmit -p tsconfig.app.json` | Planner | exit 0 |
+| `npm run build` | Sonnet only | passed |
+
+The change from X to Y and back to X is covered by a test against a stub that refuses only the current password. It has not been run against hosted Supabase.
+
+No browser check was made. The Profile page requires a signed-in session, and no authenticated browser session was used. Layout, focus order and the real Supabase error shapes for this form are unverified.
+
+Statements about server behaviour (recovery sessions exempt from the current-password requirement, other sessions signed out on a password change, the 24-hour rule for secure password change, `current_password` ignored when the setting is off) come from Sonnet's reading of the upstream Supabase Auth source through a summarising fetch tool. They were not checked against the hosted project.

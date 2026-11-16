@@ -4,10 +4,9 @@ import { Eye, EyeOff, Lock } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { clearRecoveryState, getRecoveryState, subscribeRecoveryState } from '../lib/authRecovery';
-import { checkPasswordPolicy } from '../lib/passwordPolicy';
+import { checkPasswordPolicy, SAME_PASSWORD_MESSAGE } from '../lib/passwordPolicy';
 import PasswordStrength from '../components/PasswordStrength';
 
-const SAME_PASSWORD_MESSAGE = "Choose a password you haven't used for this account.";
 const GENERIC_FAILURE_MESSAGE = "We couldn't update your password. Please try again.";
 
 const openAuthModal = (name: 'toggle-auth-modal' | 'open-forgot-password') => {
