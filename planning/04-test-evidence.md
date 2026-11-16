@@ -45,6 +45,27 @@ The seven failing assertions in the new file:
 - All 128 existing assertions still passed.
 - This is a valid failing run for the intended reasons. It shows the new invariant is not yet enforced. It says nothing about hosted data.
 
-## S1 step 2: migration
+## S1 step 2: migration (passing run)
 
-Not yet run.
+**Source:** GitHub Actions run of `tests.yml` on push of commit `5ef7cf7` to `assessment/ncs-opspilot`, 16 November 2026. Screenshot of the run summary supplied by the repository owner.
+
+| Job | Result | Duration |
+| --- | --- | --- |
+| `application` | Success | 36s |
+| `valuation` | Success | 42s |
+| `database` | Success | 2m 27s |
+
+Commit `5ef7cf7` contains the migration, the test file with 40 planned assertions, and the evidence and review documents.
+
+**What this shows**
+
+- The migration applied on top of the 24 earlier migrations in a disposable database.
+- The `database` job passed. The same job exited with code 1 on the previous run because of failed assertions, so a success here means no assertion failed in any of the four pgTAP files.
+- The Node suite, lint, typecheck, build and valuation tests also passed in CI on Node 22.
+
+**What this does not show**
+
+- The per-assertion output of this run was not reviewed line by line. Only the job summary was seen. The TAP artifact attached to the run holds the detail.
+- Nothing about the hosted database. CI uses synthetic rows only, and the migration has not been applied to any hosted project.
+
+**Status:** S1 is implemented and CI-verified in the repository. Not deployed.
