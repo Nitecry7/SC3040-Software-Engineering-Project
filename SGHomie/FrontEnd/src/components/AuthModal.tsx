@@ -6,6 +6,10 @@ import { X, Mail, Lock, UserPlus, LogIn, Eye, EyeOff } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 // Import the toast notification library for showing pop-up messages (success/error) to the user
 import toast from 'react-hot-toast';
+// Shared password rules and the advisory strength meter used by the sign-up form
+import { checkPasswordPolicy } from '../lib/passwordPolicy';
+import PasswordStrength from './PasswordStrength';
+import ForgotPasswordForm from './ForgotPasswordForm';
 
 // Define the AuthModal component, a pop-up modal used for user sign in and account creation
 const AuthModal = () => {
@@ -30,24 +34,42 @@ const AuthModal = () => {
   const [showPasswords, setShowPasswords] = useState(false);
   // passwordMismatch: set when the confirm value differed on the last submit attempt
   const [passwordMismatch, setPasswordMismatch] = useState(false);
+  // passwordPolicyError: set when the password broke a rule on the last sign-up attempt
+  const [passwordPolicyError, setPasswordPolicyError] = useState(false);
+  // forgotPassword: shows the reset-email request view in place of the sign-in form
+  const [forgotPassword, setForgotPassword] = useState(false);
 
   // useEffect hook to attach an event listener to the window that toggles the modal visibility
   // when a "toggle-auth-modal" custom event is fired. The event listener is cleaned up on unmount.
   useEffect(() => {
     const handleToggle = () => {
       setRegistration(null);
+      setForgotPassword(false);
       setIsOpen(prev => !prev);
     };
+    // Lets other pages (for example an expired reset link) open the reset request view directly.
+    const handleOpenForgotPassword = () => {
+      setRegistration(null);
+      setIsRegister(false);
+      setForgotPassword(true);
+      setIsOpen(true);
+    };
     window.addEventListener('toggle-auth-modal', handleToggle);
-    return () => window.removeEventListener('toggle-auth-modal', handleToggle);
+    window.addEventListener('open-forgot-password', handleOpenForgotPassword);
+    return () => {
+      window.removeEventListener('toggle-auth-modal', handleToggle);
+      window.removeEventListener('open-forgot-password', handleOpenForgotPassword);
+    };
   }, []);
 
   const closeModal = () => {
     setIsOpen(false);
     setRegistration(null);
+    setForgotPassword(false);
     setFormData({ email: '', password: '', confirmPassword: '' });
     setShowPasswords(false);
     setPasswordMismatch(false);
+    setPasswordPolicyError(false);
   };
 
   const getVerificationStorageKey = async (email: string) => {
@@ -100,6 +122,11 @@ const AuthModal = () => {
   // Function to handle registration and sign in
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); // Prevent the default browser behavior for form submission
+    // Registration checks the password rules first. Sign-in never does: existing accounts may predate them.
+    if (isRegister && !checkPasswordPolicy(formData.password).valid) {
+      setPasswordPolicyError(true);
+      return;
+    }
     // Registration needs both password entries to match; an empty confirmation counts as a mismatch.
     if (isRegister && formData.password !== formData.confirmPassword) {
       setPasswordMismatch(true);
@@ -203,7 +230,9 @@ const AuthModal = () => {
             <X className="h-6 w-6" />
           </button>
           
-          {registration ? (
+          {forgotPassword ? (
+            <ForgotPasswordForm initialEmail={formData.email} onBack={() => setForgotPassword(false)} />
+          ) : registration ? (
             <div className="text-center">
               <div role="status" aria-live="polite">
                 <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-full bg-blue-50 text-blue-600">
@@ -286,6 +315,7 @@ const AuthModal = () => {
                     <input
                       type="email"
                       id="email"
+                      autoComplete="email"
                       value={formData.email}
                       onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                       className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -305,11 +335,15 @@ const AuthModal = () => {
                     <input
                       type={showPasswords ? 'text' : 'password'}
                       id="password"
+                      autoComplete={isRegister ? 'new-password' : 'current-password'}
                       value={formData.password}
                       onChange={(e) => {
                         setFormData({ ...formData, password: e.target.value });
                         setPasswordMismatch(false);
+                        setPasswordPolicyError(false);
                       }}
+                      aria-invalid={passwordPolicyError ? true : undefined}
+                      aria-describedby={isRegister ? (passwordPolicyError ? 'password-strength password-policy-error' : 'password-strength') : undefined}
                       className="block w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                       required
                     />
@@ -324,6 +358,16 @@ const AuthModal = () => {
                       {showPasswords ? <EyeOff className="h-5 w-5" aria-hidden="true" /> : <Eye className="h-5 w-5" aria-hidden="true" />}
                     </button>
                   </div>
+                  {isRegister && (
+                    <>
+                      <PasswordStrength password={formData.password} email={formData.email} id="password-strength" />
+                      {passwordPolicyError && (
+                        <p id="password-policy-error" role="alert" className="mt-2 text-sm font-medium text-red-700">
+                          Password does not meet the requirements.
+                        </p>
+                      )}
+                    </>
+                  )}
                 </div>
 
                 {/* Confirm password field, shown only when creating an account */}
@@ -337,6 +381,7 @@ const AuthModal = () => {
                       <input
                         type={showPasswords ? 'text' : 'password'}
                         id="confirmPassword"
+                        autoComplete="new-password"
                         value={formData.confirmPassword}
                         onChange={(e) => {
                           setFormData({ ...formData, confirmPassword: e.target.value });
@@ -379,7 +424,17 @@ const AuthModal = () => {
                 </button>
               </form>
 
-              <div className="mt-6">
+              <div className="mt-6 space-y-3">
+                {!isRegister && (
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => setForgotPassword(true)}
+                    className="w-full text-center text-sm text-blue-600 hover:text-blue-500"
+                  >
+                    Forgot password?
+                  </button>
+                )}
                 <button
                   type="button"
                   disabled={loading}
@@ -388,6 +443,7 @@ const AuthModal = () => {
                     setFormData(previous => ({ ...previous, confirmPassword: '' }));
                     setShowPasswords(false);
                     setPasswordMismatch(false);
+                    setPasswordPolicyError(false);
                   }}
                   className="w-full text-center text-sm text-blue-600 hover:text-blue-500"
                 >

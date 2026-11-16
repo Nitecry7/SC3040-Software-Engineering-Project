@@ -183,3 +183,64 @@ from public.properties;
 - It cannot tell whether a stored address, town or coordinate is the one the original verification returned. No record of past verifications is kept beyond their short expiry.
 - Zero counts mean only that these particular patterns were not found.
 - The migration prevents new inconsistencies through signed-in writes. It does not repair existing rows.
+
+## A1. Password policy and strength estimate (16 November 2026, phase 2)
+
+Status: implemented in the repository, verified locally. Not committed at the time of writing, not run in CI, not deployed.
+
+| Check | Run by | Result |
+| --- | --- | --- |
+| Red run, new test files before the modules existed | Sonnet | 4 files failed at import (module not found) |
+| Red run, modal tests before the modal change | Sonnet | 55 tests, 48 pass, 7 fail (the new modal tests) |
+| Full Node suite after first implementation | Sonnet | 504 tests, 503 pass, 1 fail (an existing mismatch test, see review findings) |
+| Red run for the review fixes | Sonnet | 3 new tests failed before the change |
+| Focused: policy, meter, both modal files | Sonnet | 57 of 57 pass |
+| Full Node suite (`npm test`) | Planner | 506 of 506 pass (472 baseline plus 34) |
+| `npm run lint` | Planner | 0 errors, the same 2 existing warnings |
+| `npx tsc --noEmit -p tsconfig.app.json` | Planner | exit 0 |
+| `npm run build` | Sonnet only | passed |
+
+Browser check, by the planner, with Playwright against a local dev server at `localhost:5173` (unauthenticated, the form was never submitted, no account or email was created):
+
+- Empty password: the four rules show as "not met", the status region is empty, no bar.
+- `abc`: Weak, one red segment, only the lowercase rule met.
+- `Password1`: all four rules met, rated Weak.
+- `Zebra4Lamp` and the 8-character `Kq7mWx2p`: Fair, two amber segments.
+- `Cobalt-Heron-Quilt-47`: Strong, three green segments.
+- Tab order from the password field: show/hide button, confirm password, Register, mode switch.
+- Space on the show/hide button reveals both fields and does not submit or close the dialog.
+- Label and checklist text are `rgb(55, 65, 81)` on white.
+- At 375 px wide the page has no horizontal scroll and the dialog is 343 px wide.
+
+Limits: no screen reader was used, so the live-region announcement is unverified. Contrast was read from computed colours, not measured with an audit tool. The hosted Auth setting was reported by the owner and not observed.
+
+## S5. Forgot and reset password (16 November 2026, phase 2)
+
+Status: implemented in the repository, verified locally. Not committed at the time of writing, not run in CI, not deployed. No reset email has been requested and no real recovery link has been opened.
+
+| Check | Run by | Result |
+| --- | --- | --- |
+| Red run, new tests before any source file | Sonnet | 99 tests, 52 pass, 47 fail (the new tests) |
+| Red run for the review fixes | Sonnet | 39 tests, 37 pass, 2 fail (the two new behaviours) |
+| Focused auth and recovery files | Sonnet | 104 of 104 pass |
+| Full Node suite (`npm test`) | Planner | 559 of 559 pass (506 plus 53) |
+| `npm run lint` | Planner | 0 errors, the same 2 existing warnings |
+| `npx tsc --noEmit -p tsconfig.app.json` | Planner | exit 0 |
+| `npm run build` | Sonnet only | passed |
+
+One test, for the helper that tells a fresh redirect from a restored state, was written together with its implementation and has no red run.
+
+Browser check, by the planner, with Playwright against a local dev server, signed out, using hand-built link fragments. No request to the Auth recover, user, sign-up or token endpoints was observed during the first pass.
+
+- `/reset-password` with an expired-link error: "This link has expired", with a button that opens the reset request view in the sign-in dialog.
+- `/reset-password` with another auth error: "This link is not valid".
+- `/reset-password` with no link: instructions only, no password field.
+- The same error fragment on the home page: no redirect and nothing stored.
+- A recovery marker with no session: "This link is not valid", no password field.
+- Leaving the reset page by a navigation link clears the stored state for both the error and the recovery marker. Going back shows the no-link page.
+- "Forgot password?" appears in sign-in mode and not in sign-up mode. "Back to sign in" returns to the sign-in form.
+- At 375 px wide the expired page has no horizontal scroll.
+
+Not verified in a browser: the new-password form, the success page, the redirect of a real recovery link that lands on another path, the neutral confirmation after a real request, and the profile overlay during recovery. Each needs a real recovery session. They are covered by harness tests only. The route wiring and the redirect component are checked by source pattern, plus the browser checks above.
+
+Planner test-script errors, corrected in a second pass: a hash-only navigation did not reload the page, and a link lookup missed, so two first-pass readings were artefacts and were discarded.

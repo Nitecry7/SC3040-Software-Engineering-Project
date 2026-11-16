@@ -88,6 +88,7 @@ function authHarness() {
     '@supabase/supabase-js': { User: Object },
     '../lib/supabase': { supabase },
     '../components/InitialProfileSetup': { default: 'InitialProfileSetup' },
+    '../lib/authRecovery': { getRecoveryState: () => null, clearRecoveryState() {}, subscribeRecoveryState: () => () => {} },
   };
   runInNewContext(compiled, {
     exports,

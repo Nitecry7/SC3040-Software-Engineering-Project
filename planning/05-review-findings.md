@@ -168,3 +168,39 @@ Re-reviewed after the change: the new branch sits after the explicit not-ready c
 
 - The migration must keep the two existing error messages word for word. The tests match on them.
 - The seller edit form resends the stored verification time. It is the same instant, so it does not count as a change today. The migration must not alter that comparison.
+
+## A1 review (16 November 2026, phase 2)
+
+Outcome: accepted after one round of fixes.
+
+| # | Finding | Kind | Resolution |
+| --- | --- | --- | --- |
+| 1 | An existing mismatch test failed. It typed a one-letter password, which the new policy rejects before the mismatch check. Sonnet stopped and reported instead of editing it. | Planning gap: the handoff pre-authorized replacing one fixture value and missed three tests that used one-letter passwords. | Planner decision: fixture-only edit in three existing tests (compliant password, non-matching confirm). No assertion changed. Two of the three had still passed, but were asserting the policy alert, not the mismatch alert. |
+| 2 | Sonnet also changed a second fixture value in the guards test file that the handoff had not named. | Same planning gap. Reported by Sonnet. | Accepted. |
+| 3 | `MyPassword123` rated Strong. Common words were only matched as the whole password. | Implementation gap found in review. | A contained common word of 5 or more characters lowers the rating one level. Test added. |
+| 4 | The "three character classes" condition for Strong could never fail, because the policy already requires three. `Abababababab1` rated Strong. | Planning error: the condition came from the handoff. | Fewer than 6 distinct characters lowers the rating. Test added. |
+| 5 | The meter rendered nothing for an empty password, leaving the requirements invisible until typing and `aria-describedby` pointing at a missing element. | Planning error: the plan specified hiding it. | The checklist now shows when the field is empty; only the bar and label are hidden. |
+
+Open, minor:
+
+- The show/hide button's hit area is still 20 by 20 px (carried over from S4).
+- The password inputs have no `autocomplete` attribute. Chrome suggests `new-password` and `current-password`. Folded into the S5 handoff.
+- The strength estimate is a heuristic with a 52-entry word list. It is labelled as an estimate and is not a breach check.
+
+## S5 review (16 November 2026, phase 2)
+
+Outcome: accepted after one round of fixes.
+
+| # | Finding | Kind | Resolution |
+| --- | --- | --- | --- |
+| 1 | The handoff said a network failure is thrown. The installed client returns it as an error value with status 0, so the form would have confirmed "sent" during an outage. | Planning error, caught by Sonnet's investigation. | Status 0, returned or thrown, shows the connection message. Every other outcome shows the neutral confirmation. |
+| 2 | Any auth error in the URL, on any path, was treated as a reset-link error and redirected to the reset page. An expired sign-up confirmation link carries the same error. | Planning error: the handoff's parser rule was too broad. Found in review. | An error counts only when the link lands on `/reset-password`. A token recovery link is still handled on any path. |
+| 3 | An abandoned recovery kept the reset form reachable and the profile overlay hidden for the rest of the tab session. | Design gap in the handoff, raised by Sonnet. | Leaving the reset page clears the state. |
+| 4 | A state restored after a reload would have triggered the redirect again. | Found and fixed by Sonnet during implementation. | Redirect only for a link read from the URL on this page load. |
+
+Consequence of finding 2: an expired reset link shows the expired page only if the hosted redirect allow-list includes `/reset-password`. Otherwise it falls back to the site URL with no message, as before this slice.
+
+Open:
+
+- A reset link opened in a browser that holds another account's session replaces that session. This is client behaviour and unchanged.
+- The full round trip depends on hosted settings not yet confirmed: redirect allow-list, site URL, the default recovery email template, and email rate limits.

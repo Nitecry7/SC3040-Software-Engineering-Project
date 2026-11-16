@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import ts from '../FrontEnd/node_modules/typescript/lib/typescript.js';
+import * as passwordPolicy from '../FrontEnd/src/lib/passwordPolicy.ts';
 
 // Exercise the real component with isolated hooks and mocked authentication.
 // These tests never create accounts or send verification emails.
@@ -22,6 +23,9 @@ function content(tree) {
   if (Array.isArray(tree)) return tree.map(content).join('');
   return typeof tree === 'object' ? content(tree.props.children) : String(tree);
 }
+
+// Stand-in for the strength meter: the harness does not render child components, so tests assert on its props.
+function PasswordStrength() { return null; }
 
 function harness(result = { data: { session: null }, error: null }) {
   const state = [];
@@ -49,6 +53,9 @@ function harness(result = { data: { session: null }, error: null }) {
     'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'Fragment' },
     'react-router-dom': { useNavigate: () => () => {} },
     'lucide-react': {},
+    '../lib/passwordPolicy': passwordPolicy,
+    './PasswordStrength': { default: PasswordStrength },
+    './ForgotPasswordForm': { default: () => null },
     '../lib/supabase': { supabase: { auth: {
       signUp: authRequest('register'), signInWithPassword: authRequest('signIn'),
     } } },
@@ -89,8 +96,8 @@ async function register(app) {
   assert.match(content(app.render()), /Register/);
   assert.doesNotMatch(content(app.render()), /Sign up/i);
   app.input('email', 'buyer@example.invalid');
-  app.input('password', 'test-password');
-  app.input('confirmPassword', 'test-password');
+  app.input('password', 'Synthetic-Pass-2026');
+  app.input('confirmPassword', 'Synthetic-Pass-2026');
   await app.submit();
 }
 
@@ -147,7 +154,7 @@ test('auto-confirmed registration acknowledges the session without claiming an e
 test('successful sign in still closes the modal', async () => {
   const app = harness({ data: { session: {} }, error: null });
   app.input('email', 'buyer@example.invalid');
-  app.input('password', 'test-password');
+  app.input('password', 'Synthetic-Pass-2026');
   await app.submit();
   assert.equal(app.requests[0].method, 'signIn');
   assert.equal(app.render(), null);
@@ -175,7 +182,7 @@ test('mismatched passwords show an associated alert, keep values and make no req
   const app = harness();
   app.click("Don't have an account? Register");
   app.input('email', 'buyer@example.invalid');
-  app.input('password', 'test-password');
+  app.input('password', 'Synthetic-Pass-2026');
   app.input('confirmPassword', 'different-password');
   await app.submit();
   assert.equal(app.requests.length, 0);
@@ -187,7 +194,7 @@ test('mismatched passwords show an associated alert, keep values and make no req
   const field = inputNode(app, 'confirmPassword');
   assert.equal(field.props['aria-invalid'], true);
   assert.equal(field.props['aria-describedby'], alert.props.id);
-  assert.equal(app.value('password'), 'test-password');
+  assert.equal(app.value('password'), 'Synthetic-Pass-2026');
   assert.equal(app.value('confirmPassword'), 'different-password');
   assert.equal(app.value('email'), 'buyer@example.invalid');
   assert.match(content(tree), /Register/);
@@ -197,7 +204,7 @@ test('an empty confirm field counts as a mismatch', async () => {
   const app = harness();
   app.click("Don't have an account? Register");
   app.input('email', 'buyer@example.invalid');
-  app.input('password', 'test-password');
+  app.input('password', 'Synthetic-Pass-2026');
   await app.submit();
   assert.equal(app.requests.length, 0);
   assert.equal(hasAlert(app), true);
@@ -207,11 +214,11 @@ test('editing a password field clears the mismatch message', async () => {
   const app = harness();
   app.click("Don't have an account? Register");
   app.input('email', 'buyer@example.invalid');
-  app.input('password', 'a');
+  app.input('password', 'Synthetic-Pass-2026');
   app.input('confirmPassword', 'b');
   await app.submit();
   assert.equal(hasAlert(app), true);
-  app.input('confirmPassword', 'a');
+  app.input('confirmPassword', 'Synthetic-Pass-2026');
   assert.equal(hasAlert(app), false);
   assert.notEqual(inputNode(app, 'confirmPassword').props['aria-invalid'], true);
 });
@@ -219,7 +226,7 @@ test('editing a password field clears the mismatch message', async () => {
 test('matching passwords call signUp with only email and password', async () => {
   const app = harness();
   await register(app);
-  assert.deepEqual(app.requests, [{ method: 'register', email: 'buyer@example.invalid', password: 'test-password' }]);
+  assert.deepEqual(app.requests, [{ method: 'register', email: 'buyer@example.invalid', password: 'Synthetic-Pass-2026' }]);
   assert.equal(hasAlert(app), false);
 });
 
@@ -255,7 +262,7 @@ test('the show/hide control is a non-submitting button with a name that does not
 test('switching mode hides passwords and clears confirm and the mismatch message', async () => {
   const app = harness();
   app.click("Don't have an account? Register");
-  app.input('password', 'a');
+  app.input('password', 'Synthetic-Pass-2026');
   app.input('confirmPassword', 'b');
   toggleNode(app).props.onClick();
   await app.submit();
@@ -272,7 +279,7 @@ test('switching mode hides passwords and clears confirm and the mismatch message
 test('closing the modal hides passwords and clears confirm and the mismatch message', async () => {
   const app = harness();
   app.click("Don't have an account? Register");
-  app.input('password', 'a');
+  app.input('password', 'Synthetic-Pass-2026');
   app.input('confirmPassword', 'b');
   toggleNode(app).props.onClick();
   await app.submit();
@@ -283,4 +290,120 @@ test('closing the modal hides passwords and clears confirm and the mismatch mess
   assert.equal(inputNode(app, 'password').props.type, 'password');
   assert.equal(toggleNode(app).props['aria-pressed'], false);
   assert.equal(hasAlert(app), false);
+});
+
+const meterNode = app => nodes(app.render()).find(node => node.type === PasswordStrength);
+const policyAlert = app => nodes(app.render()).find(node => node.props.role === 'alert');
+
+test('sign-up mode renders the strength meter with the current password and email; sign-in mode does not', () => {
+  const app = harness();
+  assert.equal(meterNode(app), undefined);
+  app.click("Don't have an account? Register");
+  app.input('email', 'buyer@example.invalid');
+  app.input('password', 'Synthetic-Pass-2026');
+  const meter = meterNode(app);
+  assert.ok(meter, 'Expected the meter');
+  assert.equal(meter.props.password, 'Synthetic-Pass-2026');
+  assert.equal(meter.props.email, 'buyer@example.invalid');
+  assert.equal(typeof meter.props.id, 'string');
+  assert.equal(inputNode(app, 'password').props['aria-describedby']?.split(' ').includes(meter.props.id), true);
+  app.click('Already have an account? Sign in');
+  assert.equal(meterNode(app), undefined);
+  assert.equal(inputNode(app, 'password').props['aria-describedby'], undefined);
+});
+
+test('sign-up with an unmet rule shows an alert, keeps values and does not call signUp or set loading', async () => {
+  const app = harness();
+  app.click("Don't have an account? Register");
+  app.input('email', 'buyer@example.invalid');
+  app.input('password', 'password');
+  app.input('confirmPassword', 'password');
+  await app.submit();
+  assert.equal(app.requests.length, 0);
+  assert.deepEqual(app.errors, []);
+  const alert = policyAlert(app);
+  assert.ok(alert, 'Expected an alert');
+  assert.equal(content(alert), 'Password does not meet the requirements.');
+  assert.equal(app.value('password'), 'password');
+  assert.equal(app.value('confirmPassword'), 'password');
+  assert.equal(app.value('email'), 'buyer@example.invalid');
+  assert.match(content(app.render()), /Register/);
+  assert.doesNotMatch(content(app.render()), /Processing/);
+  assert.equal(inputNode(app, 'password').props['aria-describedby'].split(' ').includes(alert.props.id), true);
+});
+
+test('sign-in with a non-compliant password still calls signInWithPassword', async () => {
+  const app = harness({ data: { session: {} }, error: null });
+  app.input('email', 'buyer@example.invalid');
+  app.input('password', 'old-password');
+  await app.submit();
+  assert.deepEqual(app.requests, [{ method: 'signIn', email: 'buyer@example.invalid', password: 'old-password' }]);
+  assert.equal(hasAlert(app), false);
+});
+
+test('a policy failure and a mismatch together show only the policy message', async () => {
+  const app = harness();
+  app.click("Don't have an account? Register");
+  app.input('email', 'buyer@example.invalid');
+  app.input('password', 'password');
+  app.input('confirmPassword', 'different');
+  await app.submit();
+  const alerts = nodes(app.render()).filter(node => node.props.role === 'alert');
+  assert.equal(alerts.length, 1);
+  assert.equal(content(alerts[0]), 'Password does not meet the requirements.');
+  assert.equal(app.requests.length, 0);
+});
+
+test('the policy message clears on password edit, mode switch and close', async () => {
+  const app = harness();
+  const fail = async () => {
+    app.input('password', 'password');
+    app.input('confirmPassword', 'password');
+    await app.submit();
+    assert.equal(content(policyAlert(app)), 'Password does not meet the requirements.');
+  };
+  app.click("Don't have an account? Register");
+  app.input('email', 'buyer@example.invalid');
+  await fail();
+  app.input('password', 'password1');
+  assert.equal(hasAlert(app), false);
+  await fail();
+  app.click('Already have an account? Sign in');
+  app.click("Don't have an account? Register");
+  assert.equal(hasAlert(app), false);
+  await fail();
+  app.click('Close authentication popup');
+  app.toggle();
+  assert.equal(hasAlert(app), false);
+});
+
+test('show/hide and the confirm field still work with the meter present', () => {
+  const app = harness();
+  app.click("Don't have an account? Register");
+  assert.ok(meterNode(app));
+  toggleNode(app).props.onClick();
+  assert.equal(inputNode(app, 'password').props.type, 'text');
+  assert.equal(inputNode(app, 'confirmPassword').props.type, 'text');
+  app.input('confirmPassword', 'typed-here');
+  assert.equal(app.value('confirmPassword'), 'typed-here');
+  assert.ok(meterNode(app));
+});
+
+test('a compliant matching password calls signUp with only email and password', async () => {
+  const app = harness();
+  app.click("Don't have an account? Register");
+  app.input('email', 'buyer@example.invalid');
+  app.input('password', 'Zebra4Lamp');
+  app.input('confirmPassword', 'Zebra4Lamp');
+  await app.submit();
+  assert.deepEqual(app.requests, [{ method: 'register', email: 'buyer@example.invalid', password: 'Zebra4Lamp' }]);
+  assert.equal(hasAlert(app), false);
+});
+
+test('a weak_password error from Supabase still reaches the user', async () => {
+  const error = Object.assign(new Error('Password should contain at least one character of each: abc.'), { code: 'weak_password' });
+  const app = harness({ data: { session: null }, error });
+  await register(app);
+  assert.deepEqual(app.errors, ['Password should contain at least one character of each: abc.']);
+  assert.equal(app.value('email'), 'buyer@example.invalid');
 });

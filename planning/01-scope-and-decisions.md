@@ -46,6 +46,17 @@ The scope was revised twice during planning on 16 November 2026. Each revision c
 | D10 | The CI `database` job must pass before any hosted database change. Every deployment needs the owner's explicit approval. | Deployment safety takes priority over the time budget. |
 | D11 | Security findings are described generically in committed files until fixes are live. | The repository is public and the hosted site is not yet fixed. |
 
+### Update, 16 November 2026: phase 2 authorized
+
+The five mandatory slices are committed and CI verified at `0c12329`. The owner then authorized the work below. Entries above are unchanged.
+
+| ID | Decision | Reason |
+| --- | --- | --- |
+| D12 | The optional slices proceed: password policy and strength meter (A1), forgot and reset password (S5), authenticated password change (S6), chatbot synthetic check repair (B), monitoring completion (C), then submission documents (D). All work stays on `assessment/ncs-opspilot`. No release branch. | The owner chose to complete the worthwhile features before submission and intends to merge this branch into `main` after a final review. |
+| D13 | One minimum password policy applies to sign-up, password reset and password change: at least 8 characters with a lowercase letter, an uppercase letter and a digit. It mirrors the hosted Auth setting reported by the owner. Sign-in does not apply it. | Supabase remains the final authority. Applying the policy at sign-in would lock out accounts created under the earlier setting. |
+| D14 | The strength rating is an in-house, advisory estimate with no new dependency. It is labelled as an estimate and is not an authentication rule. | The component test harness stubs imports, so a library estimator would not be exercised by component tests, and the established libraries add large dictionaries to the bundle. |
+| D15 | No real sign-up, reset email, provider call, function deployment, hosted setting change or authenticated browser session happens without the owner's approval at the time. | Deployment and hosted-data safety. |
+
 ## Known limitation of the public listing fix
 
 After the fix, anonymous callers can no longer read seller contact and private address fields. Any signed-in account still can, on approved listings, as the property details page does today. Registration is open, so this remains a real privacy limitation. This work does not claim that all seller-data exposure is resolved.
