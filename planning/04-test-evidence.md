@@ -338,3 +338,50 @@ Status: implemented in the repository, verified locally in the Node suite only. 
 The seven route tests for the chatbot function passed before any code change. They record the current authorization of the route; they did not find a defect in it.
 
 All of these use a stubbed `fetch` and a stubbed provider. They show nothing about hosted behaviour. The validity of the stored rows against the table's constraints was checked by reading the migration, not by running it. The dashboard wording was checked in the component harness, not in a browser.
+
+### Update, 17 November 2026: B1 committed, further hosted evidence (owner-reported)
+
+B1 is committed at `247fa6b`.
+
+Reported by the owner from the hosted dashboard. The planner did not observe these.
+
+| Item | Owner-reported |
+| --- | --- |
+| Chatbot function logs and invocations around the failed checks | No matching invocation or execution entry |
+| Deployed versions | `chatbot` version 42 and `admin-monitoring` version 8, both deployed 31 October 2026 |
+| Deployed authorization blocks | Match the repository's original implementation |
+| Chatbot Verify JWT | Off |
+| Legacy `anon` and `service_role` keys | Enabled. Newer publishable and secret keys also exist. |
+| Valuation synthetic check | Passes |
+| Chatbot synthetic check | Still `AUTH_FAILURE` |
+
+Planner's checks in the repository:
+
+- Since the commit of 31 October that added the synthetic checks, the only change under the functions directory is the B1 edit to `admin-monitoring`.
+- The official Supabase pages read on 17 November 2026 (function authorization headers, securing functions, the 401 troubleshooting page, migrating to new API keys) describe a platform 401 only for the built-in JWT check when it is enabled. They do not describe a rejection with that check off, and say nothing specific about one function calling another with a legacy service-role key.
+
+### Root cause: still not confirmed
+
+What the evidence supports: the request was answered with 401 or 403 before the chatbot function ran, while a request from the same function to the valuation function with an administrator's session token succeeded. What it does not establish: why. The legacy service-role key is a supported credential and is not shown to be invalid. The two requests differ in the bearer, the target function and its Verify JWT setting, and one custom header.
+
+### B2. Synthetic check authorization (17 November 2026)
+
+Status: implemented in the repository, verified locally in the Node suite only. Not committed at the time of writing, not run in CI, not deployed. The hosted check has not been rerun and still fails as far as is known.
+
+| Check | Run by | Result |
+| --- | --- | --- |
+| Red run, the two changed test files before implementation | Sonnet | 54 tests, 40 pass, 14 fail |
+| Focused files after implementation | Sonnet | 92 of 92 pass |
+| Full Node suite (`npm test`) | Planner | 609 of 609 pass (597 plus 12 net) |
+| `npm run lint` | Planner | 0 errors, the same 2 existing warnings |
+| `npx tsc --noEmit -p tsconfig.app.json` | Planner | exit 0 |
+| `npm run build` | Planner | passed |
+| `git diff --check` | Planner | exit 0 |
+
+Five of the denial tests (rejected bearer, non-administrator, profile read failure, anonymous user, expired token) already returned 404 under the old rule, so they passed in the red run. They pin the result, and the ordering test and the administrator success test are what show the new rule is in force.
+
+Not verified:
+
+- Hosted behaviour. No hosted or provider call was made. Whether the check passes after deployment is unknown.
+- The Edge Function code is not type-checked by the frontend TypeScript run, and Deno is not installed locally. The functions were exercised only through the Node test harness.
+- Browser preflight was checked at the handler level only.

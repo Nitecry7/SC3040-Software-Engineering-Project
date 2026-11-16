@@ -22,9 +22,11 @@ import { ChatQuotaError, ChatQuotaUnavailableError, reserveProviderCapacity, res
 import { createChatTelemetry, createTelemetryStore, containsContactInformation, CONTACT_INPUT_REPLY, detectSensitiveInput, observeChatStream, SENSITIVE_INPUT_WARNING, type InteractionStatus } from './telemetry.ts';
 import { runSyntheticChatbotCanary } from './syntheticCanary.ts';
 
+// CORS is not an authorization boundary. The internal-action header is not listed because no browser
+// code sends it; the administrator check on the synthetic route is what protects that route.
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-sghomie-internal-action',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Cache-Control': 'no-store',
 };
@@ -838,13 +840,17 @@ export async function handleRequest(req: Request): Promise<Response> {
     return jsonResponse({ error: 'Method not allowed' }, 405);
   }
 
-  // This fixed-prompt route is only for the already-authorized admin-monitoring
-  // Edge Function. It deliberately bypasses user interaction persistence and
-  // never accepts a browser-supplied prompt or records the generated text.
+  // This fixed-prompt route runs only for a session verified here as an administrator; the
+  // service-role key is not accepted as a bearer. Any other caller gets the same 404, before a
+  // provider is built or capacity is reserved. It bypasses user interaction persistence, never
+  // accepts a caller-supplied prompt and never records the generated text. An administrator who
+  // calls this route directly is not recorded in synthetic_canary_runs, and the global provider
+  // capacity reservation still applies. There is no additional rate limiting.
   if (req.headers.get('X-SGHomie-Internal-Action') === 'chatbot-synthetic-canary') {
+    let isAdmin = false;
+    try { isAdmin = (await getAuthContext(req)).isAdmin === true; } catch { isAdmin = false; }
+    if (!isAdmin) return jsonResponse({ error: 'Not found' }, 404);
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    if (!serviceRoleKey || req.headers.get('Authorization') !== `Bearer ${serviceRoleKey}`)
-      return jsonResponse({ error: 'Not found' }, 404);
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const result = await runSyntheticChatbotCanary({
       createProvider: () => createChatProvider(name => Deno.env.get(name)),

@@ -70,6 +70,15 @@ Entries above are unchanged. D17 describes the settings as they were on 16 Novem
 | D20 | The chatbot synthetic check's authorization is not changed until the hosted cause is confirmed and the owner approves a design. The service-role bearer is a hypothesis only. | Owner decision, 17 November 2026. |
 | D21 | Scheduled deep canaries will not store the owner's personal administrator session token or an unrestricted service-role key in GitHub Actions. No scheduling change is made until Phase B is repaired, reviewed and verified on hosted. | Owner decision, 17 November 2026. |
 
+### Update, 17 November 2026: chatbot synthetic check authorization (B2)
+
+| ID | Decision | Reason |
+| --- | --- | --- |
+| D22 | `admin-monitoring` forwards the administrator's own session token to the chatbot function, which verifies the session and the administrator flag itself before any capacity reservation or provider call. The service-role key is no longer sent between the two functions. The internal-action header and the fixed prompt stay. | Owner decision. The hosted check is rejected before the chatbot function runs, while the valuation check, which forwards a session token, passes. The cause of the rejection is not established. This is the smallest change that needs no new secret or hosted setting. |
+| D23 | Accepted trade-off: an administrator can call the route directly, and such a call is not written to `synthetic_canary_runs`. It still runs only the fixed prompt, reserves global provider capacity and appears in the chatbot function's log. No new rate limiting in this slice. | Owner decision. |
+| D24 | The internal-action header is removed from the chatbot's browser CORS allow-list. CORS is not an authorization boundary; the administrator check is. | No browser code sends the header. |
+| D25 | A passing hosted check after deployment will support the bearer explanation. It will not prove the original cause. | Owner decision on evidence wording. |
+
 ## Known limitation of the public listing fix
 
 After the fix, anonymous callers can no longer read seller contact and private address fields. Any signed-in account still can, on approved listings, as the property details page does today. Registration is open, so this remains a real privacy limitation. This work does not claim that all seller-data exposure is resolved.

@@ -240,3 +240,22 @@ Open:
 
 - The hosted `AUTH_FAILURE` is not repaired and its cause is not confirmed.
 - The repaired flag takes effect on hosted only when `admin-monitoring` and the frontend are deployed.
+
+## B2. Chatbot synthetic check authorization (17 November 2026)
+
+Outcome: accepted. The planner read the full diff and requested no change.
+
+| # | Finding | Kind | Resolution |
+| --- | --- | --- | --- |
+| 1 | The administrator lookup can throw on a network error. Sonnet wrapped it so that a throw also returns 404. | Addition beyond the handoff, reported by Sonnet. | Accepted. It fails closed. |
+| 2 | The route tests written in B1 described the key comparison and were rewritten for the administrator rule. One assertion in the `admin-monitoring` tests changed from the service-role key to the caller's session value. | Intended edits, named in the handoff. | Accepted. No other existing test changed. |
+| 3 | The upstream status reaches the log through a callback and is not part of the result object. | Design choice by Sonnet. | Accepted. Tests show it is absent from the stored row and the browser response. |
+| 4 | A missing header is refused with no network call, and a rejected token after one Auth call. The two 404 bodies are identical but the timing differs. | Planner observation. | Accepted. It reveals nothing beyond the route's existence, which the source already shows. |
+| 5 | An administrator can call the route directly without a `synthetic_canary_runs` record. | Accepted trade-off, decision D23. | Documented in the code comment. |
+
+Open:
+
+- Not deployed. The hosted check is not repaired until one real run passes.
+- A pass will support the bearer explanation and will not prove the original cause.
+- The protection of the administrator flag is defined in the migrations and covered by a database test in CI. It has not been checked on the hosted database.
+- No per-administrator limit on synthetic checks, on either the dashboard path or the direct path. Global provider capacity is the only limit.

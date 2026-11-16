@@ -104,16 +104,20 @@ function canaryFailure(type: 'chatbot' | 'valuation', category: string, startedA
   expected_model_version: null, observed_model_version: null, provider: null, model: null,
   edge_reached: false, upstream_reached: false, response_valid: false, canary_valid: false, ...fields });
 }
-async function runChatbotCanary(supabaseUrl: string, anonKey: string, serviceKey: string,
-  startedAt: string): Promise<Record<string, unknown>> {
+// The caller's own session (already verified as an administrator) authorizes the chatbot request,
+// exactly as it does for the valuation check. `onUpstreamStatus` receives only the numeric HTTP status
+// of the chatbot response, for the log line; it never reaches the stored row or the browser response.
+async function runChatbotCanary(supabaseUrl: string, anonKey: string, authorization: string,
+  startedAt: string, onUpstreamStatus: (status: number) => void): Promise<Record<string, unknown>> {
   const started = performance.now();
   try {
     const response = await fetch(`${supabaseUrl.replace(/\/$/, '')}/functions/v1/chatbot`, {
       method: 'POST',
-      headers: { apikey: anonKey, Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json',
+      headers: { apikey: anonKey, Authorization: authorization, 'Content-Type': 'application/json',
         'X-SGHomie-Internal-Action': 'chatbot-synthetic-canary' },
       body: '{}', signal: AbortSignal.timeout(35_000), redirect: 'error',
     });
+    onUpstreamStatus(response.status);
     let payload: unknown = null;
     try { payload = await response.json(); } catch { /* The response body is never logged or persisted. */ }
     const result = typeof payload === 'object' && payload !== null && !Array.isArray(payload)
@@ -439,8 +443,9 @@ Deno.serve(async (request) => {
         return json({ error: 'Invalid synthetic check request' }, 400);
       const type = input.canary_type as 'chatbot' | 'valuation';
       const startedAt = new Date().toISOString();
+      let upstreamStatus: number | null = null;
       const result = type === 'chatbot'
-        ? await runChatbotCanary(supabaseUrl, anonKey, serviceKey, startedAt)
+        ? await runChatbotCanary(supabaseUrl, anonKey, authorization, startedAt, (status) => { upstreamStatus = status; })
         : await runValuationCanary(service, supabaseUrl, anonKey, authorization, startedAt);
       try { await persistCanaryResult(service, result); }
       catch {
@@ -450,7 +455,7 @@ Deno.serve(async (request) => {
       console.info(JSON.stringify({ event: 'synthetic_canary', canary_type: type,
         status: result.status, failure_category: result.failure_category, duration_ms: result.duration_ms,
         request_id: result.request_id, expected_model_version: result.expected_model_version,
-        observed_model_version: result.observed_model_version }));
+        observed_model_version: result.observed_model_version, upstream_status: upstreamStatus }));
       return json({ dashboard_v2: { synthetic_canary: result } });
     }
 

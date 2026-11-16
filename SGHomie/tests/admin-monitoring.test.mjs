@@ -339,7 +339,7 @@ test('on-demand chatbot synthetic check is admin-only, fixed-input, persisted, a
   assert.equal(stored.request_id, interactionId);
   assert.equal(Object.keys(stored).some((key) => /prompt|raw_response|text|property|user|payload|secret|error_message/i.test(key)), false);
   const probe = run.probes.find((item) => item.url.endsWith('/functions/v1/chatbot'));
-  assert.equal(probe.authorization, `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`);
+  assert.equal(probe.authorization, 'Bearer synthetic-user-session');
   assert.equal(probe.redirect, 'error');
   assert.ok(probe.signal);
   assert.equal(run.rpcCalls.some((item) => item.name === 'record_monitoring_alert'), false);
@@ -419,6 +419,36 @@ test('chatbot synthetic check timeout is unknown and does not claim the edge was
   assert.equal(stored.edge_reached, false);
   assertNoLeak(body, stored);
 });
+
+test('chatbot synthetic check request carries the caller session and never the service-role key', async () => {
+  let seen;
+  const { response } = await chatbotRun((_url, init) => { seen = init; return Response.json({ synthetic_canary: validChatbotResult() }); });
+  assert.equal(response.status, 200);
+  assert.equal(seen.headers.Authorization, 'Bearer synthetic-user-session');
+  assert.equal(seen.headers['X-SGHomie-Internal-Action'], 'chatbot-synthetic-canary');
+  assert.equal(seen.body, '{}');
+  assert.equal(seen.redirect, 'error');
+  assert.equal(JSON.stringify(seen).includes(env.SUPABASE_SERVICE_ROLE_KEY), false);
+});
+
+const canaryLog = (run) => run.logs.filter((entry) => entry.level === 'info')
+  .map((entry) => JSON.parse(entry.args[0])).find((entry) => entry.event === 'synthetic_canary');
+
+for (const [label, upstream, expected] of [
+  ['200 on success', () => Response.json({ synthetic_canary: validChatbotResult() }), 200],
+  ['401 for a 401', () => Response.json({ error: 'private-reply' }, { status: 401 }), 401],
+  ['null on a timeout', () => { throw Object.assign(new Error('private-reply'), { name: 'TimeoutError' }); }, null],
+]) {
+  test(`chatbot synthetic check logs upstream_status ${label}`, async () => {
+    const { run, body, stored } = await chatbotRun(upstream);
+    const log = canaryLog(run);
+    assert.equal(log.upstream_status, expected);
+    assert.equal('upstream_status' in stored, false);
+    assert.equal(JSON.stringify(body).includes('upstream_status'), false);
+    assert.equal('upstream_status' in body.dashboard_v2.synthetic_canary, false);
+    assertNoLeak(body, stored, run.logs);
+  });
+}
 
 test('chatbot synthetic check refuses non-admins and unauthenticated callers before any chatbot request', async () => {
   const nonAdmin = await chatbotRun(() => assert.fail('chatbot must not be called'), undefined, { nonAdmin: true });
