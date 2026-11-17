@@ -104,24 +104,29 @@ function canaryFailure(type: 'chatbot' | 'valuation', category: string, startedA
   expected_model_version: null, observed_model_version: null, provider: null, model: null,
   edge_reached: false, upstream_reached: false, response_valid: false, canary_valid: false, ...fields });
 }
-async function runChatbotCanary(supabaseUrl: string, anonKey: string, serviceKey: string,
-  startedAt: string): Promise<Record<string, unknown>> {
+// The caller's own session (already verified as an administrator) authorizes the chatbot request,
+// exactly as it does for the valuation check. `onUpstreamStatus` receives only the numeric HTTP status
+// of the chatbot response, for the log line; it never reaches the stored row or the browser response.
+async function runChatbotCanary(supabaseUrl: string, anonKey: string, authorization: string,
+  startedAt: string, onUpstreamStatus: (status: number) => void): Promise<Record<string, unknown>> {
   const started = performance.now();
   try {
     const response = await fetch(`${supabaseUrl.replace(/\/$/, '')}/functions/v1/chatbot`, {
       method: 'POST',
-      headers: { apikey: anonKey, Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json',
+      headers: { apikey: anonKey, Authorization: authorization, 'Content-Type': 'application/json',
         'X-SGHomie-Internal-Action': 'chatbot-synthetic-canary' },
       body: '{}', signal: AbortSignal.timeout(35_000), redirect: 'error',
     });
+    onUpstreamStatus(response.status);
     let payload: unknown = null;
     try { payload = await response.json(); } catch { /* The response body is never logged or persisted. */ }
     const result = typeof payload === 'object' && payload !== null && !Array.isArray(payload)
       ? (payload as Record<string, unknown>).synthetic_canary : null;
     if (!response.ok || typeof result !== 'object' || result === null || Array.isArray(result)) {
       const category = response.status === 401 || response.status === 403 ? 'AUTH_FAILURE' : 'CHATBOT_EDGE_FAILURE';
-      return canaryFailure('chatbot', category, startedAt, performance.now() - started,
-        { edge_reached: true });
+      // edge_reached=false means "execution not confirmed", never "did not run": only a valid
+      // synthetic_canary object proves the chatbot function executed.
+      return canaryFailure('chatbot', category, startedAt, performance.now() - started);
     }
     const body = result as Record<string, unknown>;
     const status = ['success', 'failure', 'unknown'].includes(String(body.status)) ? body.status : 'unknown';
@@ -131,8 +136,7 @@ async function runChatbotCanary(supabaseUrl: string, anonKey: string, serviceKey
       && (body.provider === null || safeProvider(body.provider) !== null)
       && (body.model === null || safeModelLabel(body.model) !== null)
       && ['upstream_reached', 'response_valid', 'canary_valid'].every((key) => typeof body[key] === 'boolean');
-    if (!valid) return canaryFailure('chatbot', 'CHATBOT_EDGE_FAILURE', startedAt, performance.now() - started,
-      { edge_reached: true });
+    if (!valid) return canaryFailure('chatbot', 'CHATBOT_EDGE_FAILURE', startedAt, performance.now() - started);
     const normalizedStatus = status as 'success' | 'failure' | 'unknown';
     return safeCanaryResult({ canary_type: 'chatbot', status: normalizedStatus,
       failure_category: failureCategory, started_at: startedAt, completed_at: new Date().toISOString(),
@@ -439,8 +443,9 @@ Deno.serve(async (request) => {
         return json({ error: 'Invalid synthetic check request' }, 400);
       const type = input.canary_type as 'chatbot' | 'valuation';
       const startedAt = new Date().toISOString();
+      let upstreamStatus: number | null = null;
       const result = type === 'chatbot'
-        ? await runChatbotCanary(supabaseUrl, anonKey, serviceKey, startedAt)
+        ? await runChatbotCanary(supabaseUrl, anonKey, authorization, startedAt, (status) => { upstreamStatus = status; })
         : await runValuationCanary(service, supabaseUrl, anonKey, authorization, startedAt);
       try { await persistCanaryResult(service, result); }
       catch {
@@ -450,7 +455,7 @@ Deno.serve(async (request) => {
       console.info(JSON.stringify({ event: 'synthetic_canary', canary_type: type,
         status: result.status, failure_category: result.failure_category, duration_ms: result.duration_ms,
         request_id: result.request_id, expected_model_version: result.expected_model_version,
-        observed_model_version: result.observed_model_version }));
+        observed_model_version: result.observed_model_version, upstream_status: upstreamStatus }));
       return json({ dashboard_v2: { synthetic_canary: result } });
     }
 

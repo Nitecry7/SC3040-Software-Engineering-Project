@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { getSupabaseConfigError } from './supabaseConfig';
+import { captureAuthRedirect } from './authRecovery';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim() ?? '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim() ?? '';
@@ -9,6 +10,9 @@ const configError = getSupabaseConfigError();
 if (configError) {
   throw new Error(configError);
 }
+
+// Read any password-recovery redirect from the URL before the client consumes it.
+captureAuthRedirect();
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 

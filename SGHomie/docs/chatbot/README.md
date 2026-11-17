@@ -215,9 +215,7 @@ sequenceDiagram
 
 The internal Chatbot synthetic check uses a fixed marker and does not exercise
 user authentication, quotas, streaming, tools, or the full user journey. The
-hosted chatbot synthetic-canary authentication issue remains deferred. No
-successful hosted chatbot authentication or production availability check is
-claimed; see the [Phase 7D deployment notes](../operations/deployment-runbook.md#phase-7d-on-demand-synthetic-checks).
+hosted chatbot synthetic check was repaired after the 1 November 2026 release: it is now authorized by the administrator's verified session, its reply validation accepts cosmetic wrapping only, and the owner observed one passing hosted run. That is a point-in-time result. The cause of the earlier rejection was not established, and no production availability is claimed. The record is in [planning/04-test-evidence.md](../../../planning/04-test-evidence.md). See also the [Phase 7D deployment notes](../operations/deployment-runbook.md#phase-7d-on-demand-synthetic-checks).
 
 ## Detailed flows and setup
 

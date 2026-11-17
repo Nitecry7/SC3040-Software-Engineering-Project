@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { webcrypto } from 'node:crypto';
 import test from 'node:test';
-import { componentHarness, content } from './helpers/frontend-component.mjs';
+import { componentHarness, content, nodes } from './helpers/frontend-component.mjs';
+import * as passwordPolicy from '../FrontEnd/src/lib/passwordPolicy.ts';
+
+// Stand-in for the strength meter; the harness does not render child components.
+function PasswordStrength() { return null; }
 
 // Synthetic auth responses; this suite makes no Supabase requests or email sends.
 async function harness({ result = { data: { session: null, user: { identities: [{}] } }, error: null }, storageThrows = false } = {}) {
@@ -11,6 +15,9 @@ async function harness({ result = { data: { session: null, user: { identities: [
   const events = new Map();
   const app = componentHarness(new URL('../FrontEnd/src/components/AuthModal.tsx', import.meta.url), {
     'lucide-react': {},
+    '../lib/passwordPolicy': passwordPolicy,
+    './PasswordStrength': { default: PasswordStrength },
+    './ForgotPasswordForm': { default: () => null },
     '../lib/supabase': { supabase: { auth: {
       async signUp(credentials) { requests.push(['register', credentials]); return result; },
       async signInWithPassword(credentials) { requests.push(['signIn', credentials]); return result; },
@@ -36,7 +43,8 @@ async function harness({ result = { data: { session: null, user: { identities: [
   const submit = () => app.find(node => node.type === 'form').props.onSubmit({ preventDefault() {} });
   const register = async (email = 'buyer@example.invalid') => {
     input('email', email);
-    input('password', 'synthetic-password');
+    input('password', 'Synthetic-Pass-2026');
+    input('confirmPassword', 'Synthetic-Pass-2026');
     await submit();
   };
   click("Don't have an account? Register");
@@ -104,4 +112,65 @@ test('FE-AUTH-08 an obfuscated existing-account success response gives the same 
   assert.match(content(app.render()), /Check your email or sign in/);
   assert.doesNotMatch(content(app.render()), /We've sent a verification link/);
   assert.equal(app.storage.size, 0);
+});
+
+test('FE-AUTH-09 a password mismatch is rejected before the duplicate-send guard and sends nothing', async () => {
+  const app = await harness();
+  await app.register();
+  app.click('Close authentication popup');
+  app.toggle();
+  app.input('email', 'buyer@example.invalid');
+  app.input('password', 'Synthetic-Pass-2026');
+  app.input('confirmPassword', 'other');
+  await app.submit();
+  assert.equal(app.requests.length, 1);
+  assert.doesNotMatch(content(app.render()), /Verification email already sent/);
+  assert.match(content(app.render()), /Passwords do not match\./);
+});
+
+test('FE-AUTH-10 an unmet password rule is rejected before the duplicate-send guard and sends nothing', async () => {
+  const app = await harness();
+  app.input('email', 'buyer@example.invalid');
+  app.input('password', 'weakpassword');
+  app.input('confirmPassword', 'weakpassword');
+  await app.submit();
+  assert.equal(app.requests.length, 0);
+  assert.equal(app.storage.size, 0);
+  assert.match(content(app.render()), /Password does not meet the requirements\./);
+  assert.doesNotMatch(content(app.render()), /Processing/);
+});
+
+test('FE-AUTH-11 typing a password makes no console call and no storage write', async () => {
+  const calls = [];
+  const writes = [];
+  const events = new Map();
+  const console = Object.fromEntries(['log', 'info', 'warn', 'error', 'debug', 'trace'].map(name => [name, (...args) => calls.push([name, ...args])]));
+  const app = componentHarness(new URL('../FrontEnd/src/components/AuthModal.tsx', import.meta.url), {
+    'lucide-react': {},
+    '../lib/passwordPolicy': passwordPolicy,
+    './PasswordStrength': { default: PasswordStrength },
+    './ForgotPasswordForm': { default: () => null },
+    '../lib/supabase': { supabase: { auth: { async signUp() { return { data: {}, error: null }; }, async signInWithPassword() { return { data: {}, error: null }; } } } },
+    'react-hot-toast': { default: { success() {}, error() {} } },
+  }, {}, {
+    Error, crypto: webcrypto, TextEncoder, console,
+    window: {
+      addEventListener: (name, handler) => events.set(name, handler),
+      removeEventListener: name => events.delete(name),
+      localStorage: { setItem: (...args) => writes.push(['local', ...args]) },
+      sessionStorage: { setItem: (...args) => writes.push(['session', ...args]), getItem: () => null, removeItem() {} },
+    },
+  });
+  app.render();
+  await app.effects();
+  events.get('toggle-auth-modal')();
+  app.find(node => node.type === 'button' && content(node) === "Don't have an account? Register").props.onClick();
+  for (const value of ['P', 'Pa', 'Pass', 'Passw0rd-Typed-Here']) {
+    app.find(node => node.props.id === 'password').props.onChange({ target: { value } });
+    app.find(node => node.props.id === 'confirmPassword').props.onChange({ target: { value } });
+  }
+  const meter = nodes(app.render()).find(node => node.type === PasswordStrength);
+  assert.equal(meter.props.password, 'Passw0rd-Typed-Here');
+  assert.deepEqual(calls, []);
+  assert.deepEqual(writes, []);
 });

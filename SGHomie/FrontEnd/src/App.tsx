@@ -1,5 +1,5 @@
-import { lazy, Suspense } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { lazy, Suspense, useEffect, useRef } from 'react';
+import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import Navbar from './components/Navbar';
 import AuthModal from './components/AuthModal';
@@ -7,6 +7,7 @@ import Chatbot from './components/Chatbot';
 import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import SessionLifecycle from './components/SessionLifecycle';
+import { clearRecoveryState, getRecoveryState, wasCapturedFromUrl } from './lib/authRecovery';
 
 const Home = lazy(() => import('./pages/Home'));
 const Search = lazy(() => import('./pages/Search'));
@@ -18,6 +19,35 @@ const PropertyDetails = lazy(() => import('./pages/PropertyDetails'));
 const Enquiry = lazy(() => import('./pages/Enquiry'));
 const SellerSignup = lazy(() => import('./pages/SellerSignup'));
 const SellerDashboard = lazy(() => import('./pages/SellerDashboard'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+
+// A password-recovery or auth-error redirect can land on any path (for example
+// when the hosted redirect list falls back to the site URL). Send it to the reset
+// page once, and drop any recovery or error state when the user leaves that page,
+// so an abandoned recovery cannot keep the reset form reachable or the profile
+// overlay hidden.
+function RecoveryRedirect() {
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const redirected = useRef(false);
+  const visitedResetPage = useRef(false);
+
+  useEffect(() => {
+    if (pathname === '/reset-password') {
+      visitedResetPage.current = true;
+      return;
+    }
+    const state = getRecoveryState();
+    if (state && wasCapturedFromUrl() && !redirected.current && !visitedResetPage.current) {
+      redirected.current = true;
+      navigate('/reset-password', { replace: true });
+    } else if (visitedResetPage.current && state) {
+      clearRecoveryState();
+    }
+  }, [pathname, navigate]);
+
+  return null;
+}
 
 function App() {
   return (
@@ -50,6 +80,7 @@ function App() {
                 } 
               />
               <Route path="/contact" element={<Contact />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
               <Route 
                 path="/profile" 
                 element={
@@ -103,6 +134,7 @@ function App() {
           <Toaster position="bottom-right" />
         </div>
         <SessionLifecycle />
+        <RecoveryRedirect />
       </Router>
     </AuthProvider>
   );

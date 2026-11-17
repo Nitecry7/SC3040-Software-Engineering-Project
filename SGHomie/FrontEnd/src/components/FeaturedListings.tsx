@@ -3,8 +3,10 @@ import { MapPin } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Property } from '../types/supabase';
 
+type FeaturedListing = Pick<Property, 'id' | 'image_url' | 'title' | 'type' | 'price' | 'location' | 'bedrooms' | 'bathrooms' | 'area_sqft'>;
+
 const FeaturedListings = () => {
-  const [listings, setListings] = useState<Property[]>([]);
+  const [listings, setListings] = useState<FeaturedListing[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -13,7 +15,7 @@ const FeaturedListings = () => {
       try {
         const { data, error } = await supabase
           .from('properties')
-          .select('*')
+          .select('id,image_url,title,type,price,location,bedrooms,bathrooms,area_sqft')
           .limit(3)
           .order('created_at', { ascending: false });
 

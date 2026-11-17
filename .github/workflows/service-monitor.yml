@@ -1,0 +1,69 @@
+# Level 1 service monitor: checks the public frontend, Render model service and Supabase chatbot
+# function from outside and reports healthy / failed / unknown per target.
+#
+# NOTE: GitHub runs `schedule` triggers only from the default branch. Until this file is merged
+# there, the cron below does not run; only workflow_dispatch and the branch push trigger do.
+#
+# Repository variables (Settings > Secrets and variables > Actions > Variables), all optional:
+#   MONITOR_FRONTEND_URL, MONITOR_RENDER_URL, MONITOR_SUPABASE_URL, MONITOR_SUPABASE_ANON_KEY,
+#   MONITOR_EXPECTED_MODEL_VERSION, MONITOR_TIMEOUT_MS
+# Repository secret (optional): MONITOR_RENDER_TOKEN
+# Unset values make that target report unknown / NOT_CONFIGURED; the job still succeeds.
+name: Service monitor
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+  push:
+    branches:
+      - assessment/ncs-opspilot
+    paths:
+      - 'SGHomie/scripts/service-monitor.mjs'
+      - 'SGHomie/scripts/monitor/**'
+      - 'SGHomie/tests/service-monitor.test.mjs'
+      - '.github/workflows/service-monitor.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.22.2'
+      - name: Fixture scenario (no network)
+        run: node SGHomie/scripts/service-monitor.mjs --fixtures all-healthy
+      - name: Live checks
+        env:
+          MONITOR_FRONTEND_URL: ${{ vars.MONITOR_FRONTEND_URL }}
+          MONITOR_RENDER_URL: ${{ vars.MONITOR_RENDER_URL }}
+          MONITOR_SUPABASE_URL: ${{ vars.MONITOR_SUPABASE_URL }}
+          MONITOR_SUPABASE_ANON_KEY: ${{ vars.MONITOR_SUPABASE_ANON_KEY }}
+          MONITOR_EXPECTED_MODEL_VERSION: ${{ vars.MONITOR_EXPECTED_MODEL_VERSION }}
+          MONITOR_TIMEOUT_MS: ${{ vars.MONITOR_TIMEOUT_MS }}
+          MONITOR_RENDER_TOKEN: ${{ secrets.MONITOR_RENDER_TOKEN }}
+        run: |
+          code=0
+          node SGHomie/scripts/service-monitor.mjs --json monitor-report.json > monitor-output.txt || code=$?
+          cat monitor-output.txt
+          exit "$code"
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo '## Service monitor'
+            echo '```text'
+            if [ -f monitor-output.txt ]; then sed -n '1,/^healthy=/p' monitor-output.txt; else echo 'No report was produced.'; fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: service-monitor-report
+          path: monitor-report.json
+          if-no-files-found: ignore

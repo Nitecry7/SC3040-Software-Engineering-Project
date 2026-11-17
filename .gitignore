@@ -33,4 +33,8 @@ coverage.xml
 /SGHomie/BackEnd/supabase/fixtures/sghomie-demo-listings-2026-10-07.csv
 /SGHomie/evals/chatbot/results/
 
-/AGENTS.md
+# Local browser-automation logs
+.playwright-mcp/
+
+# Private assessment preparation: narration script, submission checklist, release notes, raw session exports
+.assessment-private/

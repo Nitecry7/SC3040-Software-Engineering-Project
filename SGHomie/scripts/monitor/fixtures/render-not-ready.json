@@ -1,0 +1,42 @@
+{
+  "description": "Render answers 503 with the model-unavailable detail.",
+  "observations": [
+    {
+      "target": "frontend",
+      "startedAt": "2026-11-16T00:00:00.000Z",
+      "durationMs": 240,
+      "httpStatus": 200,
+      "errorKind": null,
+      "host": "app.example.test",
+      "fields": {
+        "rootPresent": true
+      },
+      "version": null
+    },
+    {
+      "target": "render_model",
+      "startedAt": "2026-11-16T00:00:00.000Z",
+      "durationMs": 420,
+      "httpStatus": 503,
+      "errorKind": null,
+      "host": "model.example.test",
+      "fields": {
+        "notReadySignal": true
+      },
+      "version": null
+    },
+    {
+      "target": "supabase_app",
+      "startedAt": "2026-11-16T00:00:00.000Z",
+      "durationMs": 380,
+      "httpStatus": 200,
+      "errorKind": null,
+      "host": "project.supabase.example.test",
+      "fields": {
+        "bodyValid": true,
+        "replyPresent": true
+      },
+      "version": null
+    }
+  ]
+}

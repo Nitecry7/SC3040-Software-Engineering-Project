@@ -1,0 +1,47 @@
+{
+  "description": "The frontend request times out; this is unknown, not failed.",
+  "observations": [
+    {
+      "target": "frontend",
+      "startedAt": "2026-11-16T00:00:00.000Z",
+      "durationMs": 60000,
+      "httpStatus": null,
+      "errorKind": "timeout",
+      "host": "app.example.test",
+      "fields": {},
+      "version": null
+    },
+    {
+      "target": "render_model",
+      "startedAt": "2026-11-16T00:00:00.000Z",
+      "durationMs": 910,
+      "httpStatus": 200,
+      "errorKind": null,
+      "host": "model.example.test",
+      "fields": {
+        "bodyValid": true,
+        "statusOk": true,
+        "modelLoaded": true
+      },
+      "version": {
+        "httpStatus": 200,
+        "errorKind": null,
+        "bodyValid": true,
+        "match": true
+      }
+    },
+    {
+      "target": "supabase_app",
+      "startedAt": "2026-11-16T00:00:00.000Z",
+      "durationMs": 380,
+      "httpStatus": 200,
+      "errorKind": null,
+      "host": "project.supabase.example.test",
+      "fields": {
+        "bodyValid": true,
+        "replyPresent": true
+      },
+      "version": null
+    }
+  ]
+}

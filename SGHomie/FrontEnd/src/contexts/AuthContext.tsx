@@ -2,6 +2,7 @@ import React, { createContext, useCallback, useContext, useEffect, useRef, useSt
 import { User } from '@supabase/supabase-js';
 import { supabase } from '../lib/supabase';
 import InitialProfileSetup from '../components/InitialProfileSetup';
+import { clearRecoveryState, getRecoveryState, subscribeRecoveryState } from '../lib/authRecovery';
 
 const PROFILE_LOOKUP_TIMEOUT_MS = 10_000;
 
@@ -46,6 +47,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isSeller, setIsSeller] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [profileLoading, setProfileLoading] = useState(false);
+  // True while the user is resetting a password from an emailed link; the profile
+  // overlay must not cover the reset form.
+  const [recoveryActive, setRecoveryActive] = useState(getRecoveryState()?.kind === 'recovery');
   const profileChecks = useRef(new Map<string, Promise<{
     needsProfileSetup: boolean;
     isAdmin: boolean;
@@ -181,11 +185,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let mounted = true;
     let authEventReceived = false;
 
+    // Not every start-up event can be relied on to reach this subscriber, so the
+    // recovery state is read directly instead of waiting for PASSWORD_RECOVERY.
+    const syncRecovery = () => setRecoveryActive(getRecoveryState()?.kind === 'recovery');
+    const unsubscribeRecovery = subscribeRecoveryState(syncRecovery);
+    syncRecovery();
+
     // Subscribe first so a sign-out or account change cannot be overwritten by
     // a slower startup getSession() response.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!mounted) return;
       authEventReceived = true;
+      if (_event === 'SIGNED_OUT') clearRecoveryState();
       const sessionUser = session?.user;
       if (sessionUser
         && sessionUser.is_anonymous !== true
@@ -222,6 +233,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       activeUserIsRegistered.current = false;
       profileLoadingRef.current = false;
       subscription.unsubscribe();
+      unsubscribeRecovery();
     };
   }, [applySession, setTransition]);
 
@@ -273,7 +285,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       loading: authLoading || profileLoading,
     }}>
       {children}
-      {user && needsProfileSetup && (
+      {user && needsProfileSetup && !recoveryActive && (
         <InitialProfileSetup
           userId={user.id}
           onComplete={() => setNeedsProfileSetup(false)}

@@ -6,6 +6,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 // Import the Supabase client to interact with the backend database.
 import { supabase } from '../lib/supabase';
+// Import the form that lets a signed-in user change their password.
+import ChangePasswordForm from '../components/ChangePasswordForm';
 // Import icons from lucide-react for visual elements.
 import { UserCircle, Save, LogOut, Edit } from 'lucide-react';
 // Import toast for showing notifications to the user.
@@ -416,6 +418,16 @@ const Profile = () => {
               </div>
             )}
           </div>
+
+          {/* Change Password Section: shown only for accounts that have an email address */}
+          {user.email && (
+            <div className="p-6 border-t">
+              <h2 className="text-lg font-semibold text-gray-900 mb-4">Change password</h2>
+              <div className="max-w-md">
+                <ChangePasswordForm email={user.email} />
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

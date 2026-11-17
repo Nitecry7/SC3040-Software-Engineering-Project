@@ -67,7 +67,10 @@ test('FE-PROFILE-SETUP-02 a rejected profile write keeps setup open and does not
   assert.match(content(app.render()), /Complete Your Profile/);
 });
 
-function profileHarness({ profile = null, queryError = null } = {}) {
+// Stand-in for the change-password form; the harness does not render child components.
+function ChangePasswordForm() { return null; }
+
+function profileHarness({ profile = null, queryError = null, email = 'buyer@example.invalid' } = {}) {
   const writes = [];
   const inserts = [];
   const successes = [];
@@ -76,7 +79,7 @@ function profileHarness({ profile = null, queryError = null } = {}) {
   let hookIndex = 0;
   const state = [];
   const authUser = {
-    id: userId, email: 'buyer@example.invalid', created_at: '2026-01-01T00:00:00Z', user_metadata: {},
+    id: userId, email, created_at: '2026-01-01T00:00:00Z', user_metadata: {},
   };
   const query = {
     select() { return query; },
@@ -91,6 +94,7 @@ function profileHarness({ profile = null, queryError = null } = {}) {
     '../contexts/AuthContext': { useAuth: () => ({ user: authUser, signOut: async () => {} }) },
     'react-router-dom': { useNavigate: () => path => navigations.push(path) },
     '../lib/supabase': { supabase: { from(table) { assert.equal(table, 'user_profiles'); return query; } } },
+    '../components/ChangePasswordForm': { default: ChangePasswordForm },
     'lucide-react': {},
     'react-hot-toast': { default: {
       success: message => successes.push(message), error: message => errors.push(message),
@@ -131,4 +135,23 @@ test('FE-PROFILE-02 saved profile edits retain user ownership and update the dis
   assert.match(content(app.render()), /Updated Buyer/);
   assert.deepEqual(app.successes, ['Profile updated successfully']);
   assert.deepEqual(app.errors, []);
+});
+
+test('FE-PROFILE-03 the Profile page renders the change-password form with the signed-in email', async () => {
+  const app = profileHarness();
+  app.render();
+  await app.effects();
+  await setImmediate();
+  const form = app.find(node => node.type === ChangePasswordForm);
+  assert.equal(form.props.email, 'buyer@example.invalid');
+  assert.match(content(app.render()), /Change password/);
+});
+
+test('FE-PROFILE-04 the Profile page does not render the change-password form when the user has no email', async () => {
+  const app = profileHarness({ email: null });
+  app.render();
+  await app.effects();
+  await setImmediate();
+  assert.ok(!nodes(app.render()).some(node => node.type === ChangePasswordForm));
+  assert.doesNotMatch(content(app.render()), /Change password/);
 });

@@ -156,12 +156,12 @@ and buyer/seller context while preserving login, saved preferences and drafts.
 
 | Status | Capability in this repository |
 | --- | --- |
-| ✅ **Implemented** | Buyer listing search, property details, enquiries, seller drafts, admin listing workflows, structured buyer chatbot search, and the repository synthetic-check framework with bounded feedback inspection. Hosted Chatbot synthetic-check authentication remains deferred; no continuous availability monitoring is implemented. This describes repository code, not hosted deployment. |
+| ✅ **Implemented** | Buyer listing search, property details, enquiries, seller drafts, admin listing workflows, structured buyer chatbot search, and the repository synthetic-check framework with bounded feedback inspection. The Chatbot synthetic check's authorization has since been repaired, and the owner observed one passing hosted run of each synthetic check. An outside-in service monitor script and workflow exist, but its schedule is not active, so no continuous availability monitoring is claimed. This describes repository code, not hosted deployment. |
 | 🧪 **Research/demo** | Buyer valuation uses a research model and serving path. Its estimate and conformal target coverage do not provide an official valuation or a property-specific probability guarantee. |
 | 🏷️ **Demo data** | Nearby amenity records are synthetic demo data, not verified facilities. Market analytics include generated or hardcoded values; they are not verified market evidence. HDB address verification does not prove that every listing fact is genuine. |
 | 🛠️ **Planned** | Explainable personalized ranking, real amenity ingestion, historical transaction analytics, and CatBoost-based seller pricing guidance are not implemented. Search and sorting are not personalized recommendation ranking. |
 
-The hosted chatbot synthetic-canary authentication issue remains deferred. No successful hosted chatbot authentication or production availability check is claimed; repository checks and the internal fixed-marker probe do not exercise the authenticated user journey.
+The hosted chatbot synthetic check's authorization was repaired, and the owner observed one successful hosted run. That is a point-in-time result: the cause of the earlier rejection was not established, and no production availability is claimed. Repository checks and the internal fixed-marker probe do not exercise the authenticated user journey. See the [assessment overview](planning/README.md) for the evidence.
 
 
 ---
@@ -285,7 +285,7 @@ flowchart LR
     Context --> Dashboard
 ```
 
-The hosted Chatbot synthetic check remains deferred because service-to-service authentication integration was not completed for the final release. One hosted Valuation synthetic check was previously observed succeeding as a point-in-time check; neither that observation nor repository telemetry establishes continuous availability monitoring. See the [monitoring test plan](SGHomie/docs/operations/monitoring-test-plan.md) and [chatbot guide](SGHomie/docs/chatbot/README.md) for implementation details and verification limits.
+The hosted Chatbot synthetic check was not working at the final release. It has since been repaired: the check is now authorized by the administrator's verified session, and the owner observed one passing hosted run. One hosted Valuation synthetic check was also observed succeeding. Both are point-in-time checks; neither those observations nor repository telemetry establishes continuous availability monitoring. The two documents linked next still describe the earlier design; the current record is in the [assessment overview](planning/README.md). See the [monitoring test plan](SGHomie/docs/operations/monitoring-test-plan.md) and [chatbot guide](SGHomie/docs/chatbot/README.md) for implementation details and verification limits.
 
 ---
 
@@ -402,6 +402,7 @@ integration logic. `hooks/` and `types/` contain shared hooks and TypeScript typ
 | 🧪 [Historical testing report](SGHomie/docs/testing/test-report.md) | Original pre-merge results and preserved evidence |
 | 🔄 [Historical main merge verification](SGHomie/docs/testing/merge-verification.md) | 28 October 2026 `main` snapshot, retained as historical evidence |
 | ▶️ [Running the tests](SGHomie/tests/README.md) | Final `main` release verification, application, ML, local database, evidence capture, and CI commands |
+| 🧪 [NCS assessment overview](planning/README.md) | Assessment scope, agent workflow, evidence, reviews and deployment status |
 | ⚠️ [Archived migrations](archived_migrations/README.md) | Historical migration notice |
 
 ## 👥 Contributors
