@@ -1,6 +1,6 @@
 # NCS AI-Native Builder assessment: overview
 
-This folder records the planning, handoffs, evidence and reviews for the assessment work on SG Homie. The work is on the branch `assessment/ncs-opspilot`, from 16 to 17 November 2026.
+This folder records the planning, handoffs, evidence and reviews for the assessment work on SG Homie. The work was done on the branch `assessment/ncs-opspilot`, from 16 to 17 November 2026, and merged into `main` on 17 November 2026 (pull request #13).
 
 Status words used throughout:
 
@@ -44,21 +44,21 @@ Two gaps in an otherwise working application:
 
 | Slice | What it does | Implemented | CI verified | Browser verified | Hosted verified |
 | --- | --- | --- | --- | --- | --- |
-| S1 HDB verification integrity | A verified listing's location fields can change only together, through a valid verification | Yes | Yes | Not applicable | No. Migration not applied. |
-| L0 Home page column list | The home page requests named columns only | Yes | Yes | No | No. Frontend not deployed. |
-| S2 Public listing column contract | Visitors who are not signed in can read only an explicit list of listing columns | Yes | Yes | Not applicable | No. Migration not applied. |
-| S3 Service monitor | A script and workflow that check the frontend, the model service and the chatbot function from outside | Yes | Yes | Not applicable | Owner: one configured live run reported all three targets healthy. Reachability and readiness only. Schedule not active. |
+| S1 HDB verification integrity | A verified listing's location fields can change only together, through a valid verification | Yes | Yes | Not applicable | Owner: migration applied to the hosted database after the merge. No hosted behaviour check is recorded. |
+| L0 Home page column list | The home page requests named columns only | Yes | Yes | No | Owner: live on Netlify after the merge |
+| S2 Public listing column contract | Visitors who are not signed in can read only an explicit list of listing columns | Yes | Yes | Not applicable | Owner: migration applied to the hosted database after the merge. No hosted behaviour check is recorded. |
+| S3 Service monitor | A script and workflow that check the frontend, the model service and the chatbot function from outside | Yes | Yes | Not applicable | Owner: one configured live run reported all three targets healthy. Reachability and readiness only. The workflow is now on the default branch with its schedule configured; no scheduled run has been observed. |
 | S4 Sign-up password fields | Confirm password and show or hide | Yes | Yes | Owner, on a local build | Owner, against hosted Auth |
 | A1 Password policy and strength estimate | A rule checklist and an advisory strength meter | Yes | Yes | Planner with Playwright, and owner, on a local build | Owner, against hosted Auth |
 | S5 Forgot and reset password | Reset by emailed link, with expired and invalid link states | Yes | Yes | Planner with Playwright for link states; owner end to end | Owner, with a real recovery email |
 | S6 Change password | A form on the Profile page that requires the current password | Yes | Yes | Owner, on a local build | Owner, against hosted Auth |
-| B1 Honest check evidence | The existing dashboard claims the chatbot function ran only when the response proves it | Yes | Yes | No | Function deployed. The reworded dashboard line needs the frontend deployed. |
+| B1 Honest check evidence | The existing dashboard claims the chatbot function ran only when the response proves it | Yes | Yes | No | Function deployed. The reworded dashboard line went out with the frontend release; it was not separately observed. |
 | B2 Check authorization | The existing chatbot check is authorized by the administrator's verified session | Yes | Yes | Not applicable | Owner: the check reached the function and the provider |
 | B3 Check validation and diagnostics | A clearer fixed prompt, acceptance of cosmetic wrapping only, and safe diagnostics | Yes | Yes | Not applicable | Owner: the chatbot check and the valuation check each passed one run |
 
 The Admin Monitoring dashboard and both synthetic checks existed before the assessment. B1 to B3 repaired and tightened the chatbot check. They did not create it. The valuation check was not changed.
 
-"Owner, on a local build" means the repository owner ran the frontend locally, connected to the hosted Supabase project, with a synthetic account. None of the frontend work is on the live Netlify site yet, because Netlify deploys from `main`.
+"Owner, on a local build" means the repository owner ran the frontend locally, connected to the hosted Supabase project, with a synthetic account. Those checks were made before the release. The frontend work went live on Netlify after the merge into `main`, and the owner reports verifying the live application ([04](04-test-evidence.md), "Production release to main").
 
 ## Scope decisions and cuts
 
@@ -160,6 +160,7 @@ Each of these is recorded in [05-review-findings.md](05-review-findings.md) or [
 | `247fa6b` | 17 Nov | B1 |
 | `450d02b` | 17 Nov | B2 |
 | `b49f4ec` | 17 Nov | B3 |
+| `24e9f20` | 17 Nov | Merge of the assessment branch into `main` (pull request #13) |
 
 ## Testing
 
@@ -203,20 +204,21 @@ Database tests run in the `database` job of `.github/workflows/tests.yml` on eve
 
 | Part | Status |
 | --- | --- |
-| Frontend changes | Not on the live site. Netlify deploys from `main`. |
-| S1 and S2 migrations | Not applied to the hosted database |
+| Assessment branch | Merged into `main` on 17 November 2026, pull request #13, merge commit `24e9f20`. The Repository tests workflow passed on that commit. |
+| Frontend changes | Live on Netlify. Owner-reported deployment and live check; the planner also found text from the new password flows in the live site's JavaScript. |
+| S1 and S2 migrations | Applied to the hosted database, as reported by the owner. The planner could not confirm this, and no hosted behaviour check is recorded. |
 | `chatbot` and `admin-monitoring` functions | Deployed by the owner with B1, B2 and B3. Both synthetic checks passed one hosted run each. |
 | Hosted Auth setting "Require current password when updating" | Enabled by the owner |
 | Service monitor live run | One configured run, re-run by the owner in GitHub Actions: frontend, model service and Supabase each healthy with HTTP 200 ([04](04-test-evidence.md), "Service monitor: configured live run") |
-| Scheduled monitoring | Not active. GitHub runs schedules only from the default branch. |
+| Scheduled monitoring | Configured: the workflow is on the default branch and enabled, so its 30-minute schedule can run. No scheduled run had been observed when this was written, shortly after the merge. |
 
 ## Limitations and future work
 
 - The two synthetic checks passed on hosted as single runs. That shows those executions, not continuous reliability. The chatbot's configured model is a free router, and the original cause of its earlier rejection was never established.
 - A passing valuation check shows the service returned a well-formed prediction from the expected model version. It says nothing about the accuracy of the estimates, which remain research output.
-- The two database fixes protect nothing on hosted until the migrations are applied.
-- The listing data fix covers visitors who are not signed in. Listing privacy for signed-in accounts is unchanged and needs a product decision.
-- The new monitor checks reachability and readiness only. It makes no valuation request and no AI call, so its one healthy live run does not show that either works end to end. Its 30-minute schedule is defined in the workflow but does not run from this branch, because GitHub runs schedules only from the default branch. Its results appear in GitHub Actions, not in the Admin Monitoring dashboard.
-- A `system_alerts` table and on-demand incident records already existed. Nothing new writes to them. Automatic incident detection from scheduled checks, stored scheduled observations, repeated-failure thresholds, operational notifications and any AI investigator are future work.
+- The two database fixes are applied to the hosted database on the owner's report. Their effect on hosted has not been tested there; the evidence for their behaviour is the CI database tests.
+- Listing privacy is incomplete. The fix covers visitors who are not signed in. Any signed-in account still has its earlier access, and registration is open. This needs a product decision.
+- The new monitor checks reachability and readiness only. It makes no valuation request and no AI call, so its one healthy live run does not show that either works end to end. Its 30-minute schedule is now configured on the default branch, but no scheduled run has been observed yet. Scheduled results are not stored anywhere persistent: each run leaves a summary and a report file in GitHub Actions, and nothing appears in the Admin Monitoring dashboard.
+- A `system_alerts` table and on-demand incident records already existed. Nothing new writes to them. Automatic incident detection from scheduled checks, stored scheduled observations, repeated-failure thresholds, operational alerts and the AI incident investigator are deferred.
 - The strength rating is a small in-house estimate, not a breach check.
-- Next steps, in order of value: apply and verify the two migrations, schedule deep canaries with a narrowly scoped credential and quota limits ([handoff 11](handoffs/11-c-monitoring-preparation.md)), store scheduled results and alert on repeated failures, and decide the remaining listing privacy rules.
+- Next steps, in order of value: verify the two applied migrations on hosted with synthetic data, observe a scheduled monitor run, schedule deep canaries with a narrowly scoped credential and quota limits ([handoff 11](handoffs/11-c-monitoring-preparation.md)), store scheduled results and alert on repeated failures, and decide the remaining listing privacy rules.

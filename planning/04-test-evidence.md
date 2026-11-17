@@ -500,3 +500,50 @@ What this shows, and what it does not:
 ### Release status at submission
 
 Unchanged by the results above: the updated authentication frontend is not on the live site, and the S1 and S2 migrations are not applied to the hosted database.
+
+### Production release to main (owner-reported, with planner checks)
+
+This supersedes the status in "Release status at submission" above and the "Not deployed" status lines of the earlier sections, all of which are left as written.
+
+The owner reports the following. No command output or screenshots were supplied for these, so they are recorded as reported.
+
+| Step | Owner-reported |
+| --- | --- |
+| Merge | The assessment branch was merged into `main` |
+| Frontend | The latest Netlify production deployment was confirmed |
+| Database | The two pending migrations, S1 and S2, were applied to the hosted Supabase project |
+| Live application | Verified by the owner |
+
+What the planner read from public sources on 17 November 2026. No hosted database, Supabase dashboard or Netlify dashboard was accessed.
+
+| Check | Result |
+| --- | --- |
+| Pull request #13 | Merged into `main` at 03:03:38 UTC, merge commit `24e9f20`, from `assessment/ncs-opspilot` at `e9846f0` |
+| Repository tests on `24e9f20` | [Run 44007452967](https://github.com/Nitecry7/SC3040-Software-Engineering-Project/actions/runs/44007452967): application, valuation and database jobs all succeeded. The database job applies every migration, including S1 and S2, to a throwaway database and runs the pgTAP tests. |
+| Live site | Responds with HTTP 200. Its JavaScript contains two pieces of text that exist only in the new password flows: the forgot-password link and the "must be different from your current password" message. |
+| Service monitor workflow | Present on the default branch and enabled |
+| Scheduled monitor runs | None recorded. The only run on record is the earlier push run and its re-runs. |
+| Push-notification workflow | Disabled, with no run for the merge. The merge diff was not sent to the external provider (decision D6). |
+
+Current status, by part:
+
+1. **Frontend features.** The sign-up password fields, strength estimate, forgot and reset password, change password, and the home page column list are in the build now served by Netlify. Before the release they had been exercised only from a local build.
+2. **Database migrations.** S1 and S2 are applied to hosted on the owner's report. Their behaviour is evidenced by the CI database tests, not by a test on hosted.
+3. **Synthetic checks.** The chatbot and valuation checks were verified on hosted before the release, one run each, as recorded above. They were not re-run for this entry.
+4. **Service monitor.** The schedule is now configured on the default branch. Configured is not the same as observed: no scheduled run has been seen. The one healthy live result remains the manual re-run recorded above.
+
+Not verified:
+
+- That the migrations are present on the hosted database. The planner has no access, and no migration listing was supplied.
+- The effect of S1 and S2 on hosted. No hosted check with synthetic data is recorded, for example that a visitor who is not signed in is refused a private column.
+- Whether the read-only data check was repeated immediately before applying S1, as recommended earlier in this file.
+- The order of the release steps. S2 depends on the home page change being live first. The live bundle was in place by 03:10 UTC; when the migrations were applied is not recorded.
+- Each new feature individually on the live site. The planner's check found text in the bundle; it did not sign in or submit a form.
+- The reworded dashboard evidence line from B1 on the live site.
+- Any scheduled monitor run.
+
+Still open after the release:
+
+- Listing privacy for signed-in accounts is unchanged and incomplete.
+- Scheduled monitor results are not stored persistently and do not reach the Admin Monitoring dashboard.
+- The AI incident investigator and operational alerts remain deferred.

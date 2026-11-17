@@ -4,7 +4,7 @@ These files are curated, sanitized excerpts from the Claude Code session in whic
 
 They are evidence for the working method described in [the assessment overview](../README.md): the owner decides, one model plans and reviews, another implements.
 
-The complete export is kept out of the repository because it discusses two data findings in detail, and the fixes for those are not yet applied to the hosted database (decisions D28 and D29 in [01-scope-and-decisions.md](../01-scope-and-decisions.md)).
+The complete export is kept out of the repository because it discusses security findings in detail (decisions D28 and D29 in [01-scope-and-decisions.md](../01-scope-and-decisions.md)). When these excerpts were prepared, the fixes for two data findings were not yet applied to the hosted database. The owner has since reported applying them, but the export also covers items that remain open, and it has not been cleared for publication.
 
 ## Who is speaking
 
@@ -48,7 +48,7 @@ Included: the text of each turn. Each tool call appears as a one-line note with 
 ## What was changed or left out
 
 - **Placeholders.** Email addresses, home-directory paths, token-shaped strings and internal agent identifiers are replaced by placeholders such as `<home>` and `[email redacted]`. This is pattern-based, so synthetic test addresses and the no-reply address in suggested commit trailers are replaced too.
-- **One bullet omitted in file 01.** In the owner's scope message, one bullet under the first security workstream is left out and marked where it stood. It described a data finding whose fix is not yet on the hosted project, and it is not needed to follow the owner's decisions. The rest of that message is as written.
+- **One bullet omitted in file 01.** In the owner's scope message, one bullet under the first security workstream is left out and marked where it stood. It described a data finding whose fix was not on the hosted project when the excerpts were prepared, and it is not needed to follow the owner's decisions. The rest of that message is as written.
 - **Closing address word omitted.** The repository's `AGENTS.md` asks agents to end each report with a set word, as a check that they read the instructions. That word is removed wherever an agent used it to close or open a sentence, for readability: a trailing ", [word]" is dropped, and where the word opened a sentence the next word is capitalized. One line in file 08 that only discussed this closing phrase is left out. No other wording in those sentences is changed.
 - **Tool wrappers removed.** Text added by the tool itself is removed: the wrapper around pasted text and around a delegated run's report (with the two-space indent the wrapper adds), and notes about which file was open in the editor.
 - **Formatting.** Headings inside a turn are demoted so they do not collide with the turn labels. Relative links inside a turn are repointed so they still resolve from this folder. The one-line note for a tool call is cut at 160 characters, timestamps are shortened to whole seconds, and trailing spaces are trimmed.

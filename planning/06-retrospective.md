@@ -50,7 +50,9 @@ The implementer also caught a real defect in the planner's S1 design before it s
 - The check depends on a free model router that picks a different model per request. One passing run shows that execution, not reliability.
 - It took three rounds, because the first plan carried an unverified explanation and the second repair exposed a validation rule too strict for the models actually served.
 
-Second weakest: **nothing new is on the live site or the hosted database.** The two data fixes are CI verified only, and the authentication frontend has been used only from a local build. The monitor has one configured live run, reported healthy by the owner, which shows reachability and readiness at that moment and nothing about scheduled operation.
+Second weakest, when this was written: **nothing new was on the live site or the hosted database.** The two data fixes were CI verified only, and the authentication frontend had been used only from a local build. The monitor had one configured live run, reported healthy by the owner, which showed reachability and readiness at that moment and nothing about scheduled operation.
+
+Since the release to `main` this has changed in part. The frontend is live and the owner reports the two migrations applied. What remains weak is the evidence: the migrations' behaviour on hosted has not been tested there, and no scheduled monitor run has been observed. See [04](04-test-evidence.md), "Production release to main".
 
 ## What was cut, and why
 
@@ -64,10 +66,10 @@ See [01-scope-and-decisions.md](01-scope-and-decisions.md). In short: the AI inc
 
 ## Future work
 
-1. Apply and verify the two database migrations, after the frontend change they depend on is live.
-2. Get the monitor workflow onto the default branch and observe a scheduled run. The targets are configured and one manual re-run was healthy; the schedule has never run.
+1. Verify the two applied database migrations on hosted with synthetic data. They are applied on the owner's report; their hosted behaviour is untested.
+2. Observe a scheduled monitor run. The workflow is on the default branch with its targets configured, and one manual re-run was healthy; no scheduled run has been observed.
 3. Deep canaries on a slower schedule, with a credential that can only start the two fixed checks and with provider quota limits ([handoff 11](handoffs/11-c-monitoring-preparation.md)).
 4. Stored results for scheduled checks, repeated-failure thresholds, and severity and recovery handling on the existing `system_alerts` table.
 5. Deduplicated operational notifications for warnings, critical alerts and recoveries.
 6. Possibly a bounded AI investigator that summarizes sanitized incident evidence and suggests next steps for a person to approve. It was cut for cost, false positives, reliability and security. An agent that changes production on its own judgment is a risk this project does not need.
-7. Further hardening: broader listing privacy rules, rate limiting or a challenge on public forms, and auditing of administrator actions.
+7. Further hardening: listing privacy for signed-in accounts, which is still incomplete, rate limiting or a challenge on public forms, and auditing of administrator actions.
