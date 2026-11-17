@@ -31,7 +31,7 @@ Security findings are described in general terms until the fixes are live on the
 
 ## What SG Homie already did
 
-SG Homie is a Singapore HDB resale companion built for a university software engineering course. Before the assessment it had buyer search, listings, enquiries, seller and admin workflows, email sign-up with verification, HDB address verification, a research valuation service, a chatbot with quotas and telemetry, and an Admin Monitoring dashboard with on-demand checks. [00-baseline.md](00-baseline.md) lists this in full. The baseline test run was 439 passing Node tests.
+SG Homie is a Singapore HDB resale companion and platform. Before the assessment it had buyer search, listings, enquiries, seller and admin workflows, email sign-up with verification, HDB address verification, a research valuation service, a chatbot with quotas and telemetry, and an Admin Monitoring dashboard with on-demand checks. [00-baseline.md](00-baseline.md) lists this in full. The baseline test run was 439 passing Node tests.
 
 ## The problem chosen
 
