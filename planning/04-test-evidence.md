@@ -469,3 +469,34 @@ What these results show, and what they do not:
 - The valuation check confirms that a prediction was returned in the expected shape from the expected model version. It says nothing about how accurate the model's estimates are.
 - The original rejection of the chatbot check was never explained. The B2 repair working is consistent with the bearer being the difference. It is not proof.
 - The valuation check's long duration is consistent with a free-tier model service waking from sleep. That was not measured.
+
+### Service monitor: configured live run (owner-observed)
+
+This supersedes the status of two earlier entries, which are left as written: "the GitHub Actions workflow has not run" under S3, and the live step running with three targets `NOT_CONFIGURED`.
+
+The owner set the monitor's repository variables and re-ran the existing "Service monitor" workflow run. The planner did not run it and could not read its log or summary. The first table is the owner's report. The second is what the planner read from the run's public metadata. The owner has confirmed that this run and attempt is the configured live re-run.
+
+| Target | Owner-reported result |
+| --- | --- |
+| Frontend | Healthy, HTTP 200 |
+| Model service on Render | Healthy, HTTP 200 |
+| Supabase chatbot function | Healthy, HTTP 200 |
+
+| Run detail | Value |
+| --- | --- |
+| Run | [43861158205](https://github.com/Nitecry7/SC3040-Software-Engineering-Project/actions/runs/43861158205), attempt 3 |
+| Trigger | A re-run of the push run for commit `0c12329` on `assessment/ncs-opspilot`. Not a scheduled run. |
+| Job `monitor` | Succeeded, every step, 22:29:42 to 22:30:36 UTC on 16 November 2026 |
+| Monitor script at that commit | Unchanged between `0c12329` and the current branch head |
+
+What this shows, and what it does not:
+
+- It is one point-in-time run. At that moment each target was reachable from a GitHub-hosted runner and answered its readiness check.
+- It verifies reachability and readiness only. The monitor makes no valuation request and no AI call, so it does not show that a valuation or a chat reply works end to end. The two synthetic checks above cover that, on demand.
+- The 30-minute schedule has still never run. GitHub runs schedules only from the default branch, and the workflow is not there yet.
+- The result appears on the run's Summary tab in GitHub Actions. It does not appear in the Admin Monitoring dashboard.
+- Attempts 1 and 2 of the same run also completed successfully. A successful job does not by itself mean healthy targets, because unconfigured targets report `unknown` and the job still succeeds. What those two attempts reported per target is not recorded here.
+
+### Release status at submission
+
+Unchanged by the results above: the updated authentication frontend is not on the live site, and the S1 and S2 migrations are not applied to the hosted database.

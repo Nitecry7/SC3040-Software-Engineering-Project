@@ -86,6 +86,7 @@ Entries above are unchanged. D17 describes the settings as they were on 16 Novem
 | D26 | The chatbot synthetic check accepts the expected token exactly, or with cosmetic wrapping only. Anything else fails. The check keeps the chatbot's configured model and does not get one of its own. Diagnostics are a fixed set of labels and a length, in the function log only. | Owner decision. A separate model would stop the check from testing the path users get. |
 | D27 | Troubleshooting of the synthetic check ends after one further deployment and one hosted run. A remaining failure is documented as a limitation. | Owner decision, to close the assessment. |
 | D28 | The session export stays out of the repository until the owner has read it and the two database fixes are applied on hosted. | It contains detailed discussion of findings covered by D11. |
+| D29 | Curated, sanitized excerpts of the session are published in [agent-sessions/](agent-sessions/README.md), after a full read and the owner's approval. The complete export stays private under D28. | The excerpts show the working method without the detailed findings. Every change to the text is listed in their index. |
 
 ## Known limitation of the public listing fix
 

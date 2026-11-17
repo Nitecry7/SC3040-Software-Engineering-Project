@@ -173,10 +173,11 @@ disposable database tests.
 
 Repository implementation and local/CI database tests do not show that these
 migrations, schedules or Edge Function versions are present in a hosted project.
-The hosted chatbot synthetic-canary authentication issue remains deferred. The
+The hosted chatbot synthetic-canary authentication issue has since been repaired, and the
+owner observed one passing hosted run; see
+[planning/04-test-evidence.md](../../../planning/04-test-evidence.md). The
 internal fixed-marker check does not exercise user authentication, quotas,
-streaming, tools or the full user journey; no successful hosted chatbot
-authentication or production availability check is claimed. See the
+streaming, tools or the full user journey; no production availability check is claimed. See the
 [deployment runbook](../../docs/operations/deployment-runbook.md#phase-7d-on-demand-synthetic-checks)
 for the separately controlled rollout procedure.
 

@@ -20,13 +20,14 @@ Security findings are described in general terms until the fixes are live on the
 | Document | Contents |
 | --- | --- |
 | [00-baseline.md](00-baseline.md) | What existed before the assessment, and the baseline test run |
-| [01-scope-and-decisions.md](01-scope-and-decisions.md) | Scope, how it changed, and decisions D1 to D28 |
+| [01-scope-and-decisions.md](01-scope-and-decisions.md) | Scope, how it changed, and decisions D1 to D29 |
 | [02-implementation-plan.md](02-implementation-plan.md) | The first implementation plan. Historical: written before implementation. Later decisions in 01 take precedence. |
 | [03-auth-and-security-plan.md](03-auth-and-security-plan.md) | The authentication and security plan. Historical: its account of the chatbot check predates the hosted evidence in 04. |
 | [04-test-evidence.md](04-test-evidence.md) | Every test run, who ran it and what it showed |
 | [05-review-findings.md](05-review-findings.md) | The planning model's independent review of each slice |
 | [06-retrospective.md](06-retrospective.md) | What worked, what went wrong, the weakest part, future work |
 | [handoffs/](handoffs/) | One focused brief per slice, written by the planning model for the implementing model |
+| [agent-sessions/](agent-sessions/README.md) | Curated, sanitized excerpts from the planning and implementing sessions. Not a complete transcript export. |
 
 ## What SG Homie already did
 
@@ -46,7 +47,7 @@ Two gaps in an otherwise working application:
 | S1 HDB verification integrity | A verified listing's location fields can change only together, through a valid verification | Yes | Yes | Not applicable | No. Migration not applied. |
 | L0 Home page column list | The home page requests named columns only | Yes | Yes | No | No. Frontend not deployed. |
 | S2 Public listing column contract | Visitors who are not signed in can read only an explicit list of listing columns | Yes | Yes | Not applicable | No. Migration not applied. |
-| S3 Service monitor | A script and workflow that check the frontend, the model service and the chatbot function from outside | Yes | Yes, with all three targets unconfigured | Not applicable | No configured live run recorded |
+| S3 Service monitor | A script and workflow that check the frontend, the model service and the chatbot function from outside | Yes | Yes | Not applicable | Owner: one configured live run reported all three targets healthy. Reachability and readiness only. Schedule not active. |
 | S4 Sign-up password fields | Confirm password and show or hide | Yes | Yes | Owner, on a local build | Owner, against hosted Auth |
 | A1 Password policy and strength estimate | A rule checklist and an advisory strength meter | Yes | Yes | Planner with Playwright, and owner, on a local build | Owner, against hosted Auth |
 | S5 Forgot and reset password | Reset by emailed link, with expired and invalid link states | Yes | Yes | Planner with Playwright for link states; owner end to end | Owner, with a real recovery email |
@@ -89,6 +90,8 @@ Three roles, set out in `CLAUDE.md` at the repository root:
 | Planner and reviewer | Claude Fable, in Claude Code | Investigated the repository, wrote one handoff per slice, reviewed every diff independently and re-ran the checks |
 | Implementer | Claude Sonnet at medium effort, started from each handoff | Wrote the tests first, then the code, and reported real command output |
 
+The planner's first repository survey was carried out by three read-only research runs it started on Claude Opus, and one documentation lookup ran on Claude Haiku. The eleven implementing runs were Claude Sonnet.
+
 Rules that held throughout: no agent staged, committed, pushed, deployed or changed a hosted setting. Each slice was written test-first. A slice that hit an unexpected condition stopped and reported.
 
 ### The owner's engineering judgment, with the record of each
@@ -125,6 +128,7 @@ The individual decisions:
 | Supplied the hosted setting and logs that ruled out the planner's first explanation of the chatbot failure | [04](04-test-evidence.md), "Phase B" |
 | Sent the Phase B plan back twice with refinements: what the evidence flag may claim, not to assume the cause, to compare authorization options, to verify the administrator flag is protected, and not to assume a rollback source | D19 to D21, [handoff 10](handoffs/10-b2-canary-authorization.md) |
 | Chose the authorization design and added eight requirements to it | D22 to D25 |
+| Configured the monitor's targets and re-ran the workflow to get one live result | [04](04-test-evidence.md), "Service monitor: configured live run" |
 | Deployed two functions and ran one hosted check, then set a stopping rule for further troubleshooting | [04](04-test-evidence.md), "Update: B2 committed, CI, deployed, one hosted check" |
 | Approved a narrow validation tolerance, kept the check on the chatbot's own model, deployed once more and observed both checks pass | D26, D27; [04](04-test-evidence.md), "Final hosted verification" |
 
@@ -203,6 +207,7 @@ Database tests run in the `database` job of `.github/workflows/tests.yml` on eve
 | S1 and S2 migrations | Not applied to the hosted database |
 | `chatbot` and `admin-monitoring` functions | Deployed by the owner with B1, B2 and B3. Both synthetic checks passed one hosted run each. |
 | Hosted Auth setting "Require current password when updating" | Enabled by the owner |
+| Service monitor live run | One configured run, re-run by the owner in GitHub Actions: frontend, model service and Supabase each healthy with HTTP 200 ([04](04-test-evidence.md), "Service monitor: configured live run") |
 | Scheduled monitoring | Not active. GitHub runs schedules only from the default branch. |
 
 ## Limitations and future work
@@ -211,7 +216,7 @@ Database tests run in the `database` job of `.github/workflows/tests.yml` on eve
 - A passing valuation check shows the service returned a well-formed prediction from the expected model version. It says nothing about the accuracy of the estimates, which remain research output.
 - The two database fixes protect nothing on hosted until the migrations are applied.
 - The listing data fix covers visitors who are not signed in. Listing privacy for signed-in accounts is unchanged and needs a product decision.
-- The new monitor checks reachability and readiness only. It makes no valuation request and no AI call. Its 30-minute schedule is defined in the workflow but does not run from this branch, because GitHub runs schedules only from the default branch. Its results appear in GitHub Actions, not in the Admin Monitoring dashboard.
+- The new monitor checks reachability and readiness only. It makes no valuation request and no AI call, so its one healthy live run does not show that either works end to end. Its 30-minute schedule is defined in the workflow but does not run from this branch, because GitHub runs schedules only from the default branch. Its results appear in GitHub Actions, not in the Admin Monitoring dashboard.
 - A `system_alerts` table and on-demand incident records already existed. Nothing new writes to them. Automatic incident detection from scheduled checks, stored scheduled observations, repeated-failure thresholds, operational notifications and any AI investigator are future work.
 - The strength rating is a small in-house estimate, not a breach check.
 - Next steps, in order of value: apply and verify the two migrations, schedule deep canaries with a narrowly scoped credential and quota limits ([handoff 11](handoffs/11-c-monitoring-preparation.md)), store scheduled results and alert on repeated failures, and decide the remaining listing privacy rules.

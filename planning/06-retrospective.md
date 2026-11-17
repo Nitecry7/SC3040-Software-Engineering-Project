@@ -50,7 +50,7 @@ The implementer also caught a real defect in the planner's S1 design before it s
 - The check depends on a free model router that picks a different model per request. One passing run shows that execution, not reliability.
 - It took three rounds, because the first plan carried an unverified explanation and the second repair exposed a validation rule too strict for the models actually served.
 
-Second weakest: **nothing new is on the live site or the hosted database.** The two data fixes are CI verified only. The monitor has not made a configured live run on record.
+Second weakest: **nothing new is on the live site or the hosted database.** The two data fixes are CI verified only, and the authentication frontend has been used only from a local build. The monitor has one configured live run, reported healthy by the owner, which shows reachability and readiness at that moment and nothing about scheduled operation.
 
 ## What was cut, and why
 
@@ -65,7 +65,7 @@ See [01-scope-and-decisions.md](01-scope-and-decisions.md). In short: the AI inc
 ## Future work
 
 1. Apply and verify the two database migrations, after the frontend change they depend on is live.
-2. Configure the monitor's live targets and observe a scheduled run.
+2. Get the monitor workflow onto the default branch and observe a scheduled run. The targets are configured and one manual re-run was healthy; the schedule has never run.
 3. Deep canaries on a slower schedule, with a credential that can only start the two fixed checks and with provider quota limits ([handoff 11](handoffs/11-c-monitoring-preparation.md)).
 4. Stored results for scheduled checks, repeated-failure thresholds, and severity and recovery handling on the existing `system_alerts` table.
 5. Deduplicated operational notifications for warnings, critical alerts and recoveries.
